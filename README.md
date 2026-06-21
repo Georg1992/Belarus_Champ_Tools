@@ -2,22 +2,20 @@
 
 Windows clicker with a Walk GUI. Hold a trigger key to repeat virtual key presses and left mouse clicks through embedded [VIIPER](https://github.com/Alia5/VIIPER) virtual HID devices.
 
-## Layout
+## Project layout
 
 ```
 Experimental_Clicker/
-  clicker.exe                          ← dev build (double-click to run)
-  clicker/                             ← Go source
-    build.ps1                          ← build dev app
-    build-author.ps1                   ← build licgen-gui.exe (author only)
-    package.ps1                        ← build user ZIP
-    cmd/ensurekeys/                    ← first-time license key bootstrap (build only)
-    cmd/licgen-gui/                    ← GUI to issue activation codes (author only)
-    gui/                               ← main app window
-    runner/                            ← click loop + input
-    license/                           ← activation (Ed25519, machine-bound)
-  release/                             ← INSTALL*.txt, Install.cmd, LICENSE_AUTHOR*.txt
-  VIIPER/                              ← git submodule
+  clicker.exe                    ← dev build output
+  clicker/
+    build.ps1                    ← build clicker.exe
+    package.ps1                  ← build user ZIP
+    gui/                         ← Walk UI + embedded VIIPER server
+    runner/                      ← click loop, key mappings, pause
+  release/
+    README.txt / README.ru.txt
+    Install.cmd
+  VIIPER/                        ← git submodule
 ```
 
 Open **`Experimental_Clicker`** in your editor — not the `VIIPER/` folder alone.
@@ -28,7 +26,7 @@ Open **`Experimental_Clicker`** in your editor — not the `VIIPER/` folder alon
 - Go 1.26+ (for building)
 - [usbip-win2](https://github.com/vadimgrn/usbip-win2) kernel driver (one-time install + reboot)
 
-The user `Install.cmd` in the release package installs the driver automatically.
+The release `Install.cmd` installs the driver automatically.
 
 ## Build
 
@@ -40,54 +38,52 @@ cd clicker
 
 Output: `..\clicker.exe`
 
-Author tool (issue activation codes, no console):
+## Release package
 
 ```powershell
-.\build-author.ps1
-```
-
-Output: `licgen-gui.exe` — see `release/LICENSE_AUTHOR.txt`
-
-User release ZIP:
-
-```powershell
+cd clicker
 .\package.ps1
 ```
 
-Output: `release/BelarusChampClicker-Windows-x64.zip` containing `Belarus Champ Clicker.exe`
+Output: `release/BelarusChampClicker-Windows-x64.zip`
 
-## Run
+Users extract the ZIP and run `Install.cmd`. See `release/README.txt`.
 
-1. Activate on first launch (paste code from seller)
-2. Click **Start** before launching the game
-3. Bind trigger keys, set delay, hold trigger to click
+## Usage
+
+1. Click **Start** before launching the game
+2. Bind trigger keys and set delay
+3. Hold a trigger key to click
+4. Press **End** to pause or resume (server stays running)
+5. Click **Stop** or close the app to turn off
+
+Status indicator: red **OFF**, green **ON**, yellow **PAUSE**.
 
 ### Click loop
 
-While the trigger key is held (`runner/runner.go`):
+While the trigger key is held:
 
 1. Virtual key down
 2. Delay (ms) — ends early if trigger released, but cycle still finishes
 3. Virtual mouse down → key up → mouse up
 4. Repeat until trigger released; current cycle always completes
 
-Default delay: **50 ms**. If a game misses clicks, try **50–100 ms** and start the clicker before the game.
+Default delay: **50 ms**. If a game misses clicks, try **50–100 ms**.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
-| Setup required on Start | Run `Install.cmd` from the release package, reboot |
-| Activation failed | Code is tied to one PC; request a new code for that Computer ID |
+| Setup required on Start | Run `Install.cmd`, reboot if prompted |
 | Clicks not registered | Start clicker before the game; increase delay |
 | Loop never triggers | Check physical trigger key works |
 
-## Development
+## Source map
 
 | Path | Purpose |
 |------|---------|
-| `clicker/gui/` | Walk GUI, activation, embedded VIIPER server |
-| `clicker/runner/` | VIIPER client, click loop, key mappings |
-| `clicker/license/` | Machine ID, signed activation codes |
-| `clicker/cmd/licgen-gui/` | Author GUI for issuing codes |
+| `clicker/gui/main.go` | Main window, Start/Stop, status badge |
+| `clicker/gui/status_badge.go` | ON / OFF / PAUSE indicator |
+| `clicker/gui/server.go` | Embedded VIIPER lifecycle |
+| `clicker/runner/runner.go` | Click loop, End-key pause |
 | `VIIPER/` | Upstream VIIPER (`replace` in `clicker/go.mod`) |

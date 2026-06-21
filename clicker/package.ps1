@@ -20,17 +20,12 @@ if (-not (Test-Path $builtExe)) {
 
 Write-Host "Preparing release package..." -ForegroundColor Cyan
 
-if (Test-Path $stagingDir) {
-    Remove-Item $stagingDir -Recurse -Force
-}
 New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
 
 Copy-Item $builtExe (Join-Path $stagingDir $appExeName) -Force
-Copy-Item (Join-Path $releaseDir "INSTALL.txt") $stagingDir -Force
-Copy-Item (Join-Path $releaseDir "INSTALL.ru.txt") $stagingDir -Force
-Copy-Item (Join-Path $releaseDir "Install.ps1") $stagingDir -Force
+Copy-Item (Join-Path $releaseDir "README.txt") $stagingDir -Force
+Copy-Item (Join-Path $releaseDir "README.ru.txt") $stagingDir -Force
 Copy-Item (Join-Path $releaseDir "Install.cmd") $stagingDir -Force
-Copy-Item (Join-Path $releaseDir "Uninstall.ps1") $stagingDir -Force
 Copy-Item (Join-Path $releaseDir "Uninstall.cmd") $stagingDir -Force
 
 if (Test-Path $zipPath) {
@@ -43,4 +38,4 @@ Write-Host "Release package ready:" -ForegroundColor Green
 Write-Host "  Folder: $stagingDir" -ForegroundColor Yellow
 Write-Host "  ZIP:    $zipPath" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "Give users the ZIP file. They extract it and run Install.cmd." -ForegroundColor Gray
+Write-Host "User steps: extract ZIP -> run Install.cmd -> run Belarus Champ Clicker.exe" -ForegroundColor Gray

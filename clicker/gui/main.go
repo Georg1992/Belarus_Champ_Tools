@@ -21,10 +21,11 @@ type guiApp struct {
 	logItems   []string
 	keyLabel   *walk.Label
 	delayEdit  *walk.LineEdit
-	startBtn   *walk.PushButton
-	stopBtn    *walk.PushButton
-	bindBtn    *walk.PushButton
-	clearBtn   *walk.PushButton
+	startBtn      *walk.PushButton
+	stopBtn       *walk.PushButton
+	statusBadge   *statusBadge
+	bindBtn       *walk.PushButton
+	clearBtn      *walk.PushButton
 
 	mu              sync.Mutex
 	shutdownOnce    sync.Once
@@ -35,10 +36,6 @@ type guiApp struct {
 }
 
 func main() {
-	if !ensureActivated() {
-		return
-	}
-
 	app := &guiApp{}
 	defer app.shutdown()
 
@@ -103,7 +100,7 @@ func (a *guiApp) createWindow() error {
 	if err != nil {
 		return err
 	}
-	if err := runGB.SetTitle("1. Start clicker"); err != nil {
+	if err := runGB.SetTitle("1. Clicker control"); err != nil {
 		return err
 	}
 	runLayout := walk.NewVBoxLayout()
@@ -112,7 +109,32 @@ func (a *guiApp) createWindow() error {
 		return err
 	}
 
-	btnRow, err := walk.NewComposite(runGB)
+	hintFont, err := walk.NewFont("Segoe UI", 8, 0)
+	if err != nil {
+		return err
+	}
+
+	controlRow, err := walk.NewComposite(runGB)
+	if err != nil {
+		return err
+	}
+	controlHBox := walk.NewHBoxLayout()
+	controlHBox.SetSpacing(16)
+	if err := controlRow.SetLayout(controlHBox); err != nil {
+		return err
+	}
+
+	leftPanel, err := walk.NewComposite(controlRow)
+	if err != nil {
+		return err
+	}
+	leftVBox := walk.NewVBoxLayout()
+	leftVBox.SetSpacing(4)
+	if err := leftPanel.SetLayout(leftVBox); err != nil {
+		return err
+	}
+
+	btnRow, err := walk.NewComposite(leftPanel)
 	if err != nil {
 		return err
 	}
@@ -141,13 +163,67 @@ func (a *guiApp) createWindow() error {
 	a.stopBtn.SetEnabled(false)
 	a.stopBtn.Clicked().Attach(a.onStop)
 
-	runHint, err := walk.NewLabel(runGB)
+	startHint, err := walk.NewLabel(leftPanel)
 	if err != nil {
 		return err
 	}
-	if err := runHint.SetText("Start before launching the game."); err != nil {
+	if err := startHint.SetText("Start before launching the game."); err != nil {
 		return err
 	}
+	startHint.SetFont(hintFont)
+
+	if _, err := walk.NewHSpacer(controlRow); err != nil {
+		return err
+	}
+
+	rightPanel, err := walk.NewComposite(controlRow)
+	if err != nil {
+		return err
+	}
+	rightVBox := walk.NewVBoxLayout()
+	rightVBox.SetSpacing(4)
+	if err := rightPanel.SetLayout(rightVBox); err != nil {
+		return err
+	}
+
+	badgeRow, err := walk.NewComposite(rightPanel)
+	if err != nil {
+		return err
+	}
+	badgeHBox := walk.NewHBoxLayout()
+	if err := badgeRow.SetLayout(badgeHBox); err != nil {
+		return err
+	}
+	if _, err := walk.NewHSpacer(badgeRow); err != nil {
+		return err
+	}
+	a.statusBadge, err = newStatusBadge(badgeRow)
+	if err != nil {
+		return err
+	}
+	a.setClickerStatus(clickerStatusStopped)
+
+	pauseRow, err := walk.NewComposite(rightPanel)
+	if err != nil {
+		return err
+	}
+	pauseHBox := walk.NewHBoxLayout()
+	pauseHBox.SetSpacing(6)
+	if err := pauseRow.SetLayout(pauseHBox); err != nil {
+		return err
+	}
+	if _, err := walk.NewHSpacer(pauseRow); err != nil {
+		return err
+	}
+
+	pauseCaption, err := walk.NewLabel(pauseRow)
+	if err != nil {
+		return err
+	}
+	if err := pauseCaption.SetText("Pause / resume: End"); err != nil {
+		return err
+	}
+	pauseCaption.SetFont(hintFont)
 
 	configGB, err := walk.NewGroupBox(mw)
 	if err != nil {
@@ -247,20 +323,9 @@ func (a *guiApp) createWindow() error {
 	if err != nil {
 		return err
 	}
-	if err := configHint.SetText("Available after Start. Hold mapped keys to click. End pauses. Stop turns off."); err != nil {
+	if err := configHint.SetText("Available after Start. Hold mapped keys to click. Stop turns off."); err != nil {
 		return err
 	}
-
-	licenseBtn, err := walk.NewPushButton(configGB)
-	if err != nil {
-		return err
-	}
-	if err := licenseBtn.SetText("License..."); err != nil {
-		return err
-	}
-	licenseBtn.Clicked().Attach(func() {
-		showLicenseInfo(a.mainWindow)
-	})
 
 	logLabel, err := walk.NewLabel(mw)
 	if err != nil {
@@ -318,6 +383,25 @@ func (a *guiApp) setStarted(started bool) {
 	a.startBtn.SetEnabled(!started)
 	a.stopBtn.SetEnabled(started)
 	a.setConfigEnabled(started)
+	if started {
+		a.setClickerStatus(clickerStatusRunning)
+	} else {
+		a.setClickerStatus(clickerStatusStopped)
+	}
+}
+
+func (a *guiApp) setClickerStatus(status clickerStatus) {
+	update := func() {
+		if a.statusBadge != nil {
+			a.statusBadge.SetStatus(status)
+		}
+	}
+
+	if a.mainWindow != nil {
+		a.mainWindow.Synchronize(update)
+	} else {
+		update()
+	}
 }
 
 func (a *guiApp) setConfigEnabled(enabled bool) {
@@ -441,6 +525,13 @@ func (a *guiApp) onStart() {
 		TriggerVKs: append([]int32(nil), a.triggerVKs...),
 		DelayMs:    a.delayMs(),
 		Log:        a.appendLog,
+		OnPauseChanged: func(paused bool) {
+			if paused {
+				a.setClickerStatus(clickerStatusPaused)
+			} else {
+				a.setClickerStatus(clickerStatusRunning)
+			}
+		},
 	}
 
 	a.runner = runner.New(cfg)

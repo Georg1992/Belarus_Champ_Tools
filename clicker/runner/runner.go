@@ -19,10 +19,11 @@ const (
 )
 
 type Config struct {
-	APIAddr    string
-	TriggerVKs []int32
-	DelayMs    int
-	Log        func(string)
+	APIAddr        string
+	TriggerVKs     []int32
+	DelayMs        int
+	Log            func(string)
+	OnPauseChanged func(bool)
 }
 
 func (c *Config) applyDefaults() {
@@ -34,6 +35,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Log == nil {
 		c.Log = func(string) {}
+	}
+	if c.OnPauseChanged == nil {
+		c.OnPauseChanged = func(bool) {}
 	}
 }
 
@@ -128,8 +132,12 @@ func (r *Runner) Paused() bool {
 
 func (r *Runner) setPaused(paused bool) {
 	r.pauseMu.Lock()
+	changed := r.paused != paused
 	r.paused = paused
 	r.pauseMu.Unlock()
+	if changed {
+		r.cfg.OnPauseChanged(paused)
+	}
 }
 
 func (r *Runner) togglePaused() bool {
@@ -137,6 +145,7 @@ func (r *Runner) togglePaused() bool {
 	r.paused = !r.paused
 	paused := r.paused
 	r.pauseMu.Unlock()
+	r.cfg.OnPauseChanged(paused)
 	return paused
 }
 
