@@ -8,10 +8,12 @@ $embedExe = Join-Path $embedDir "viiper.exe"
 $clickerOut = Join-Path $rootDir "clicker.exe"
 $clickerBuildOut = Join-Path $rootDir "clicker.exe.new"
 
+. (Join-Path $clickerDir "scripts\build-common.ps1")
+
 function Remove-BrokenClickerOutputs {
     param([string]$Root)
 
-    Stop-Process -Name clicker, clicker-console -Force -ErrorAction SilentlyContinue
+    Stop-Process -Name clicker -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 200
 
     $patterns = @(
@@ -56,6 +58,8 @@ Push-Location $clickerDir
 Write-Host "Downloading Go modules..." -ForegroundColor Cyan
 go mod download
 if ($LASTEXITCODE -ne 0) { Pop-Location; exit $LASTEXITCODE }
+
+Ensure-LicenseKeys -ClickerDir $clickerDir
 
 Write-Host "Generating GUI manifest..." -ForegroundColor Cyan
 Remove-Item "$clickerDir\gui\*.syso" -Force -ErrorAction SilentlyContinue

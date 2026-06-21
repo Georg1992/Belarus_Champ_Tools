@@ -1,0 +1,95 @@
+================================================================================
+  BELARUS CHAMP CLICKER — Installation guide (Windows 64-bit)
+================================================================================
+
+Thank you for downloading Belarus Champ Clicker.
+
+This package contains everything you need. You do not need to install anything
+else manually except the one-time Windows input driver (see below).
+
+Russian instructions: INSTALL.ru.txt
+
+
+QUICK INSTALL (recommended)
+---------------------------
+
+1. Extract the entire ZIP folder to a location you prefer
+   (for example: Downloads\BelarusChampClicker).
+
+2. Double-click  Install.cmd
+   (or right-click Install.ps1 → Run with PowerShell).
+
+3. If Windows asks for administrator permission, click Yes.
+   This installs the input driver required for virtual clicks.
+
+4. If the installer says you must restart, restart your PC once.
+   This is only needed the first time on a new computer.
+
+5. After restart, open  Belarus Champ Clicker.exe  from:
+     - the Desktop shortcut created by the installer, or
+     - the Start menu entry "Belarus Champ Clicker", or
+     - this folder (if you chose not to use the installer shortcut).
+
+6. In the app:
+     a) Enter your activation code when prompted (see ACTIVATION below)
+     b) Click  Start
+     c) Click  Add key...  and press the key you want to hold
+     d) Set  Delay (ms)  if needed (50 ms is a good default)
+     e) Launch your game, then hold your trigger key
+
+
+ACTIVATION
+----------
+
+  On first run the app asks for an activation code.
+
+  1. Copy your Computer ID from the activation window
+  2. Send it to the seller to receive a code
+  3. Paste the code and click Activate
+
+  Each code works on one computer only.
+
+
+PORTABLE USE (no installer)
+---------------------------
+
+You may also run  Belarus Champ Clicker.exe  directly from this folder without
+running Install.cmd — but the input driver must still be installed once on
+your PC (use Install.cmd for that).
+
+
+HOW TO USE
+----------
+
+  Start     — turn the clicker on (do this before launching the game)
+  Stop      — turn the clicker off
+
+  Hold your trigger key to repeat the click sequence.
+  Release the trigger to finish the current cycle and pause.
+
+
+TROUBLESHOOTING
+---------------
+
+  "Setup required" when clicking Start
+      Run Install.cmd as administrator, then restart your PC.
+
+  Clicks not registered in a game
+      Start the clicker before launching the game.
+      Try a delay of 50 ms or higher.
+
+  App does not start
+      Windows SmartScreen may warn on first run — click "More info" → "Run anyway"
+      if you downloaded this from a trusted source.
+
+  Need to uninstall
+      Double-click Uninstall.cmd in this folder.
+      (Removes app, shortcuts, and activation. USBip driver is removed separately in Settings.)
+
+
+SUPPORT
+-------
+
+  Project: https://github.com/Georg1992/Experimental_Clicker
+
+================================================================================

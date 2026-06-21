@@ -17,6 +17,7 @@ import (
 
 	_ "embed"
 
+	"experimental-clicker/runner"
 	"github.com/Alia5/VIIPER/viiperclient"
 	"golang.org/x/sys/windows"
 )
@@ -25,7 +26,6 @@ import (
 var viiperBin []byte
 
 const (
-	serverAPIAddr    = "localhost:3242"
 	serverWaitTime   = 30 * time.Second
 	serverPollPeriod = 200 * time.Millisecond
 )
@@ -42,7 +42,7 @@ func ensureViiperServer() (started bool, err error) {
 	serverMu.Lock()
 	defer serverMu.Unlock()
 
-	api := viiperclient.New(serverAPIAddr)
+	api := viiperclient.New(runner.DefaultAPIAddr)
 	if _, err := api.PingCtx(context.Background()); err == nil {
 		return false, nil
 	}
@@ -73,7 +73,7 @@ func ensureViiperServer() (started bool, err error) {
 	go discardViiperOutput(stdout)
 	go discardViiperOutput(stderr)
 
-	if err := waitForServer(serverAPIAddr, serverWaitTime); err != nil {
+	if err := waitForServer(runner.DefaultAPIAddr, serverWaitTime); err != nil {
 		killProcessTree(serverPID)
 		_, _ = cmd.Process.Wait()
 		serverPID = 0

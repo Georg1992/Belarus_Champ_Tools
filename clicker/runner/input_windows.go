@@ -13,6 +13,8 @@ var (
 	procGetAsyncKeyState = user32.NewProc("GetAsyncKeyState")
 )
 
+const escapeVK = 0x1B
+
 func PhysicalKeyDown(vk int32) bool {
 	ret, _, _ := procGetAsyncKeyState.Call(uintptr(vk))
 	return ret&0x8000 != 0
@@ -45,7 +47,7 @@ func WaitForKeyPress(timeout time.Duration) (int32, bool) {
 
 	for time.Now().Before(deadline) {
 		for vk := int32(0x08); vk <= 0xFE; vk++ {
-			if vk == EscapeVK {
+			if vk == escapeVK {
 				continue
 			}
 			if PhysicalKeyDown(vk) {
@@ -62,7 +64,7 @@ func WaitForKeyPress(timeout time.Duration) (int32, bool) {
 
 func anyPhysicalKeyDown() bool {
 	for vk := int32(0x08); vk <= 0xFE; vk++ {
-		if vk == EscapeVK {
+		if vk == escapeVK {
 			continue
 		}
 		if PhysicalKeyDown(vk) {

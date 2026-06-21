@@ -35,6 +35,10 @@ type guiApp struct {
 }
 
 func main() {
+	if !ensureActivated() {
+		return
+	}
+
 	app := &guiApp{}
 	defer app.shutdown()
 
@@ -99,7 +103,7 @@ func (a *guiApp) createWindow() error {
 	if err != nil {
 		return err
 	}
-	if err := runGB.SetTitle("1. Start VIIPER"); err != nil {
+	if err := runGB.SetTitle("1. Start clicker"); err != nil {
 		return err
 	}
 	runLayout := walk.NewVBoxLayout()
@@ -141,7 +145,7 @@ func (a *guiApp) createWindow() error {
 	if err != nil {
 		return err
 	}
-	if err := runHint.SetText("Start before launching the game. This starts the server and creates virtual devices."); err != nil {
+	if err := runHint.SetText("Start before launching the game."); err != nil {
 		return err
 	}
 
@@ -243,9 +247,20 @@ func (a *guiApp) createWindow() error {
 	if err != nil {
 		return err
 	}
-	if err := configHint.SetText("Available after Start. Hold mapped keys to run the loop. ESC stops."); err != nil {
+	if err := configHint.SetText("Available after Start. Hold mapped keys to run the loop. Use Stop to turn off."); err != nil {
 		return err
 	}
+
+	licenseBtn, err := walk.NewPushButton(configGB)
+	if err != nil {
+		return err
+	}
+	if err := licenseBtn.SetText("License..."); err != nil {
+		return err
+	}
+	licenseBtn.Clicked().Attach(func() {
+		showLicenseInfo(a.mainWindow)
+	})
 
 	logLabel, err := walk.NewLabel(mw)
 	if err != nil {
@@ -404,17 +419,21 @@ func (a *guiApp) onStart() {
 		return
 	}
 
-	a.appendLog("Starting VIIPER server...")
+	if ready, msg := inputDriverReady(); !ready {
+		a.appendLog("Input driver not ready — see Setup required dialog.")
+		walk.MsgBox(a.mainWindow, "Setup required", msg, walk.MsgBoxIconWarning)
+		return
+	}
+
+	a.appendLog("Starting...")
 
 	started, err := ensureViiperServer()
 	if err != nil {
-		a.appendLog(fmt.Sprintf("VIIPER server failed: %v", err))
+		a.appendLog(fmt.Sprintf("Start failed: %v", err))
 		return
 	}
 	if started {
-		a.appendLog("VIIPER server ready")
-	} else {
-		a.appendLog("Using existing VIIPER server")
+		a.appendLog("Ready")
 	}
 
 	cfg := runner.Config{
@@ -440,19 +459,13 @@ func (a *guiApp) onStop() {
 
 	if r != nil {
 		r.Stop()
+		r.Wait()
 	}
+	stopViiperServerIfStarted()
 
-	go func() {
-		if r != nil {
-			r.Wait()
-		}
-		stopViiperServerIfStarted()
-		a.mainWindow.Synchronize(func() {
-			a.mu.Lock()
-			a.runner = nil
-			a.mu.Unlock()
-			a.setStarted(false)
-			a.appendLog("Clicker stopped — click Start before launching the game")
-		})
-	}()
+	a.mu.Lock()
+	a.runner = nil
+	a.mu.Unlock()
+	a.setStarted(false)
+	a.appendLog("Clicker stopped — click Start before launching the game")
 }

@@ -15,7 +15,6 @@ const (
 	DefaultAPIAddr = "localhost:3242"
 	DefaultDelayMs = 50
 	StepHoldMs     = 20 // minimum gap so virtual HID events register
-	EscapeVK       = 0x1B
 )
 
 type Config struct {
@@ -131,16 +130,17 @@ func (r *Runner) log(msg string) {
 }
 
 func (r *Runner) run(ctx context.Context) {
-	r.log("Setting up virtual keyboard and mouse...")
+	r.log("Setting up...")
 
 	api := viiperclient.New(r.cfg.APIAddr)
 
 	ping, err := api.PingCtx(ctx)
 	if err != nil {
-		r.log(fmt.Sprintf("VIIPER connection failed: %v", err))
+		r.log(fmt.Sprintf("Connection failed: %v", err))
 		return
 	}
-	r.log(fmt.Sprintf("Connected to VIIPER %s", ping.Version))
+	_ = ping
+	r.log("Connected")
 
 	busID, createdBus, err := ensureBus(ctx, api, noopLog)
 	if err != nil {
@@ -150,24 +150,25 @@ func (r *Runner) run(ctx context.Context) {
 
 	keyStream, keyDev, err := api.AddDeviceAndConnect(ctx, busID, "keyboard", nil)
 	if err != nil {
-		r.log(fmt.Sprintf("Virtual keyboard setup failed: %v", err))
+		r.log(fmt.Sprintf("Keyboard setup failed: %v", err))
 		cleanupBus(ctx, api, busID, createdBus, noopLog)
 		return
 	}
 	defer keyStream.Close() //nolint:errcheck
 	_ = keyDev
-	r.log("Virtual keyboard ready")
+	r.log("Keyboard ready")
 
 	mouseStream, mouseDev, err := api.AddDeviceAndConnect(ctx, busID, "mouse", nil)
 	if err != nil {
-		r.log(fmt.Sprintf("Virtual mouse setup failed: %v", err))
+		r.log(fmt.Sprintf("Mouse setup failed: %v", err))
 		cleanupDevice(ctx, api, keyStream.BusID, keyStream.DevID, noopLog)
 		cleanupBus(ctx, api, busID, createdBus, noopLog)
 		return
 	}
 	defer mouseStream.Close() //nolint:errcheck
 	_ = mouseDev
-	r.log("Virtual mouse ready")
+	defer releaseAll(keyStream, mouseStream)
+	r.log("Mouse ready")
 
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -183,15 +184,11 @@ func (r *Runner) run(ctx context.Context) {
 	if len(triggerVKs) == 0 {
 		r.log("Add trigger keys in the GUI — you can do this before or after launching the game")
 	}
-	r.log("Hold a trigger key to run the loop. ESC stops the clicker.")
+	r.log("Hold a trigger key to run the loop. Use Stop to turn off the clicker.")
 
 	for {
 		if ctx.Err() != nil {
 			r.log("Clicker stopped")
-			return
-		}
-		if PhysicalKeyDown(EscapeVK) {
-			r.log("ESC pressed — clicker stopped")
 			return
 		}
 
@@ -208,19 +205,18 @@ func (r *Runner) run(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			if PhysicalKeyDown(EscapeVK) {
-				r.log("ESC pressed — clicker stopped")
-				return
-			}
 
 			triggerVKs, delay = r.settings()
 			triggerVK, _ = ActiveTrigger(triggerVKs)
-			if err := runCycle(ctx, keyStream, mouseStream, triggerVK, delay); err != nil {
+			if err := runCycle(ctx, keyStream, mouseStream, triggerVK, triggerVKs, delay); err != nil {
 				if ctx.Err() != nil {
 					return
 				}
 				r.log(fmt.Sprintf("Loop step failed: %v", err))
 				return
+			}
+			if !TriggerHeld(triggerVKs) {
+				break
 			}
 		}
 
@@ -265,13 +261,20 @@ func ensureBus(ctx context.Context, api *viiperclient.Client, log func(string)) 
 	return resp.BusID, true, nil
 }
 
-func runCycle(ctx context.Context, keyStream, mouseStream *viiperclient.DeviceStream, vk int32, delay time.Duration) error {
+func runCycle(ctx context.Context, keyStream, mouseStream *viiperclient.DeviceStream, vk int32, triggerVKs []int32, delay time.Duration) error {
+	defer releaseAll(keyStream, mouseStream)
+
 	step := time.Duration(StepHoldMs) * time.Millisecond
 
 	if err := keyDown(keyStream, vk); err != nil {
 		return err
 	}
-	sleep(ctx, delay)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if !waitDelay(ctx, triggerVKs, delay) {
+		return ctx.Err()
+	}
 
 	if err := mouseDown(mouseStream); err != nil {
 		return err
@@ -283,7 +286,34 @@ func runCycle(ctx context.Context, keyStream, mouseStream *viiperclient.DeviceSt
 	}
 	sleep(ctx, step)
 
-	return mouseUp(mouseStream)
+	if err := mouseUp(mouseStream); err != nil {
+		return err
+	}
+	return nil
+}
+
+// waitDelay sleeps for delay. Trigger release ends the wait early but the cycle continues.
+// Returns false only when the clicker is stopped (context cancelled).
+func waitDelay(ctx context.Context, triggerVKs []int32, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return false
+		}
+		if !TriggerHeld(triggerVKs) {
+			return true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return ctx.Err() == nil
+}
+
+func releaseAll(keyStream, mouseStream *viiperclient.DeviceStream) {
+	_ = keyUp(keyStream)
+	_ = mouseUp(mouseStream)
 }
 
 func sleep(ctx context.Context, d time.Duration) {

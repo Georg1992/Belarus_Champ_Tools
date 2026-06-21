@@ -1,98 +1,93 @@
 # BELARUS CHAMP CLICKER
 
-VIIPER-based virtual input clicker for Windows. Hold a trigger key to repeat virtual key presses and left mouse clicks through [VIIPER](https://github.com/Alia5/VIIPER) virtual HID devices.
+Windows clicker with a Walk GUI. Hold a trigger key to repeat virtual key presses and left mouse clicks through embedded [VIIPER](https://github.com/Alia5/VIIPER) virtual HID devices.
 
 ## Layout
 
 ```
 Experimental_Clicker/
-  clicker.exe       ← built app (double-click to run)
-  clicker/          ← source code
-  VIIPER/           ← VIIPER dependency (git submodule)
+  clicker.exe                          ← dev build (double-click to run)
+  clicker/                             ← Go source
+    build.ps1                          ← build dev app
+    build-author.ps1                   ← build licgen-gui.exe (author only)
+    package.ps1                        ← build user ZIP
+    cmd/ensurekeys/                    ← first-time license key bootstrap (build only)
+    cmd/licgen-gui/                    ← GUI to issue activation codes (author only)
+    gui/                               ← main app window
+    runner/                            ← click loop + input
+    license/                           ← activation (Ed25519, machine-bound)
+  release/                             ← INSTALL*.txt, Install.cmd, LICENSE_AUTHOR*.txt
+  VIIPER/                              ← git submodule
 ```
 
-Open the **`Experimental_Clicker`** folder in Cursor or VS Code — not the `VIIPER/` subfolder alone.
+Open **`Experimental_Clicker`** in your editor — not the `VIIPER/` folder alone.
 
 ## Prerequisites
 
-### USBIP on Windows (required)
+- Windows 64-bit
+- Go 1.26+ (for building)
+- [usbip-win2](https://github.com/vadimgrn/usbip-win2) kernel driver (one-time install + reboot)
 
-VIIPER virtual devices need [usbip-win2](https://github.com/vadimgrn/usbip-win2). Install the kernel driver, then **reboot**.
-
-Verify the driver loaded:
-
-```powershell
-Test-Path "$env:SystemRoot\System32\drivers\usbip2_ude.sys"
-```
-
-Or use the VIIPER install script (VIIPER + usbip-win2):
-
-```powershell
-irm https://alia5.github.io/VIIPER/stable/install.ps1 | iex
-```
+The user `Install.cmd` in the release package installs the driver automatically.
 
 ## Build
 
-From the repo root:
-
 ```powershell
+git submodule update --init --recursive
 cd clicker
 .\build.ps1
 ```
 
 Output: `..\clicker.exe`
 
-The build script compiles VIIPER into `VIIPER/dist/viiper.exe`, embeds it in the clicker, and produces the GUI binary.
-
-After cloning, initialize the VIIPER submodule:
+Author tool (issue activation codes, no console):
 
 ```powershell
-git submodule update --init --recursive
+.\build-author.ps1
 ```
+
+Output: `licgen-gui.exe` — see `release/LICENSE_AUTHOR.txt`
+
+User release ZIP:
+
+```powershell
+.\package.ps1
+```
+
+Output: `release/BelarusChampClicker-Windows-x64.zip` containing `Belarus Champ Clicker.exe`
 
 ## Run
 
-Double-click `clicker.exe`, or:
+1. Activate on first launch (paste code from seller)
+2. Click **Start** before launching the game
+3. Bind trigger keys, set delay, hold trigger to click
 
-```powershell
-.\clicker.exe
-```
-
-The app embeds the VIIPER server and starts it when you click **Start**. No separate server terminal is needed.
-
-### GUI
-
-- **Trigger keys** — click "Add key...", then press a supported key (no keys bound by default)
-- **Clear keys** — remove all bound keys
-- **Delay (ms)** — pause between loop steps (button hold uses at least 60 ms)
-- **Start / Stop** — run or stop the clicker
-- **ESC** — emergency stop while running
-- **Logs** — live output in the window
-
-### Default loop
+### Click loop
 
 While the trigger key is held (`runner/runner.go`):
 
-1. Send virtual trigger key (down + up)
-2. Sleep (delay ms)
-3. Send virtual left click (down + up)
-4. Sleep (delay ms)
-5. Repeat until the key is released
+1. Virtual key down
+2. Delay (ms) — ends early if trigger released, but cycle still finishes
+3. Virtual mouse down → key up → mouse up
+4. Repeat until trigger released; current cycle always completes
+
+Default delay: **50 ms**. If a game misses clicks, try **50–100 ms** and start the clicker before the game.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
-| `usbip-win2 driver not found` | Install usbip-win2, reboot |
-| `409 Conflict: Failed to auto-attach device` | Fix USBIP setup, restart clicker |
-| `VIIPER connection failed` | Click Start again; check logs for server errors |
-| Loop never triggers | Ensure the physical trigger key works (`GetAsyncKeyState`) |
-| Game ignores virtual mouse | Use 60+ ms delay; start clicker before launching the game |
+| Setup required on Start | Run `Install.cmd` from the release package, reboot |
+| Activation failed | Code is tied to one PC; request a new code for that Computer ID |
+| Clicks not registered | Start clicker before the game; increase delay |
+| Loop never triggers | Check physical trigger key works |
 
 ## Development
 
 | Path | Purpose |
 |------|---------|
-| `clicker/runner/` | VIIPER client, input loop, key mappings |
-| `clicker/gui/` | Walk GUI, embedded VIIPER server lifecycle |
-| `VIIPER/` | Upstream VIIPER (local `replace` in `clicker/go.mod`) |
+| `clicker/gui/` | Walk GUI, activation, embedded VIIPER server |
+| `clicker/runner/` | VIIPER client, click loop, key mappings |
+| `clicker/license/` | Machine ID, signed activation codes |
+| `clicker/cmd/licgen-gui/` | Author GUI for issuing codes |
+| `VIIPER/` | Upstream VIIPER (`replace` in `clicker/go.mod`) |
