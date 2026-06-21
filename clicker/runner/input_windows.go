@@ -15,6 +15,13 @@ var (
 
 const escapeVK = 0x1B
 
+func PollKeyToggle(wasDown *bool, vk int32) bool {
+	down := PhysicalKeyDown(vk)
+	toggled := down && !*wasDown
+	*wasDown = down
+	return toggled
+}
+
 func PhysicalKeyDown(vk int32) bool {
 	ret, _, _ := procGetAsyncKeyState.Call(uintptr(vk))
 	return ret&0x8000 != 0

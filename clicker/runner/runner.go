@@ -15,6 +15,7 @@ const (
 	DefaultAPIAddr = "localhost:3242"
 	DefaultDelayMs = 50
 	StepHoldMs     = 20 // minimum gap so virtual HID events register
+	PauseVK        = 0x23 // End
 )
 
 type Config struct {
@@ -46,6 +47,9 @@ type Runner struct {
 	liveMu         sync.RWMutex
 	liveTriggerVKs []int32
 	liveDelayMs    int
+
+	pauseMu sync.RWMutex
+	paused  bool
 }
 
 func New(cfg Config) *Runner {
@@ -72,6 +76,7 @@ func (r *Runner) Start() error {
 	r.liveTriggerVKs = append([]int32(nil), r.cfg.TriggerVKs...)
 	r.liveDelayMs = r.cfg.DelayMs
 	r.done = make(chan struct{})
+	r.setPaused(false)
 	r.mu.Unlock()
 
 	go func() {
@@ -113,6 +118,26 @@ func (r *Runner) UpdateSettings(triggerVKs []int32, delayMs int) {
 		r.liveDelayMs = delayMs
 	}
 	r.liveMu.Unlock()
+}
+
+func (r *Runner) Paused() bool {
+	r.pauseMu.RLock()
+	defer r.pauseMu.RUnlock()
+	return r.paused
+}
+
+func (r *Runner) setPaused(paused bool) {
+	r.pauseMu.Lock()
+	r.paused = paused
+	r.pauseMu.Unlock()
+}
+
+func (r *Runner) togglePaused() bool {
+	r.pauseMu.Lock()
+	r.paused = !r.paused
+	paused := r.paused
+	r.pauseMu.Unlock()
+	return paused
 }
 
 func (r *Runner) settings() ([]int32, time.Duration) {
@@ -184,12 +209,26 @@ func (r *Runner) run(ctx context.Context) {
 	if len(triggerVKs) == 0 {
 		r.log("Add trigger keys in the GUI — you can do this before or after launching the game")
 	}
-	r.log("Hold a trigger key to run the loop. Use Stop to turn off the clicker.")
+	r.log("Hold a trigger key to run the loop. End pauses clicking. Stop turns off the clicker.")
 
+	pauseKeyDown := false
 	for {
 		if ctx.Err() != nil {
 			r.log("Clicker stopped")
 			return
+		}
+
+		if PollKeyToggle(&pauseKeyDown, PauseVK) {
+			if r.togglePaused() {
+				r.log("Paused (End to resume)")
+			} else {
+				r.log("Resumed")
+			}
+		}
+
+		if r.Paused() {
+			time.Sleep(10 * time.Millisecond)
+			continue
 		}
 
 		triggerVKs, delay := r.settings()
@@ -201,7 +240,7 @@ func (r *Runner) run(ctx context.Context) {
 		triggerVK, _ := ActiveTrigger(triggerVKs)
 		r.log(fmt.Sprintf("Loop running (%s)", KeyName(triggerVK)))
 
-		for TriggerHeld(triggerVKs) {
+		for TriggerHeld(triggerVKs) && !r.Paused() {
 			if ctx.Err() != nil {
 				return
 			}
@@ -215,11 +254,14 @@ func (r *Runner) run(ctx context.Context) {
 				r.log(fmt.Sprintf("Loop step failed: %v", err))
 				return
 			}
-			if !TriggerHeld(triggerVKs) {
+			if !TriggerHeld(triggerVKs) || r.Paused() {
 				break
 			}
 		}
 
+		if r.Paused() {
+			continue
+		}
 		r.log("Loop paused")
 	}
 }

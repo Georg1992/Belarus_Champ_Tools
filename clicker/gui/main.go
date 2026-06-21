@@ -247,7 +247,7 @@ func (a *guiApp) createWindow() error {
 	if err != nil {
 		return err
 	}
-	if err := configHint.SetText("Available after Start. Hold mapped keys to run the loop. Use Stop to turn off."); err != nil {
+	if err := configHint.SetText("Available after Start. Hold mapped keys to click. End pauses. Stop turns off."); err != nil {
 		return err
 	}
 

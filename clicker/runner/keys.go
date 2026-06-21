@@ -13,6 +13,7 @@ var keyNames = map[int32]string{
 	0x0D: "Enter",
 	0x1B: "Escape",
 	0x20: "Space",
+	0x21: "PageUp", 0x22: "PageDown", 0x23: "End", 0x24: "Home",
 	0x25: "Left",
 	0x26: "Up",
 	0x27: "Right",
