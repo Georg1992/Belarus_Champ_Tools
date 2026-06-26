@@ -378,7 +378,7 @@ func (a *guiApp) onBindKey() {
 			})
 		}()
 
-		vk, ok := runner.WaitForKeyPress(5 * time.Second)
+		vk, ok := runner.WaitForKeyPress(runner.KeyBindTimeout)
 		a.mainWindow.Synchronize(func() {
 			if !ok {
 				a.appendLog("Key bind timed out")

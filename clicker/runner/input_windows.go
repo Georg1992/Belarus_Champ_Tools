@@ -44,12 +44,12 @@ func TriggerHeld(triggerVKs []int32) bool {
 // WaitForKeyPress waits for keys to be released, then returns the next key pressed.
 func WaitForKeyPress(timeout time.Duration) (int32, bool) {
 	deadline := time.Now().Add(timeout)
-	releaseBy := time.Now().Add(500 * time.Millisecond)
+	releaseBy := time.Now().Add(KeyReleaseSettle)
 	for time.Now().Before(releaseBy) {
 		if !anyPhysicalKeyDown() {
 			break
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(PollInterval)
 	}
 
 	for time.Now().Before(deadline) {
@@ -59,12 +59,12 @@ func WaitForKeyPress(timeout time.Duration) (int32, bool) {
 			}
 			if PhysicalKeyDown(vk) {
 				for PhysicalKeyDown(vk) && time.Now().Before(deadline) {
-					time.Sleep(10 * time.Millisecond)
+					time.Sleep(PollInterval)
 				}
 				return vk, true
 			}
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(PollInterval)
 	}
 	return 0, false
 }

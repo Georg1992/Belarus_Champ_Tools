@@ -5,7 +5,6 @@ package main
 import (
 	"fmt"
 	"strconv"
-	"time"
 
 	"experimental-clicker/runner"
 	"github.com/lxn/walk"
@@ -332,7 +331,7 @@ func (a *guiApp) bindTimerKey(index int) {
 			})
 		}()
 
-		vk, ok := runner.WaitForKeyPress(5 * time.Second)
+		vk, ok := runner.WaitForKeyPress(runner.KeyBindTimeout)
 		a.mainWindow.Synchronize(func() {
 			if !ok {
 				a.appendLog("Key bind timed out")

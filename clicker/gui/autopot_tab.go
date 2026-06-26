@@ -5,7 +5,6 @@ package main
 import (
 	"fmt"
 	"strconv"
-	"time"
 
 	"experimental-clicker/runner"
 	"github.com/lxn/walk"
@@ -253,28 +252,24 @@ func (a *guiApp) onClearSPKey() {
 }
 
 func (a *guiApp) thresholdPercent(edit *walk.LineEdit, fallback int) int {
-	if edit == nil {
-		return fallback
+	if v, ok := a.parseThreshold(edit); ok {
+		return v
 	}
-	v, err := strconv.Atoi(edit.Text())
-	if err != nil || v < 1 || v > 99 {
-		return fallback
-	}
-	return v
+	return fallback
 }
 
 func (a *guiApp) logAutoPotThresholdsIfChanged() {
-	if hp, ok := a.parseThresholdEdit(a.hpThresholdEdit); ok && hp != a.lastLoggedHPThreshold {
+	if hp, ok := a.parseThreshold(a.hpThresholdEdit); ok && hp != a.lastLoggedHPThreshold {
 		a.lastLoggedHPThreshold = hp
 		a.appendLog(fmt.Sprintf("HP threshold: %d%%", hp))
 	}
-	if sp, ok := a.parseThresholdEdit(a.spThresholdEdit); ok && sp != a.lastLoggedSPThreshold {
+	if sp, ok := a.parseThreshold(a.spThresholdEdit); ok && sp != a.lastLoggedSPThreshold {
 		a.lastLoggedSPThreshold = sp
 		a.appendLog(fmt.Sprintf("SP threshold: %d%%", sp))
 	}
 }
 
-func (a *guiApp) parseThresholdEdit(edit *walk.LineEdit) (int, bool) {
+func (a *guiApp) parseThreshold(edit *walk.LineEdit) (int, bool) {
 	if edit == nil {
 		return 0, false
 	}
@@ -309,7 +304,7 @@ func (a *guiApp) bindAutoPotKey(hp bool) {
 			})
 		}()
 
-		vk, ok := runner.WaitForKeyPress(5 * time.Second)
+		vk, ok := runner.WaitForKeyPress(runner.KeyBindTimeout)
 		a.mainWindow.Synchronize(func() {
 			if !ok {
 				a.appendLog("Key bind timed out")

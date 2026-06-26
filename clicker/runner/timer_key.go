@@ -150,7 +150,7 @@ func (t *TimerKeyRunner) run(ctx context.Context) {
 			return
 		}
 		if session.Paused() {
-			sleep(ctx, 10*time.Millisecond)
+			sleep(ctx, PollInterval)
 			continue
 		}
 
@@ -178,7 +178,7 @@ func (t *TimerKeyRunner) run(ctx context.Context) {
 				nextDue[i] = now
 			}
 			if !now.Before(nextDue[i]) {
-				if err := session.TapKey(slot.KeyVK, autoPotKeyHold); err != nil {
+				if err := session.TapKey(slot.KeyVK, KeyTapHold); err != nil {
 					t.log(fmt.Sprintf("Timer %d key %s failed: %v", i+1, KeyName(slot.KeyVK), err))
 					return
 				}
@@ -190,7 +190,7 @@ func (t *TimerKeyRunner) run(ctx context.Context) {
 		}
 
 		if !anyActive {
-			sleep(ctx, 50*time.Millisecond)
+			sleep(ctx, CaptureRetryDelay)
 			continue
 		}
 
@@ -198,8 +198,8 @@ func (t *TimerKeyRunner) run(ctx context.Context) {
 		if wait < time.Millisecond {
 			wait = time.Millisecond
 		}
-		if wait > 10*time.Millisecond {
-			wait = 10 * time.Millisecond
+		if wait > PollInterval {
+			wait = PollInterval
 		}
 		sleep(ctx, wait)
 	}

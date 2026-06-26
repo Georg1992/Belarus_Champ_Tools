@@ -39,22 +39,9 @@ const (
 
 	// BarPairRecalInterval is how often cached HP/SP rects are refreshed while walking.
 	BarPairRecalDefaultRecal = 200 * time.Millisecond
-	BarPairRecalMin          = 100 * time.Millisecond
-	BarPairRecalMax          = 500 * time.Millisecond
 )
 
 var BarPairRecalInterval = BarPairRecalDefaultRecal
-
-// SetBarPairRecalInterval sets the periodic colored-run pair refresh interval (100–500ms).
-func SetBarPairRecalInterval(d time.Duration) {
-	if d < BarPairRecalMin {
-		d = BarPairRecalMin
-	}
-	if d > BarPairRecalMax {
-		d = BarPairRecalMax
-	}
-	BarPairRecalInterval = d
-}
 
 var ErrBarsNotFound = errors.New("player bars not found")
 
@@ -86,7 +73,7 @@ type BarRead struct {
 	Found       bool
 }
 
-// Bar is kept for debug output and legacy callers.
+// Bar is used by debug visualization output.
 type Bar struct {
 	Left, Right int
 	Y           int
@@ -128,11 +115,6 @@ func RefreshBarPair(img image.Image) (MappedBars, error) {
 		MapScore:   score,
 		LastMapped: time.Now(),
 	}, nil
-}
-
-// MapPlayerBars is an alias for RefreshBarPair.
-func MapPlayerBars(img image.Image) (MappedBars, error) {
-	return RefreshBarPair(img)
 }
 
 func driftROI(bounds image.Rectangle) Rect {
@@ -203,22 +185,6 @@ func ReadSPFill(img image.Image, sp Rect) BarRead {
 	}
 	row := sp.Y + sp.H - 1
 	return readBarFillSingleRow(img, sp.X, row, sp.W, isSPFill)
-}
-
-func FindHPBar(img image.Image) Bar {
-	mapped, err := MapPlayerBars(img)
-	if err != nil {
-		return Bar{}
-	}
-	return barFromRead(mapped.HP, ReadHPFill(img, mapped.HP))
-}
-
-func FindSPBar(img image.Image) Bar {
-	mapped, err := MapPlayerBars(img)
-	if err != nil {
-		return Bar{}
-	}
-	return barFromRead(mapped.SP, ReadSPFill(img, mapped.SP))
 }
 
 func NeedsRemap(bars MappedBars, hp, sp BarRead) bool {
@@ -637,75 +603,6 @@ func extendSPBarLeft(img image.Image, y, fromX int) int {
 	return left
 }
 
-func extendBarRightRow(img image.Image, y, fromX int, isRowPixel func(r, g, b uint8) bool) int {
-	right := fromX
-	b := img.Bounds()
-	gap := 0
-	for x := fromX + 1; x < b.Max.X; x++ {
-		rp, gp, bp := pixelAt(img, x, y)
-		if isRowPixel(rp, gp, bp) {
-			right = x
-			gap = 0
-			continue
-		}
-		gap++
-		if gap >= barExtentGap {
-			break
-		}
-	}
-	return right
-}
-
-func isHPBarRowPixel(r, g, b uint8) bool {
-	return IsHPPixel(r, g, b) || isHPTrack(r, g, b)
-}
-
-func isSPBarRowPixel(r, g, b uint8) bool {
-	return IsSPPixel(r, g, b)
-}
-
-func isBarRowPixel(img image.Image, x, y int) bool {
-	rp, gp, bp := pixelAt(img, x, y)
-	return isHPBarRowPixel(rp, gp, bp) || isSPBarRowPixel(rp, gp, bp)
-}
-
-func readBarFillColumns(img image.Image, r Rect, isPixel func(r, g, b uint8) bool) BarRead {
-	return readBarFillColumnsMinHits(img, r, isPixel, 0)
-}
-
-func readBarFillColumnsMinHits(img image.Image, r Rect, isPixel func(r, g, b uint8) bool, minHits int) BarRead {
-	if r.W < 1 || r.H < 1 {
-		return BarRead{Found: false}
-	}
-	if minHits < 1 {
-		minHits = r.H / 2
-		if minHits < 1 {
-			minHits = 1
-		}
-	}
-
-	filled := 0
-	for col := 0; col < r.W; col++ {
-		hits := 0
-		x := r.X + col
-		for row := 0; row < r.H; row++ {
-			rp, gp, bp := pixelAt(img, x, r.Y+row)
-			if isPixel(rp, gp, bp) {
-				hits++
-			}
-		}
-		if hits >= minHits {
-			filled++
-			continue
-		}
-		if filled > 0 {
-			break
-		}
-	}
-
-	return barReadFromFill(filled, r.W)
-}
-
 func readBarFillSingleRow(img image.Image, x0, y, w int, isPixel func(r, g, b uint8) bool) BarRead {
 	filled := 0
 	for col := 0; col < w; col++ {
@@ -745,10 +642,6 @@ func IsSPPixel(r, g, b uint8) bool {
 	return isSPBlue(r, g, b) || isSPCyan(r, g, b)
 }
 
-func isBarTrack(r, g, b uint8) bool {
-	return isHPTrack(r, g, b)
-}
-
 func isHPTrack(r, g, b uint8) bool {
 	if IsHPPixel(r, g, b) || IsSPPixel(r, g, b) {
 		return false
@@ -762,17 +655,6 @@ func isHPTrack(r, g, b uint8) bool {
 		return false
 	}
 	return bi <= gi && absInt(ri-gi) < 30
-}
-
-func isSPTrack(r, g, b uint8) bool {
-	if IsHPPixel(r, g, b) || IsSPPixel(r, g, b) {
-		return false
-	}
-	if isBarBackground(r, g, b) {
-		return false
-	}
-	ri, gi, bi := int(r), int(g), int(b)
-	return bi >= 35 && bi > gi+6 && bi > ri+10
 }
 
 func isBarBackground(r, g, b uint8) bool {
@@ -849,10 +731,6 @@ func isSPCyan(r, g, b uint8) bool {
 	return bi >= 80 && gi >= 60 && bi > ri+10 && gi > ri+5
 }
 
-func isBarFill(r, g, b uint8) bool {
-	return IsHPPixel(r, g, b) || IsSPPixel(r, g, b)
-}
-
 func colorNear(r, g, b, refR, refG, refB uint8, tol int) bool {
 	return absInt(int(r)-int(refR)) <= tol &&
 		absInt(int(g)-int(refG)) <= tol &&
@@ -912,7 +790,15 @@ func FormatBarReadLog(name string, r Rect, br BarRead) string {
 		"percent=" + ftoa(br.Percent)
 }
 
-func FormatMappedBarsLog(img image.Image, bars MappedBars, hp, sp BarRead, refreshed bool) string {
+type barPairDebugScan struct {
+	screenCX, screenCY int
+	roi                Rect
+	hpRuns, spRuns     []ColorRun
+	hpRun, spRun       ColorRun
+	pairCX, pairCY     int
+}
+
+func scanBarPairDebug(img image.Image) barPairDebugScan {
 	b := img.Bounds()
 	cx := b.Min.X + b.Dx()/2
 	cy := b.Min.Y + b.Dy()/2
@@ -923,22 +809,37 @@ func FormatMappedBarsLog(img image.Image, bars MappedBars, hp, sp BarRead, refre
 	spRuns := consolidateRuns(scanColorRuns(img, roi, IsSPPixel, "sp"))
 	hpRun, spRun, _, _ := findPlayerBarPair(hpRuns, spRuns, roi, roiCX, roiCY)
 	pcx, pcy := pairCenter(hpRun, spRun)
+	return barPairDebugScan{
+		screenCX: cx,
+		screenCY: cy,
+		roi:      roi,
+		hpRuns:   hpRuns,
+		spRuns:   spRuns,
+		hpRun:    hpRun,
+		spRun:    spRun,
+		pairCX:   pcx,
+		pairCY:   pcy,
+	}
+}
+
+func FormatMappedBarsLog(img image.Image, bars MappedBars, hp, sp BarRead, refreshed bool) string {
+	scan := scanBarPairDebug(img)
 	mode := "reused"
 	if refreshed {
 		mode = "refreshed"
 	}
 	age := time.Since(bars.LastMapped)
-	return "driftROI x=" + itoa(roi.X) + " y=" + itoa(roi.Y) +
-		" w=" + itoa(roi.W) + " h=" + itoa(roi.H) + "\n" +
-		"screenCenter x=" + itoa(cx) + " y=" + itoa(cy) + "\n" +
-		"pairCenter x=" + itoa(pcx) + " y=" + itoa(pcy) + "\n" +
+	return "driftROI x=" + itoa(scan.roi.X) + " y=" + itoa(scan.roi.Y) +
+		" w=" + itoa(scan.roi.W) + " h=" + itoa(scan.roi.H) + "\n" +
+		"screenCenter x=" + itoa(scan.screenCX) + " y=" + itoa(scan.screenCY) + "\n" +
+		"pairCenter x=" + itoa(scan.pairCX) + " y=" + itoa(scan.pairCY) + "\n" +
 		"barPair=" + mode + " remapAge=" + formatDuration(age) +
 		" recalInterval=" + formatDuration(BarPairRecalInterval) + "\n" +
-		"hpRuns=" + itoa(len(hpRuns)) + " spRuns=" + itoa(len(spRuns)) + "\n" +
-		"selectedHP x1=" + itoa(hpRun.X1) + " x2=" + itoa(hpRun.X2) +
-		" y=" + itoa(hpRun.Y) + " w=" + itoa(hpRun.Width) + "\n" +
-		"selectedSP x1=" + itoa(spRun.X1) + " x2=" + itoa(spRun.X2) +
-		" y=" + itoa(spRun.Y) + " w=" + itoa(spRun.Width) + "\n" +
+		"hpRuns=" + itoa(len(scan.hpRuns)) + " spRuns=" + itoa(len(scan.spRuns)) + "\n" +
+		"selectedHP x1=" + itoa(scan.hpRun.X1) + " x2=" + itoa(scan.hpRun.X2) +
+		" y=" + itoa(scan.hpRun.Y) + " w=" + itoa(scan.hpRun.Width) + "\n" +
+		"selectedSP x1=" + itoa(scan.spRun.X1) + " x2=" + itoa(scan.spRun.X2) +
+		" y=" + itoa(scan.spRun.Y) + " w=" + itoa(scan.spRun.Width) + "\n" +
 		"mapScore=" + itoa(bars.MapScore) + "\n" +
 		"mapped HP rect x=" + itoa(bars.HP.X) + " y=" + itoa(bars.HP.Y) +
 		" w=" + itoa(bars.HP.W) + " h=" + itoa(bars.HP.H) + "\n" +
@@ -956,41 +857,24 @@ func formatDuration(d time.Duration) string {
 	return itoa(int(ms)) + "ms"
 }
 
-func SaveBarSearchDebug(img image.Image, hp, sp Bar, path string) error {
-	mapped, err := MapPlayerBars(img)
-	if err != nil {
-		return err
-	}
-	return SaveMappedBarsDebug(img, mapped, path)
-}
-
 func SaveMappedBarsDebug(img image.Image, bars MappedBars, path string) error {
 	if path == "" {
 		return nil
 	}
-	b := img.Bounds()
-	cx := b.Min.X + b.Dx()/2
-	cy := b.Min.Y + b.Dy()/2
-	roi := driftROI(b)
-	roiCX := roi.X + roi.W/2
-	roiCY := roi.Y + roi.H/2
-	hpRuns := consolidateRuns(scanColorRuns(img, roi, IsHPPixel, "hp"))
-	spRuns := consolidateRuns(scanColorRuns(img, roi, IsSPPixel, "sp"))
-	hpRun, spRun, _, _ := findPlayerBarPair(hpRuns, spRuns, roi, roiCX, roiCY)
-	pcx, pcy := pairCenter(hpRun, spRun)
+	scan := scanBarPairDebug(img)
 
 	out := imageToRGBA(img)
-	drawRectOutline(out, roi, color.RGBA{R: 255, G: 255, B: 0, A: 255})
-	drawCross(out, cx, cy, color.RGBA{R: 255, G: 0, B: 255, A: 255})
-	drawCross(out, pcx, pcy, color.RGBA{R: 255, G: 128, B: 0, A: 255})
-	for _, r := range hpRuns {
+	drawRectOutline(out, scan.roi, color.RGBA{R: 255, G: 255, B: 0, A: 255})
+	drawCross(out, scan.screenCX, scan.screenCY, color.RGBA{R: 255, G: 0, B: 255, A: 255})
+	drawCross(out, scan.pairCX, scan.pairCY, color.RGBA{R: 255, G: 128, B: 0, A: 255})
+	for _, r := range scan.hpRuns {
 		drawRunOutline(out, r, color.RGBA{R: 0, G: 180, B: 0, A: 255})
 	}
-	for _, r := range spRuns {
+	for _, r := range scan.spRuns {
 		drawRunOutline(out, r, color.RGBA{R: 80, G: 160, B: 255, A: 255})
 	}
-	drawRunOutline(out, hpRun, color.RGBA{R: 0, G: 255, B: 0, A: 255})
-	drawRunOutline(out, spRun, color.RGBA{R: 0, G: 200, B: 255, A: 255})
+	drawRunOutline(out, scan.hpRun, color.RGBA{R: 0, G: 255, B: 0, A: 255})
+	drawRunOutline(out, scan.spRun, color.RGBA{R: 0, G: 200, B: 255, A: 255})
 
 	hp := barFromRead(bars.HP, ReadHPFill(img, bars.HP))
 	sp := barFromRead(bars.SP, ReadSPFill(img, bars.SP))
@@ -1062,23 +946,6 @@ func drawBarRectDebug(img *image.RGBA, bar Bar, outline, fill color.RGBA) {
 			img.Set(x, bar.Y+dy, fill)
 		}
 	}
-}
-
-func FormatBarLog(name string, bar Bar) string {
-	if !bar.Found {
-		return name + ": not found"
-	}
-	h := bar.Height
-	if h < 1 {
-		h = barRowHeight
-	}
-	return name + ":\n" +
-		"x=" + itoa(bar.Left) + "\n" +
-		"y=" + itoa(bar.Y) + "\n" +
-		"w=" + itoa(bar.Width) + "\n" +
-		"h=" + itoa(h) + "\n" +
-		"fillPx=" + itoa(bar.FilledWidth) + "\n" +
-		"percent=" + ftoa(bar.Percent)
 }
 
 func absInt(v int) int {

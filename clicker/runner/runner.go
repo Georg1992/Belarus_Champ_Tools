@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	"github.com/Alia5/VIIPER/viiperclient"
 )
 
 const (
@@ -128,8 +126,6 @@ func (r *Runner) settings() ([]int32, time.Duration, bool) {
 	return triggerVKs, time.Duration(delayMs) * time.Millisecond, mouseClick
 }
 
-var noopLog = func(string) {}
-
 func (r *Runner) log(msg string) {
 	r.cfg.Log(msg)
 }
@@ -143,13 +139,13 @@ func (r *Runner) run(ctx context.Context) {
 		}
 
 		if session.Paused() {
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(PollInterval)
 			continue
 		}
 
 		triggerVKs, delay, mouseClick := r.settings()
 		if !TriggerHeld(triggerVKs) {
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(PollInterval)
 			continue
 		}
 
@@ -174,30 +170,6 @@ func (r *Runner) run(ctx context.Context) {
 			}
 		}
 	}
-}
-
-func ensureBus(ctx context.Context, api *viiperclient.Client, log func(string)) (uint32, bool, error) {
-	busesResp, err := api.BusListCtx(ctx)
-	if err != nil {
-		return 0, false, err
-	}
-
-	if len(busesResp.Buses) > 0 {
-		busID := busesResp.Buses[0]
-		for _, b := range busesResp.Buses[1:] {
-			if b < busID {
-				busID = b
-			}
-		}
-		return busID, false, nil
-	}
-
-	resp, err := api.BusCreateCtx(ctx, 0)
-	if err != nil {
-		return 0, false, err
-	}
-	log(fmt.Sprintf("created VIIPER bus %d", resp.BusID))
-	return resp.BusID, true, nil
 }
 
 func runCycle(ctx context.Context, session *ViiperSession, vk int32, triggerVKs []int32, delay time.Duration, mouseClick bool) error {
@@ -265,23 +237,4 @@ func sleep(ctx context.Context, d time.Duration) {
 	case <-ctx.Done():
 	case <-time.After(d):
 	}
-}
-
-func cleanupDevice(ctx context.Context, api *viiperclient.Client, busID uint32, devID string, log func(string)) {
-	if _, err := api.DeviceRemoveCtx(ctx, busID, devID); err != nil {
-		log(fmt.Sprintf("device remove %d-%s failed: %v", busID, devID, err))
-		return
-	}
-	log(fmt.Sprintf("removed device %d-%s", busID, devID))
-}
-
-func cleanupBus(ctx context.Context, api *viiperclient.Client, busID uint32, created bool, log func(string)) {
-	if !created {
-		return
-	}
-	if _, err := api.BusRemoveCtx(ctx, busID); err != nil {
-		log(fmt.Sprintf("bus remove %d failed: %v", busID, err))
-		return
-	}
-	log(fmt.Sprintf("removed bus %d", busID))
 }

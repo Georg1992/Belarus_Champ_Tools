@@ -77,7 +77,8 @@ func ensureViiperServer() (started bool, err error) {
 		killProcessTree(serverPID)
 		_, _ = cmd.Process.Wait()
 		serverPID = 0
-		removeViiperTempDir()
+		removeViiperTempDirPath(viiperTempDir)
+		viiperTempDir = ""
 		return false, err
 	}
 
@@ -120,14 +121,6 @@ func killProcessTree(pid int) {
 		return
 	}
 	_ = exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").Run()
-}
-
-func removeViiperTempDir() {
-	serverMu.Lock()
-	dir := viiperTempDir
-	viiperTempDir = ""
-	serverMu.Unlock()
-	removeViiperTempDirPath(dir)
 }
 
 func removeViiperTempDirPath(dir string) {

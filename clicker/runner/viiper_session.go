@@ -100,7 +100,7 @@ func (s *ViiperSession) StartPauseWatcher(ctx context.Context, log func(string))
 			if PollKeyToggle(&pauseKeyDown, PauseVK) {
 				s.togglePaused(log)
 			}
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(PollInterval)
 		}
 	}()
 }
@@ -129,7 +129,7 @@ func (s *ViiperSession) Close() {
 			s.pauseCancel()
 			<-s.pauseDone
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), SessionCloseWait)
 		defer cancel()
 
 		s.writeMu.Lock()
@@ -204,4 +204,49 @@ func mouseDownLocked(stream *viiperclient.DeviceStream) error {
 
 func mouseUpLocked(stream *viiperclient.DeviceStream) error {
 	return stream.WriteBinary(&mouse.InputState{})
+}
+
+var noopLog = func(string) {}
+
+func ensureBus(ctx context.Context, api *viiperclient.Client, log func(string)) (uint32, bool, error) {
+	busesResp, err := api.BusListCtx(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+
+	if len(busesResp.Buses) > 0 {
+		busID := busesResp.Buses[0]
+		for _, b := range busesResp.Buses[1:] {
+			if b < busID {
+				busID = b
+			}
+		}
+		return busID, false, nil
+	}
+
+	resp, err := api.BusCreateCtx(ctx, 0)
+	if err != nil {
+		return 0, false, err
+	}
+	log(fmt.Sprintf("created VIIPER bus %d", resp.BusID))
+	return resp.BusID, true, nil
+}
+
+func cleanupDevice(ctx context.Context, api *viiperclient.Client, busID uint32, devID string, log func(string)) {
+	if _, err := api.DeviceRemoveCtx(ctx, busID, devID); err != nil {
+		log(fmt.Sprintf("device remove %d-%s failed: %v", busID, devID, err))
+		return
+	}
+	log(fmt.Sprintf("removed device %d-%s", busID, devID))
+}
+
+func cleanupBus(ctx context.Context, api *viiperclient.Client, busID uint32, created bool, log func(string)) {
+	if !created {
+		return
+	}
+	if _, err := api.BusRemoveCtx(ctx, busID); err != nil {
+		log(fmt.Sprintf("bus remove %d failed: %v", busID, err))
+		return
+	}
+	log(fmt.Sprintf("removed bus %d", busID))
 }

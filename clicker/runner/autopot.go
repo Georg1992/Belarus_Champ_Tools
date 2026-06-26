@@ -6,10 +6,7 @@ import (
 	"image"
 	"os"
 	"sync"
-	"time"
 )
-
-const autoPotKeyHold = 1 * time.Millisecond
 
 type AutoPotConfig struct {
 	Session     *ViiperSession
@@ -151,13 +148,13 @@ func (a *AutoPotRunner) run(ctx context.Context) {
 			return
 		}
 		if session.Paused() {
-			sleep(ctx, 10*time.Millisecond)
+			sleep(ctx, PollInterval)
 			continue
 		}
 
 		img, _, err := CapturePlayerBarSearch()
 		if err != nil {
-			sleep(ctx, 50*time.Millisecond)
+			sleep(ctx, CaptureRetryDelay)
 			continue
 		}
 
@@ -179,7 +176,7 @@ func (a *AutoPotRunner) run(ctx context.Context) {
 			continue
 		}
 
-		sleep(ctx, autoPotKeyHold)
+		sleep(ctx, KeyTapHold)
 	}
 }
 
@@ -204,12 +201,12 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, v
 			return
 		}
 		if session.Paused() {
-			sleep(ctx, 10*time.Millisecond)
+			sleep(ctx, PollInterval)
 			continue
 		}
 		img, _, err := CapturePlayerBarSearch()
 		if err != nil {
-			sleep(ctx, 10*time.Millisecond)
+			sleep(ctx, PollInterval)
 			continue
 		}
 		_, read := a.readOneBar(img, hpBar)
@@ -217,7 +214,7 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, v
 			return
 		}
 		before := read.Percent
-		if err := session.TapKey(vk, autoPotKeyHold); err != nil {
+		if err := session.TapKey(vk, KeyTapHold); err != nil {
 			a.log(fmt.Sprintf("Key %s failed: %v", KeyName(vk), err))
 			return
 		}
@@ -226,7 +223,7 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, v
 				return
 			}
 			if session.Paused() {
-				sleep(ctx, 10*time.Millisecond)
+				sleep(ctx, PollInterval)
 				continue
 			}
 			img, _, err := CapturePlayerBarSearch()

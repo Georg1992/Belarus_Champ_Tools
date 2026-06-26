@@ -66,7 +66,7 @@ func fixturePNGFiles(t *testing.T) []string {
 	return files
 }
 
-func TestFindHPBarScreens(t *testing.T) {
+func TestRefreshBarPairFixtures(t *testing.T) {
 	known := knownBarCases()
 	for _, file := range fixturePNGFiles(t) {
 		t.Run(file, func(t *testing.T) {
@@ -84,7 +84,7 @@ func TestFindHPBarScreens(t *testing.T) {
 			assertBarPairGeometry(t, mapped)
 
 			debugName := "debug_" + file
-			_ = SaveMappedBarsDebug(img, mapped, filepath.Join(testdataDir(t), debugName))
+			_ = SaveMappedBarsDebug(img, mapped, filepath.Join(t.TempDir(), debugName))
 
 			t.Logf("HPRect=%+v SPRect=%+v score=%d hp=%.1f%% sp=%.1f%%",
 				mapped.HP, mapped.SP, mapped.MapScore, hp.Percent, sp.Percent)
@@ -123,16 +123,6 @@ func assertBarPairGeometry(t *testing.T, mapped MappedBars) {
 	}
 	if mapped.HP.W < 1 || mapped.SP.W < 1 {
 		t.Fatalf("invalid bar width: HP=%+v SP=%+v", mapped.HP, mapped.SP)
-	}
-}
-
-func assertPercentSane(t *testing.T, hp, sp BarRead) {
-	t.Helper()
-	if hp.Percent < 0 || hp.Percent > 100 {
-		t.Fatalf("HP percent out of range: %.1f", hp.Percent)
-	}
-	if sp.Percent < 0 || sp.Percent > 100 {
-		t.Fatalf("SP percent out of range: %.1f", sp.Percent)
 	}
 }
 
