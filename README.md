@@ -60,6 +60,16 @@ Users extract the ZIP and run `Install.cmd`. See `packaging/README.txt`.
 4. Press **End** to pause or resume (server stays running)
 5. Click **Stop** or close the app to turn off
 
+### AutoPot tab
+
+1. Keep the game visible with your character near **screen center** (green HP / blue SP bars under the sprite)
+2. Set trigger **%** and assign **hotkeys** for HP and SP potions
+3. Click **Start**
+
+Bars under the character are detected by color in a small center region. When HP or SP drops below the threshold, the assigned key is pressed until the bar recovers.
+
+Set `BAR_SEARCH_DEBUG=1` to save a `bar_search_debug.png` crop for calibration.
+
 Status indicator: red **OFF**, green **ON**, yellow **PAUSE**.
 
 ### Click loop
@@ -89,6 +99,9 @@ Default delay: **50 ms**. If a game misses clicks, try **50–100 ms**.
 | `clicker/gui/status_badge.go` | ON / OFF / PAUSE indicator |
 | `clicker/gui/server.go` | Embedded VIIPER lifecycle |
 | `clicker/runner/runner.go` | Click loop, End-key pause |
+| `clicker/runner/player_bars.go` | HP/SP bar detection under character (center crop) |
+| `clicker/runner/autopot.go` | AutoPot healing loop |
+| `clicker/runner/screen_windows.go` | Center screen region capture |
 | `packaging/` | Install/Uninstall scripts and user READMEs |
 | `release/` | Generated folder + ZIP (`package.ps1`) |
 | `VIIPER/` | Upstream VIIPER (`replace` in `clicker/go.mod`) |

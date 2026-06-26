@@ -22,6 +22,7 @@ type Config struct {
 	APIAddr        string
 	TriggerVKs     []int32
 	DelayMs        int
+	MouseClick     bool
 	Log            func(string)
 	OnPauseChanged func(bool)
 }
@@ -51,6 +52,7 @@ type Runner struct {
 	liveMu         sync.RWMutex
 	liveTriggerVKs []int32
 	liveDelayMs    int
+	liveMouseClick bool
 
 	pauseMu sync.RWMutex
 	paused  bool
@@ -79,6 +81,7 @@ func (r *Runner) Start() error {
 	r.running = true
 	r.liveTriggerVKs = append([]int32(nil), r.cfg.TriggerVKs...)
 	r.liveDelayMs = r.cfg.DelayMs
+	r.liveMouseClick = r.cfg.MouseClick
 	r.done = make(chan struct{})
 	r.setPaused(false)
 	r.mu.Unlock()
@@ -115,12 +118,13 @@ func (r *Runner) Wait() {
 	}
 }
 
-func (r *Runner) UpdateSettings(triggerVKs []int32, delayMs int) {
+func (r *Runner) UpdateSettings(triggerVKs []int32, delayMs int, mouseClick bool) {
 	r.liveMu.Lock()
 	r.liveTriggerVKs = append([]int32(nil), triggerVKs...)
 	if delayMs > 0 {
 		r.liveDelayMs = delayMs
 	}
+	r.liveMouseClick = mouseClick
 	r.liveMu.Unlock()
 }
 
@@ -149,12 +153,13 @@ func (r *Runner) togglePaused() bool {
 	return paused
 }
 
-func (r *Runner) settings() ([]int32, time.Duration) {
+func (r *Runner) settings() ([]int32, time.Duration, bool) {
 	r.liveMu.RLock()
 	delayMs := r.liveDelayMs
 	triggerVKs := append([]int32(nil), r.liveTriggerVKs...)
+	mouseClick := r.liveMouseClick
 	r.liveMu.RUnlock()
-	return triggerVKs, time.Duration(delayMs) * time.Millisecond
+	return triggerVKs, time.Duration(delayMs) * time.Millisecond, mouseClick
 }
 
 var noopLog = func(string) {}
@@ -212,9 +217,14 @@ func (r *Runner) run(ctx context.Context) {
 		cleanupBus(cleanupCtx, api, busID, createdBus, noopLog)
 	}()
 
-	triggerVKs, delay := r.settings()
+	triggerVKs, delay, mouseClick := r.settings()
 	r.log(fmt.Sprintf("Trigger keys: %s", KeysText(triggerVKs)))
 	r.log(fmt.Sprintf("Delay: %d ms", delay.Milliseconds()))
+	if mouseClick {
+		r.log("Mode: key + mouse click")
+	} else {
+		r.log("Mode: key only")
+	}
 	if len(triggerVKs) == 0 {
 		r.log("Add trigger keys in the GUI — you can do this before or after launching the game")
 	}
@@ -240,7 +250,7 @@ func (r *Runner) run(ctx context.Context) {
 			continue
 		}
 
-		triggerVKs, delay := r.settings()
+		triggerVKs, delay, _ = r.settings()
 		if !TriggerHeld(triggerVKs) {
 			time.Sleep(10 * time.Millisecond)
 			continue
@@ -254,9 +264,9 @@ func (r *Runner) run(ctx context.Context) {
 				return
 			}
 
-			triggerVKs, delay = r.settings()
+		triggerVKs, delay, mouseClick = r.settings()
 			triggerVK, _ = ActiveTrigger(triggerVKs)
-			if err := runCycle(ctx, keyStream, mouseStream, triggerVK, triggerVKs, delay); err != nil {
+			if err := runCycle(ctx, keyStream, mouseStream, triggerVK, triggerVKs, delay, mouseClick); err != nil {
 				if ctx.Err() != nil {
 					return
 				}
@@ -312,7 +322,7 @@ func ensureBus(ctx context.Context, api *viiperclient.Client, log func(string)) 
 	return resp.BusID, true, nil
 }
 
-func runCycle(ctx context.Context, keyStream, mouseStream *viiperclient.DeviceStream, vk int32, triggerVKs []int32, delay time.Duration) error {
+func runCycle(ctx context.Context, keyStream, mouseStream *viiperclient.DeviceStream, vk int32, triggerVKs []int32, delay time.Duration, mouseClick bool) error {
 	defer releaseAll(keyStream, mouseStream)
 
 	step := time.Duration(StepHoldMs) * time.Millisecond
@@ -327,18 +337,22 @@ func runCycle(ctx context.Context, keyStream, mouseStream *viiperclient.DeviceSt
 		return ctx.Err()
 	}
 
-	if err := mouseDown(mouseStream); err != nil {
-		return err
+	if mouseClick {
+		if err := mouseDown(mouseStream); err != nil {
+			return err
+		}
+		sleep(ctx, step)
 	}
-	sleep(ctx, step)
 
 	if err := keyUp(keyStream); err != nil {
 		return err
 	}
-	sleep(ctx, step)
 
-	if err := mouseUp(mouseStream); err != nil {
-		return err
+	if mouseClick {
+		sleep(ctx, step)
+		if err := mouseUp(mouseStream); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -354,7 +368,7 @@ func waitDelay(ctx context.Context, triggerVKs []int32, d time.Duration) bool {
 		if ctx.Err() != nil {
 			return false
 		}
-		if !TriggerHeld(triggerVKs) {
+		if len(triggerVKs) > 0 && !TriggerHeld(triggerVKs) {
 			return true
 		}
 		time.Sleep(time.Millisecond)

@@ -19,24 +19,51 @@ type guiApp struct {
 	mainWindow *walk.MainWindow
 	logList    *walk.ListBox
 	logItems   []string
-	keyLabel   *walk.Label
-	delayEdit  *walk.LineEdit
+
+	// Clicker tab
+	keyLabel      *walk.Label
+	delayEdit     *walk.LineEdit
+	mouseClickCB  *walk.CheckBox
 	startBtn      *walk.PushButton
 	stopBtn       *walk.PushButton
 	statusBadge   *statusBadge
 	bindBtn       *walk.PushButton
 	clearBtn      *walk.PushButton
 
+	// Timer keys (clicker tab)
+	timerSlots         [runner.TimerKeySlotCount]timerSlotWidgets
+	timerKeyVKs        [runner.TimerKeySlotCount]int32
+	timerVisibleCount  int
+	timerAddBtn        *walk.PushButton
+	timerBindingSlot   int
+
+	// AutoPot tab
+	hpEnabledCB     *walk.CheckBox
+	spEnabledCB        *walk.CheckBox
+	hpThresholdEdit    *walk.LineEdit
+	spThresholdEdit    *walk.LineEdit
+	hpKeyLabel         *walk.Label
+	spKeyLabel         *walk.Label
+	hpBindBtn          *walk.PushButton
+	hpClearBtn         *walk.PushButton
+	spBindBtn          *walk.PushButton
+	spClearBtn         *walk.PushButton
+
 	mu              sync.Mutex
 	shutdownOnce    sync.Once
 	runner          *runner.Runner
+	autopotRunner   *runner.AutoPotRunner
+	timerKeyRunner  *runner.TimerKeyRunner
 	triggerVKs      []int32
+	hpKeyVK         int32
+	spKeyVK         int32
 	binding         bool
+	autopotBinding  bool
 	lastLoggedDelay int
 }
 
 func main() {
-	app := &guiApp{}
+	app := &guiApp{timerBindingSlot: -1}
 	defer app.shutdown()
 
 	if err := app.createWindow(); err != nil {
@@ -48,12 +75,18 @@ func (a *guiApp) shutdown() {
 	a.shutdownOnce.Do(func() {
 		a.mu.Lock()
 		r := a.runner
+		ap := a.autopotRunner
 		a.runner = nil
+		a.autopotRunner = nil
 		a.mu.Unlock()
 
 		if r != nil {
 			r.Stop()
 			r.Wait()
+		}
+		if ap != nil {
+			ap.Stop()
+			ap.Wait()
 		}
 
 		stopViiperServerIfStarted()
@@ -70,10 +103,10 @@ func (a *guiApp) createWindow() error {
 	if err := mw.SetTitle("BELARUS CHAMP CLICKER"); err != nil {
 		return err
 	}
-	if err := mw.SetMinMaxSize(walk.Size{Width: 560, Height: 480}, walk.Size{}); err != nil {
+	if err := mw.SetMinMaxSize(walk.Size{Width: 580, Height: 520}, walk.Size{}); err != nil {
 		return err
 	}
-	if err := mw.SetSize(walk.Size{Width: 560, Height: 480}); err != nil {
+	if err := mw.SetSize(walk.Size{Width: 580, Height: 520}); err != nil {
 		return err
 	}
 
@@ -96,234 +129,40 @@ func (a *guiApp) createWindow() error {
 		return err
 	}
 
-	runGB, err := walk.NewGroupBox(mw)
-	if err != nil {
-		return err
-	}
-	if err := runGB.SetTitle("1. Clicker control"); err != nil {
-		return err
-	}
-	runLayout := walk.NewVBoxLayout()
-	runLayout.SetSpacing(8)
-	if err := runGB.SetLayout(runLayout); err != nil {
+	if err := a.buildControlPanel(mw); err != nil {
 		return err
 	}
 
-	hintFont, err := walk.NewFont("Segoe UI", 8, 0)
+	tabs, err := walk.NewTabWidget(mw)
 	if err != nil {
 		return err
 	}
 
-	controlRow, err := walk.NewComposite(runGB)
+	clickerPage, err := walk.NewTabPage()
 	if err != nil {
 		return err
 	}
-	controlHBox := walk.NewHBoxLayout()
-	controlHBox.SetSpacing(16)
-	if err := controlRow.SetLayout(controlHBox); err != nil {
+	if err := clickerPage.SetTitle("Clicker"); err != nil {
+		return err
+	}
+	if err := a.buildClickerTab(clickerPage); err != nil {
+		return err
+	}
+	if err := tabs.Pages().Add(clickerPage); err != nil {
 		return err
 	}
 
-	leftPanel, err := walk.NewComposite(controlRow)
+	autopotPage, err := walk.NewTabPage()
 	if err != nil {
 		return err
 	}
-	leftVBox := walk.NewVBoxLayout()
-	leftVBox.SetSpacing(4)
-	if err := leftPanel.SetLayout(leftVBox); err != nil {
+	if err := autopotPage.SetTitle("AutoPot"); err != nil {
 		return err
 	}
-
-	btnRow, err := walk.NewComposite(leftPanel)
-	if err != nil {
+	if err := a.buildAutoPotTab(autopotPage); err != nil {
 		return err
 	}
-	btnHBox := walk.NewHBoxLayout()
-	btnHBox.SetSpacing(10)
-	if err := btnRow.SetLayout(btnHBox); err != nil {
-		return err
-	}
-
-	a.startBtn, err = walk.NewPushButton(btnRow)
-	if err != nil {
-		return err
-	}
-	if err := a.startBtn.SetText("Start"); err != nil {
-		return err
-	}
-	a.startBtn.Clicked().Attach(a.onStart)
-
-	a.stopBtn, err = walk.NewPushButton(btnRow)
-	if err != nil {
-		return err
-	}
-	if err := a.stopBtn.SetText("Stop"); err != nil {
-		return err
-	}
-	a.stopBtn.SetEnabled(false)
-	a.stopBtn.Clicked().Attach(a.onStop)
-
-	startHint, err := walk.NewLabel(leftPanel)
-	if err != nil {
-		return err
-	}
-	if err := startHint.SetText("Start before launching the game."); err != nil {
-		return err
-	}
-	startHint.SetFont(hintFont)
-
-	if _, err := walk.NewHSpacer(controlRow); err != nil {
-		return err
-	}
-
-	rightPanel, err := walk.NewComposite(controlRow)
-	if err != nil {
-		return err
-	}
-	rightVBox := walk.NewVBoxLayout()
-	rightVBox.SetSpacing(4)
-	if err := rightPanel.SetLayout(rightVBox); err != nil {
-		return err
-	}
-
-	badgeRow, err := walk.NewComposite(rightPanel)
-	if err != nil {
-		return err
-	}
-	badgeHBox := walk.NewHBoxLayout()
-	if err := badgeRow.SetLayout(badgeHBox); err != nil {
-		return err
-	}
-	if _, err := walk.NewHSpacer(badgeRow); err != nil {
-		return err
-	}
-	a.statusBadge, err = newStatusBadge(badgeRow)
-	if err != nil {
-		return err
-	}
-	a.setClickerStatus(clickerStatusStopped)
-
-	pauseRow, err := walk.NewComposite(rightPanel)
-	if err != nil {
-		return err
-	}
-	pauseHBox := walk.NewHBoxLayout()
-	pauseHBox.SetSpacing(6)
-	if err := pauseRow.SetLayout(pauseHBox); err != nil {
-		return err
-	}
-	if _, err := walk.NewHSpacer(pauseRow); err != nil {
-		return err
-	}
-
-	pauseCaption, err := walk.NewLabel(pauseRow)
-	if err != nil {
-		return err
-	}
-	if err := pauseCaption.SetText("Pause / resume: End"); err != nil {
-		return err
-	}
-	pauseCaption.SetFont(hintFont)
-
-	configGB, err := walk.NewGroupBox(mw)
-	if err != nil {
-		return err
-	}
-	if err := configGB.SetTitle("2. Configure clicker"); err != nil {
-		return err
-	}
-	configLayout := walk.NewVBoxLayout()
-	configLayout.SetSpacing(8)
-	if err := configGB.SetLayout(configLayout); err != nil {
-		return err
-	}
-
-	keyRow, err := walk.NewComposite(configGB)
-	if err != nil {
-		return err
-	}
-	keyHBox := walk.NewHBoxLayout()
-	keyHBox.SetSpacing(10)
-	if err := keyRow.SetLayout(keyHBox); err != nil {
-		return err
-	}
-
-	triggerLabel, err := walk.NewLabel(keyRow)
-	if err != nil {
-		return err
-	}
-	if err := triggerLabel.SetText("Trigger keys:"); err != nil {
-		return err
-	}
-
-	a.keyLabel, err = walk.NewLabel(keyRow)
-	if err != nil {
-		return err
-	}
-	if err := a.keyLabel.SetText(runner.KeysText(a.triggerVKs)); err != nil {
-		return err
-	}
-
-	a.bindBtn, err = walk.NewPushButton(keyRow)
-	if err != nil {
-		return err
-	}
-	if err := a.bindBtn.SetText("Add key..."); err != nil {
-		return err
-	}
-	a.bindBtn.Clicked().Attach(a.onBindKey)
-
-	a.clearBtn, err = walk.NewPushButton(keyRow)
-	if err != nil {
-		return err
-	}
-	if err := a.clearBtn.SetText("Clear keys"); err != nil {
-		return err
-	}
-	a.clearBtn.Clicked().Attach(a.onClearKeys)
-
-	delayRow, err := walk.NewComposite(configGB)
-	if err != nil {
-		return err
-	}
-	delayHBox := walk.NewHBoxLayout()
-	delayHBox.SetSpacing(10)
-	if err := delayRow.SetLayout(delayHBox); err != nil {
-		return err
-	}
-
-	delayLabel, err := walk.NewLabel(delayRow)
-	if err != nil {
-		return err
-	}
-	if err := delayLabel.SetText("Delay (ms):"); err != nil {
-		return err
-	}
-
-	a.delayEdit, err = walk.NewLineEdit(delayRow)
-	if err != nil {
-		return err
-	}
-	a.delayEdit.SetMaxLength(6)
-	if err := a.delayEdit.SetMinMaxSize(walk.Size{Width: 80, Height: 0}, walk.Size{Width: 80, Height: 0}); err != nil {
-		return err
-	}
-	if err := a.delayEdit.SetText(strconv.Itoa(runner.DefaultDelayMs)); err != nil {
-		return err
-	}
-	a.lastLoggedDelay = runner.DefaultDelayMs
-	a.delayEdit.TextChanged().Attach(func() {
-		a.syncRunnerSettings()
-	})
-	a.delayEdit.EditingFinished().Attach(func() {
-		a.logDelayIfChanged()
-	})
-
-	configHint, err := walk.NewLabel(configGB)
-	if err != nil {
-		return err
-	}
-	if err := configHint.SetText("Available after Start. Hold mapped keys to click. Stop turns off."); err != nil {
+	if err := tabs.Pages().Add(autopotPage); err != nil {
 		return err
 	}
 
@@ -339,7 +178,7 @@ func (a *guiApp) createWindow() error {
 	if err != nil {
 		return err
 	}
-	if err := a.logList.SetMinMaxSize(walk.Size{Width: 0, Height: 200}, walk.Size{}); err != nil {
+	if err := a.logList.SetMinMaxSize(walk.Size{Width: 0, Height: 140}, walk.Size{}); err != nil {
 		return err
 	}
 	a.logItems = []string{}
@@ -374,15 +213,58 @@ func (a *guiApp) appendLog(line string) {
 
 func (a *guiApp) isStarted() bool {
 	a.mu.Lock()
-	r := a.runner
+	defer a.mu.Unlock()
+	if a.runner != nil && a.runner.Running() {
+		return true
+	}
+	if a.autopotRunner != nil && a.autopotRunner.Running() {
+		return true
+	}
+	return false
+}
+
+func (a *guiApp) autopotWanted() runner.AutoPotConfig {
+	cfg := a.autopotConfig()
+	cfg.HPEnabled = cfg.HPEnabled && cfg.HPKeyVK != 0
+	cfg.SPEnabled = cfg.SPEnabled && cfg.SPKeyVK != 0
+	return cfg
+}
+
+func (a *guiApp) startAutoPotRunner(cfg runner.AutoPotConfig) {
+	if !cfg.HPEnabled && !cfg.SPEnabled {
+		return
+	}
+	a.mu.Lock()
+	if a.autopotRunner != nil && a.autopotRunner.Running() {
+		a.mu.Unlock()
+		return
+	}
+	old := a.autopotRunner
+	a.autopotRunner = nil
 	a.mu.Unlock()
-	return r != nil && r.Running()
+
+	if old != nil {
+		old.Stop()
+		old.Wait()
+	}
+
+	cfg.Log = a.appendLog
+	ap := runner.NewAutoPot(cfg)
+	if err := ap.Start(); err != nil {
+		a.appendLog(fmt.Sprintf("AutoPot start failed: %v", err))
+		return
+	}
+	a.mu.Lock()
+	a.autopotRunner = ap
+	a.mu.Unlock()
 }
 
 func (a *guiApp) setStarted(started bool) {
 	a.startBtn.SetEnabled(!started)
 	a.stopBtn.SetEnabled(started)
 	a.setConfigEnabled(started)
+	a.setAutoPotConfigEnabled(started)
+	a.setTimerKeyConfigEnabled(started)
 	if started {
 		a.setClickerStatus(clickerStatusRunning)
 	} else {
@@ -411,6 +293,7 @@ func (a *guiApp) setConfigEnabled(enabled bool) {
 	a.bindBtn.SetEnabled(enabled)
 	a.clearBtn.SetEnabled(enabled)
 	a.delayEdit.SetEnabled(enabled)
+	a.mouseClickCB.SetEnabled(enabled)
 }
 
 func (a *guiApp) syncRunnerSettings() {
@@ -421,7 +304,7 @@ func (a *guiApp) syncRunnerSettings() {
 	a.mu.Unlock()
 
 	if r != nil && r.Running() {
-		r.UpdateSettings(vks, delay)
+		r.UpdateSettings(vks, delay, a.mouseClickCB.Checked())
 	}
 }
 
@@ -497,13 +380,14 @@ func (a *guiApp) onBindKey() {
 
 func (a *guiApp) onStart() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 
-	if a.runner != nil && a.runner.Running() {
+	if (a.runner != nil && a.runner.Running()) || (a.autopotRunner != nil && a.autopotRunner.Running()) {
+		a.mu.Unlock()
 		return
 	}
 
 	if ready, msg := inputDriverReady(); !ready {
+		a.mu.Unlock()
 		a.appendLog("Input driver not ready — see Setup required dialog.")
 		walk.MsgBox(a.mainWindow, "Setup required", msg, walk.MsgBoxIconWarning)
 		return
@@ -513,6 +397,7 @@ func (a *guiApp) onStart() {
 
 	started, err := ensureViiperServer()
 	if err != nil {
+		a.mu.Unlock()
 		a.appendLog(fmt.Sprintf("Start failed: %v", err))
 		return
 	}
@@ -524,6 +409,7 @@ func (a *guiApp) onStart() {
 		APIAddr:    runner.DefaultAPIAddr,
 		TriggerVKs: append([]int32(nil), a.triggerVKs...),
 		DelayMs:    a.delayMs(),
+		MouseClick: a.mouseClickCB.Checked(),
 		Log:        a.appendLog,
 		OnPauseChanged: func(paused bool) {
 			if paused {
@@ -533,30 +419,53 @@ func (a *guiApp) onStart() {
 			}
 		},
 	}
-
 	a.runner = runner.New(cfg)
 	if err := a.runner.Start(); err != nil {
 		a.appendLog(fmt.Sprintf("Start failed: %v", err))
+		a.runner = nil
+		a.mu.Unlock()
+		stopViiperServerIfStarted()
 		return
 	}
 
+	autopotCfg := a.autopotWanted()
+	timerCfg := a.timerKeyWanted()
+	a.mu.Unlock()
+
+	a.startAutoPotRunner(autopotCfg)
+	a.startTimerKeyRunner(timerCfg)
 	a.setStarted(true)
 }
 
 func (a *guiApp) onStop() {
 	a.mu.Lock()
 	r := a.runner
-	a.mu.Unlock()
-
-	if r != nil {
-		r.Stop()
-		r.Wait()
-	}
-	stopViiperServerIfStarted()
-
-	a.mu.Lock()
+	ap := a.autopotRunner
+	tk := a.timerKeyRunner
 	a.runner = nil
+	a.autopotRunner = nil
+	a.timerKeyRunner = nil
 	a.mu.Unlock()
+
 	a.setStarted(false)
-	a.appendLog("Clicker stopped — click Start before launching the game")
+	a.appendLog("Stopping...")
+
+	go func() {
+		if r != nil {
+			r.Stop()
+			r.Wait()
+		}
+		if ap != nil {
+			ap.Stop()
+			ap.Wait()
+		}
+		if tk != nil {
+			tk.Stop()
+			tk.Wait()
+		}
+		stopViiperServerIfStarted()
+		a.mainWindow.Synchronize(func() {
+			a.appendLog("Clicker stopped — click Start before launching the game")
+		})
+	}()
 }
