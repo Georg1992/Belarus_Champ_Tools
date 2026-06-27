@@ -250,17 +250,14 @@ func (a *guiApp) logAppliedThresholds(cfg runner.AutoPotConfig) {
 }
 
 func (a *guiApp) setAutoPotConfigEnabled(enabled bool) {
-	if a.autopotBinding {
-		enabled = false
-	}
 	a.hpEnabledCB.SetEnabled(enabled)
 	a.spEnabledCB.SetEnabled(enabled)
 	a.hpThresholdEdit.SetEnabled(enabled)
 	a.spThresholdEdit.SetEnabled(enabled)
-	a.hpBindBtn.SetEnabled(enabled)
-	a.hpClearBtn.SetEnabled(enabled)
-	a.spBindBtn.SetEnabled(enabled)
-	a.spClearBtn.SetEnabled(enabled)
+	a.hpBindBtn.SetEnabled(true)
+	a.hpClearBtn.SetEnabled(true)
+	a.spBindBtn.SetEnabled(true)
+	a.spClearBtn.SetEnabled(true)
 }
 
 func (a *guiApp) onClearHPKey() {
@@ -350,11 +347,10 @@ func (a *guiApp) onBindSPKey() {
 }
 
 func (a *guiApp) bindAutoPotKey(hp bool) {
-	if a.autopotBinding {
+	if !a.isStarted() || a.autopotBinding {
 		return
 	}
 	a.autopotBinding = true
-	a.setAutoPotConfigEnabled(false)
 	a.appendLog("Press a potion hotkey to assign (5s timeout)...")
 
 	go func() {

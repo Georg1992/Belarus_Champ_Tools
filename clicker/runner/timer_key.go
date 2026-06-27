@@ -9,7 +9,8 @@ import (
 
 const (
 	TimerKeySlotCount         = 5
-	DefaultTimerKeyIntervalMs = 1000
+	DefaultTimerKeyIntervalSec = 1
+	DefaultTimerKeyIntervalMs  = DefaultTimerKeyIntervalSec * 1000
 )
 
 type TimerSlot struct {

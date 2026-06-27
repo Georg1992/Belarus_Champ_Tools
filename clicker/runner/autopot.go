@@ -247,11 +247,6 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, h
 			return
 		}
 		before := read.Percent
-		bar := "SP"
-		if hpBar {
-			bar = "HP"
-		}
-		a.log(fmt.Sprintf("%s pot at %.0f%% (threshold %d%%)", bar, before, threshold))
 		if err := session.TapKey(vk, KeyTapHold); err != nil {
 			a.log(fmt.Sprintf("Key %s failed: %v", KeyName(vk), err))
 			return

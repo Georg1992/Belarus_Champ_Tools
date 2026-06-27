@@ -154,7 +154,7 @@ func (a *guiApp) buildTimerSlotRow(parent walk.Container, index int) error {
 	if err != nil {
 		return err
 	}
-	if err := intervalLabel.SetText("Interval (ms):"); err != nil {
+	if err := intervalLabel.SetText("Interval (s):"); err != nil {
 		return err
 	}
 
@@ -166,7 +166,7 @@ func (a *guiApp) buildTimerSlotRow(parent walk.Container, index int) error {
 	if err := w.intervalEdit.SetMinMaxSize(walk.Size{Width: 80, Height: 0}, walk.Size{Width: 80, Height: 0}); err != nil {
 		return err
 	}
-	if err := w.intervalEdit.SetText(strconv.Itoa(runner.DefaultTimerKeyIntervalMs)); err != nil {
+	if err := w.intervalEdit.SetText(strconv.Itoa(runner.DefaultTimerKeyIntervalSec)); err != nil {
 		return err
 	}
 	w.intervalEdit.TextChanged().Attach(a.syncTimerKeySettings)
@@ -223,7 +223,7 @@ func (a *guiApp) timerIntervalMs(index int) int {
 	if err != nil || v <= 0 {
 		return runner.DefaultTimerKeyIntervalMs
 	}
-	return v
+	return v * 1000
 }
 
 func (a *guiApp) syncTimerKeySettings() {
@@ -251,14 +251,11 @@ func (a *guiApp) syncTimerKeySettings() {
 }
 
 func (a *guiApp) setTimerKeyConfigEnabled(enabled bool) {
-	if a.timerBindingSlot >= 0 {
-		enabled = false
-	}
 	for i := 0; i < a.timerVisibleCount; i++ {
 		a.timerSlots[i].enabledCB.SetEnabled(enabled)
 		a.timerSlots[i].intervalEdit.SetEnabled(enabled)
-		a.timerSlots[i].bindBtn.SetEnabled(enabled)
-		a.timerSlots[i].clearBtn.SetEnabled(enabled)
+		a.timerSlots[i].bindBtn.SetEnabled(true)
+		a.timerSlots[i].clearBtn.SetEnabled(true)
 	}
 	if a.timerAddBtn != nil {
 		a.timerAddBtn.SetEnabled(enabled && a.timerVisibleCount < runner.TimerKeySlotCount)
@@ -320,7 +317,6 @@ func (a *guiApp) bindTimerKey(index int) {
 	}
 
 	a.timerBindingSlot = index
-	a.setTimerKeyConfigEnabled(false)
 	a.appendLog(fmt.Sprintf("Press a key for timer %d (5s timeout)...", index+1))
 
 	go func() {

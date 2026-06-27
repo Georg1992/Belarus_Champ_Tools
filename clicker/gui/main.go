@@ -50,11 +50,18 @@ type guiApp struct {
 	spBindBtn          *walk.PushButton
 	spClearBtn         *walk.PushButton
 
+	// KeyChain tab
+	keyChainSlots        [runner.KeyChainSlotCount]keyChainSlotWidgets
+	keyChainKeyVKs       [runner.KeyChainSlotCount]int32
+	keyChainClearBtn     *walk.PushButton
+	keyChainBindingSlot  int
+
 	mu              sync.Mutex
 	shutdownOnce    sync.Once
 	runner          *runner.Runner
 	autopotRunner   *runner.AutoPotRunner
 	timerKeyRunner  *runner.TimerKeyRunner
+	keyChainRunner  *runner.KeyChainRunner
 	inputSession    *runner.ViiperSession
 	triggerVKs      []int32
 	hpKeyVK         int32
@@ -67,7 +74,7 @@ type guiApp struct {
 }
 
 func main() {
-	app := &guiApp{timerBindingSlot: -1}
+	app := &guiApp{timerBindingSlot: -1, keyChainBindingSlot: -1}
 	defer app.shutdown()
 
 	if err := app.createWindow(); err != nil {
@@ -81,10 +88,12 @@ func (a *guiApp) shutdown() {
 		r := a.runner
 		ap := a.autopotRunner
 		tk := a.timerKeyRunner
+		kc := a.keyChainRunner
 		session := a.inputSession
 		a.runner = nil
 		a.autopotRunner = nil
 		a.timerKeyRunner = nil
+		a.keyChainRunner = nil
 		a.inputSession = nil
 		a.mu.Unlock()
 
@@ -99,6 +108,10 @@ func (a *guiApp) shutdown() {
 		if tk != nil {
 			tk.Stop()
 			tk.Wait()
+		}
+		if kc != nil {
+			kc.Stop()
+			kc.Wait()
 		}
 		if session != nil {
 			session.Close()
@@ -118,10 +131,10 @@ func (a *guiApp) createWindow() error {
 	if err := mw.SetTitle("BELARUS CHAMP CLICKER"); err != nil {
 		return err
 	}
-	if err := mw.SetMinMaxSize(walk.Size{Width: 580, Height: 520}, walk.Size{}); err != nil {
+	if err := mw.SetMinMaxSize(walk.Size{Width: 780, Height: 520}, walk.Size{}); err != nil {
 		return err
 	}
-	if err := mw.SetSize(walk.Size{Width: 580, Height: 520}); err != nil {
+	if err := mw.SetSize(walk.Size{Width: 780, Height: 520}); err != nil {
 		return err
 	}
 
@@ -178,6 +191,20 @@ func (a *guiApp) createWindow() error {
 		return err
 	}
 	if err := tabs.Pages().Add(autopotPage); err != nil {
+		return err
+	}
+
+	keyChainPage, err := walk.NewTabPage()
+	if err != nil {
+		return err
+	}
+	if err := keyChainPage.SetTitle("KeyChain"); err != nil {
+		return err
+	}
+	if err := a.buildKeyChainTab(keyChainPage); err != nil {
+		return err
+	}
+	if err := tabs.Pages().Add(keyChainPage); err != nil {
 		return err
 	}
 
@@ -289,6 +316,7 @@ func (a *guiApp) setStarted(started bool) {
 	a.setConfigEnabled(started)
 	a.setAutoPotConfigEnabled(started)
 	a.setTimerKeyConfigEnabled(started)
+	a.setKeyChainConfigEnabled(started)
 	if started {
 		a.setClickerStatus(clickerStatusRunning)
 	} else {
@@ -311,11 +339,8 @@ func (a *guiApp) setClickerStatus(status clickerStatus) {
 }
 
 func (a *guiApp) setConfigEnabled(enabled bool) {
-	if a.binding {
-		enabled = false
-	}
-	a.bindBtn.SetEnabled(enabled)
-	a.clearBtn.SetEnabled(enabled)
+	a.bindBtn.SetEnabled(true)
+	a.clearBtn.SetEnabled(true)
 	a.delayEdit.SetEnabled(enabled)
 	a.mouseClickCB.SetEnabled(enabled)
 }
@@ -369,7 +394,6 @@ func (a *guiApp) onBindKey() {
 		return
 	}
 	a.binding = true
-	a.setConfigEnabled(false)
 	a.appendLog("Press a key to add (5s timeout)...")
 
 	go func() {
@@ -466,11 +490,13 @@ func (a *guiApp) onStart() {
 
 	autopotCfg := a.autopotWanted()
 	timerCfg := a.timerKeyWanted()
+	keyChainCfg := a.keyChainConfig()
 	a.mu.Unlock()
 
 	a.startAutoPotRunner(autopotCfg)
 	a.seedAppliedThresholds(autopotCfg)
 	a.startTimerKeyRunner(timerCfg)
+	a.startKeyChainRunner(keyChainCfg)
 	a.setStarted(true)
 	a.appendLog("Started")
 }
@@ -480,10 +506,12 @@ func (a *guiApp) onStop() {
 	r := a.runner
 	ap := a.autopotRunner
 	tk := a.timerKeyRunner
+	kc := a.keyChainRunner
 	session := a.inputSession
 	a.runner = nil
 	a.autopotRunner = nil
 	a.timerKeyRunner = nil
+	a.keyChainRunner = nil
 	a.inputSession = nil
 	a.mu.Unlock()
 
@@ -502,6 +530,10 @@ func (a *guiApp) onStop() {
 		if tk != nil {
 			tk.Stop()
 			tk.Wait()
+		}
+		if kc != nil {
+			kc.Stop()
+			kc.Wait()
 		}
 		if session != nil {
 			session.Close()
