@@ -209,16 +209,17 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, h
 		before := read.Percent
 
 		// Check numeric validator gate before potting (negative-only gate)
+		// GetCachedVeto reads from atomic cache, non-blocking, O(1)
 		threshold := cfg.HPThreshold
 		potionKind := PotionHP
 		if !hpBar {
 			threshold = cfg.SPThreshold
 			potionKind = PotionSP
 		}
-		
-		blockDecision := a.numericValidator.ShouldBlockPotion(potionKind, threshold)
-		if blockDecision.Block {
-			// Log the numeric block with detailed information
+
+		vetoDecision := a.numericValidator.GetCachedVeto(potionKind, threshold)
+		if vetoDecision.Block {
+			// Log the numeric veto with detailed information
 			var potionName string
 			if hpBar {
 				potionName = "hp"
@@ -226,7 +227,7 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, h
 				potionName = "sp"
 			}
 			cfg.Log(fmt.Sprintf("numeric_block kind=%s percent=%.1f threshold=%d confidence=%.2f age_ms=%d reason=%s",
-				potionName, blockDecision.Percent, threshold, blockDecision.Confidence, blockDecision.AgeMs, blockDecision.Reason))
+				potionName, vetoDecision.Percent, threshold, vetoDecision.Confidence, vetoDecision.AgeMs, vetoDecision.Reason))
 			return
 		}
 
