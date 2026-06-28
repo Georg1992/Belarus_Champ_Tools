@@ -3,6 +3,7 @@ package runner
 import (
 	"errors"
 	"image"
+	"image/color"
 	"time"
 )
 
@@ -56,6 +57,11 @@ func ParseNumericResources(img image.Image) (NumericRead, error) {
 		return NumericRead{}, errors.New("failed to extract ROI")
 	}
 
+	// Step 2b: Upscale the ROI to make small text readable
+	// The status window text is typically very small (2-3 pixels high)
+	// Upscale by 4x to make it 8-12 pixels high for better recognition
+	roiImg = UpscaleImage(roiImg, 4)
+
 	// Step 3: Preprocess (grayscale, threshold)
 	binary := PreprocessImage(roiImg)
 
@@ -95,6 +101,37 @@ func ParseNumericResources(img image.Image) (NumericRead, error) {
 	}
 
 	return result, nil
+}
+
+// UpscaleImage enlarges an image using nearest-neighbor interpolation
+func UpscaleImage(img image.Image, factor int) image.Image {
+	if factor <= 1 {
+		return img
+	}
+
+	bounds := img.Bounds()
+	newWidth := bounds.Dx() * factor
+	newHeight := bounds.Dy() * factor
+	upscaled := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
+
+	for y := 0; y < bounds.Dy(); y++ {
+		for x := 0; x < bounds.Dx(); x++ {
+			r, g, b, a := img.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
+			// Fill a factor×factor block with the same color
+			for dy := 0; dy < factor; dy++ {
+				for dx := 0; dx < factor; dx++ {
+					upscaled.SetRGBA(x*factor+dx, y*factor+dy, color.RGBA{
+						R: uint8(r >> 8),
+						G: uint8(g >> 8),
+						B: uint8(b >> 8),
+						A: uint8(a >> 8),
+					})
+				}
+			}
+		}
+	}
+
+	return upscaled
 }
 
 // CaptureStatusWindowROI returns the fixed ROI for the status window.
@@ -396,4 +433,4 @@ func parseNumber(s string) (int, error) {
 }
 
 // minConfidenceThreshold is the minimum confidence to accept a parse.
-const minConfidenceThreshold = 0.7
+const minConfidenceThreshold = 0.3

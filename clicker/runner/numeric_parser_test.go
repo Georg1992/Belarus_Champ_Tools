@@ -625,8 +625,19 @@ func TestExtractTemplatesFromScreenshots(t *testing.T) {
 			continue
 		}
 
+		// Extract ROI and upscale
+		roi := CaptureStatusWindowROI(img)
+		roiImg := ExtractROI(img, roi)
+		if roiImg == nil {
+			t.Logf("%-30s SKIP (ROI extraction failed)", filename)
+			continue
+		}
+
+		// Upscale the ROI
+		roiImg = UpscaleImage(roiImg, 4)
+
 		// Preprocess image
-		binary := PreprocessImage(img)
+		binary := PreprocessImage(roiImg)
 		glyphs := SegmentGlyphs(binary)
 
 		// Get digit sequence for this screenshot
@@ -651,7 +662,7 @@ func TestExtractTemplatesFromScreenshots(t *testing.T) {
 				}
 				totalPixels := glyph.Width * glyph.Height
 				density := float64(filled) / float64(totalPixels)
-				
+
 				// Keep glyphs that are:
 				// - Reasonably sized (> 20 pixels at least one dimension)
 				// - Not mostly empty or mostly filled (0.2 < density < 0.95)
@@ -659,7 +670,7 @@ func TestExtractTemplatesFromScreenshots(t *testing.T) {
 					usableGlyphs = append(usableGlyphs, glyph)
 				}
 			}
-			
+
 			// Use usable glyphs, match to digit sequence
 			for i, digit := range digits {
 				if i < len(usableGlyphs) {
@@ -810,7 +821,7 @@ func bitmapToTemplateStringEncoded(bitmap [][]bool) string {
 func TestDebugROIExtraction(t *testing.T) {
 	testdataDir := "testdata"
 	filename := "aa.png"
-	
+
 	filePath := filepath.Join(testdataDir, filename)
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -825,17 +836,17 @@ func TestDebugROIExtraction(t *testing.T) {
 
 	bounds := img.Bounds()
 	t.Logf("Image dimensions: %dx%d", bounds.Dx(), bounds.Dy())
-	
+
 	roi := CaptureStatusWindowROI(img)
 	t.Logf("Status window ROI: (%d,%d) to (%d,%d) = %dx%d",
 		roi.Min.X, roi.Min.Y, roi.Max.X, roi.Max.Y, roi.Dx(), roi.Dy())
-	
+
 	roiImg := ExtractROI(img, roi)
 	t.Logf("Extracted ROI dimensions: %dx%d", roiImg.Bounds().Dx(), roiImg.Bounds().Dy())
-	
+
 	binary := PreprocessImage(roiImg)
 	t.Logf("Binary image dimensions: %dx%d", len(binary[0]), len(binary))
-	
+
 	// Show what's in the binary image
 	t.Log("\nFirst 70 rows of binary (8 chars wide):")
 	for y := 0; y < min(10, len(binary)); y++ {
@@ -855,7 +866,7 @@ func TestDebugROIExtraction(t *testing.T) {
 func TestDebugGlyphExtraction(t *testing.T) {
 	testdataDir := "testdata"
 	filename := "aa.png"
-	
+
 	filePath := filepath.Join(testdataDir, filename)
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -870,9 +881,9 @@ func TestDebugGlyphExtraction(t *testing.T) {
 
 	binary := PreprocessImage(img)
 	glyphs := SegmentGlyphs(binary)
-	
+
 	t.Logf("Total glyphs: %d", len(glyphs))
-	
+
 	for i, glyph := range glyphs[:min(6, len(glyphs))] {
 		// Count true pixels
 		trueCount := 0
@@ -885,7 +896,7 @@ func TestDebugGlyphExtraction(t *testing.T) {
 		}
 		totalPixels := glyph.Width * glyph.Height
 		density := float64(trueCount) / float64(totalPixels)
-		
+
 		// Visualize the glyph
 		visual := ""
 		for _, row := range glyph.Pixels {
@@ -898,14 +909,98 @@ func TestDebugGlyphExtraction(t *testing.T) {
 			}
 			visual += "\n"
 		}
-		
+
 		t.Logf("Glyph %d: %dx%d (density %.2f)\n%s", i, glyph.Width, glyph.Height, density, visual)
 	}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+// TestParseDebugPipeline traces parsing from start to finish
+func TestParseDebugPipeline(t *testing.T) {
+	testdataDir := "testdata"
+	filename := "aa.png"
+
+	filePath := filepath.Join(testdataDir, filename)
+	file, err := os.Open(filePath)
+	if err != nil {
+		t.Fatalf("Cannot open %s: %v", filename, err)
 	}
-	return b
+	defer file.Close()
+
+	img, err := png.Decode(file)
+	if err != nil {
+		t.Fatalf("Cannot decode %s: %v", filename, err)
+	}
+
+	t.Logf("=== STEP 1: Extract ROI ===")
+	roi := CaptureStatusWindowROI(img)
+	t.Logf("ROI: (%d,%d) %dx%d", roi.Min.X, roi.Min.Y, roi.Dx(), roi.Dy())
+
+	roiImg := ExtractROI(img, roi)
+	t.Logf("Extracted ROI: %dx%d", roiImg.Bounds().Dx(), roiImg.Bounds().Dy())
+
+	t.Logf("\n=== STEP 2: Preprocess ===")
+	binary := PreprocessImage(roiImg)
+	t.Logf("Binary (no upscale): %dx%d", len(binary[0]), len(binary))
+
+	// Show binary content before upscaling
+	for y := 0; y < min(8, len(binary)); y++ {
+		line := ""
+		for x := 0; x < min(40, len(binary[y])); x++ {
+			if binary[y][x] {
+				line += "█"
+			} else {
+				line += " "
+			}
+		}
+		t.Logf("  %2d: %s", y, line)
+	}
+
+	t.Logf("\n=== STEP 2b: Upscale ===")
+	roiImgUpscaled := UpscaleImage(roiImg, 4)
+	t.Logf("Upscaled ROI: %dx%d", roiImgUpscaled.Bounds().Dx(), roiImgUpscaled.Bounds().Dy())
+
+	binary = PreprocessImage(roiImgUpscaled)
+	t.Logf("Binary (upscaled): %dx%d", len(binary[0]), len(binary))
+
+	// Show binary content after upscaling
+	for y := 0; y < min(16, len(binary)); y++ {
+		line := ""
+		for x := 0; x < min(80, len(binary[y])); x++ {
+			if binary[y][x] {
+				line += "█"
+			} else {
+				line += " "
+			}
+		}
+		t.Logf("  %2d: %s", y, line)
+	}
+
+	t.Logf("\n=== STEP 3: Segment Glyphs ===")
+	glyphs := SegmentGlyphs(binary)
+	t.Logf("Found %d glyphs", len(glyphs))
+	for i, g := range glyphs[:min(8, len(glyphs))] {
+		filled := 0
+		for _, row := range g.Pixels {
+			for _, v := range row {
+				if v {
+					filled++
+				}
+			}
+		}
+		density := float64(filled) / float64(g.Width*g.Height)
+		t.Logf("  %2d: %2dx%2d density=%.2f", i, g.Width, g.Height, density)
+	}
+
+	t.Logf("\n=== STEP 4: Recognize Glyphs ===")
+	line, conf := RecognizeGlyphSequence(glyphs)
+	t.Logf("Recognized: %q", line)
+	t.Logf("Confidence: %.2f", conf)
+
+	t.Logf("\n=== STEP 5: Parse HP/SP ===")
+	hp, sp, ok := ParseHPSPLine(line)
+	t.Logf("OK: %v", ok)
+	if ok {
+		t.Logf("HP: %d/%d (%.1f%%)", hp.Current, hp.Max, hp.Percent)
+		t.Logf("SP: %d/%d (%.1f%%)", sp.Current, sp.Max, sp.Percent)
+	}
 }
