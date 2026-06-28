@@ -62,9 +62,9 @@ type guiApp struct {
 	inputSession    *runner.ViiperSession
 	hpKeyVK         int32
 	spKeyVK         int32
+	hpThreshold     int
+	spThreshold     int
 	autopotBinding  bool
-	lastAppliedHPThreshold  int
-	lastAppliedSPThreshold  int
 }
 
 func main() {
@@ -243,6 +243,7 @@ func (a *guiApp) appendLog(line string) {
 	}
 	stamped := fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), line)
 	a.logItems = append(a.logItems, stamped)
+	// UI update errors are not critical; log display may fail but log entry is recorded
 	_ = a.logList.SetModel(a.logItems)
 	if len(a.logItems) > 0 {
 		_ = a.logList.SetCurrentIndex(len(a.logItems) - 1)
@@ -407,7 +408,6 @@ func (a *guiApp) onStart() {
 	a.mu.Unlock()
 
 	a.startAutoPotRunner(autopotCfg)
-	a.seedAppliedThresholds(autopotCfg)
 	a.startTimerKeyRunner(timerCfg)
 	a.startKeyChainRunner(keyChainCfg)
 	a.setStarted(true)

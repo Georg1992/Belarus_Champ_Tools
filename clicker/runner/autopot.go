@@ -3,7 +3,6 @@ package runner
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 )
 
@@ -18,15 +17,7 @@ type AutoPotConfig struct {
 	Log         func(string)
 }
 
-func (c *AutoPotConfig) applyDefaults() {
-	if c.Log == nil {
-		c.Log = func(string) {}
-	}
-}
-
 type AutoPotRunner struct {
-	cfg AutoPotConfig
-
 	mu      sync.Mutex
 	cancel  context.CancelFunc
 	done    chan struct{}
@@ -35,20 +26,15 @@ type AutoPotRunner struct {
 	liveMu sync.RWMutex
 	live   AutoPotConfig
 
-	pair         *BarPairCache
 	hpStabilizer *BarStabilizer
 	spStabilizer *BarStabilizer
 }
 
 func NewAutoPot(cfg AutoPotConfig) *AutoPotRunner {
-	cfg.applyDefaults()
-	pair := &BarPairCache{}
 	return &AutoPotRunner{
-		cfg:          cfg,
 		live:         cfg,
-		pair:         pair,
-		hpStabilizer: NewBarStabilizer(pair, true, cfg.HPThreshold),
-		spStabilizer: NewBarStabilizer(pair, false, cfg.SPThreshold),
+		hpStabilizer: NewBarStabilizer(true, cfg.HPThreshold),
+		spStabilizer: NewBarStabilizer(false, cfg.SPThreshold),
 	}
 }
 
@@ -59,14 +45,7 @@ func (a *AutoPotRunner) Running() bool {
 }
 
 func (a *AutoPotRunner) UpdateSettings(cfg AutoPotConfig) {
-	cfg.applyDefaults()
 	a.liveMu.Lock()
-	if cfg.Session == nil {
-		cfg.Session = a.live.Session
-	}
-	if cfg.Log == nil {
-		cfg.Log = a.live.Log
-	}
 	a.live = cfg
 	a.liveMu.Unlock()
 	a.hpStabilizer.SetThreshold(cfg.HPThreshold)
@@ -80,7 +59,6 @@ func (a *AutoPotRunner) settings() AutoPotConfig {
 }
 
 func (a *AutoPotRunner) resetStabilizers() {
-	a.pair.Reset()
 	a.hpStabilizer.Reset()
 	a.spStabilizer.Reset()
 }
@@ -104,6 +82,10 @@ func (a *AutoPotRunner) Start() error {
 	if cfg.Session == nil {
 		a.mu.Unlock()
 		return fmt.Errorf("input session is required")
+	}
+	if cfg.Log == nil {
+		a.mu.Unlock()
+		return fmt.Errorf("log callback is required")
 	}
 
 	a.resetStabilizers()
@@ -147,15 +129,14 @@ func (a *AutoPotRunner) Wait() {
 	}
 }
 
-func (a *AutoPotRunner) log(msg string) {
-	a.settings().Log(msg)
-}
-
 func (a *AutoPotRunner) run(ctx context.Context) {
-	session := a.cfg.Session
-	debugSave := os.Getenv("BAR_SEARCH_DEBUG") != ""
-
 	for {
+		cfg := a.settings()
+		session := cfg.Session
+		if session == nil {
+			return
+		}
+
 		if ctx.Err() != nil {
 			return
 		}
@@ -170,24 +151,15 @@ func (a *AutoPotRunner) run(ctx context.Context) {
 			continue
 		}
 
-		if debugSave {
-			bars, err := RefreshBarPair(img)
-			if err == nil {
-				hp, sp := ReadMappedBars(img, bars)
-				_ = SaveMappedBarsDebug(img, bars, "bar_search_debug.png")
-				a.log(FormatMappedBarsLog(img, bars, hp, sp, true))
-			}
-		}
+		mapped, pairOK := refreshStableBarPair(img)
 
-		cfg := a.settings()
-
-		hp := a.hpStabilizer.Update(img, true)
+		hp := a.hpStabilizer.UpdatePair(img, true, mapped, pairOK)
 		if cfg.HPEnabled && hp.Status == BarStatusLow {
 			a.healUntil(ctx, session, true)
 			continue
 		}
 
-		sp := a.spStabilizer.Update(img, false)
+		sp := a.spStabilizer.UpdatePair(img, false, mapped, pairOK)
 		if cfg.SPEnabled && sp.Status == BarStatusLow {
 			a.healUntil(ctx, session, false)
 			continue
@@ -222,13 +194,14 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, h
 			sleep(ctx, PollInterval)
 			continue
 		}
-		read := stabilizer.Update(img, hpBar)
+		mapped, pairOK := refreshStableBarPair(img)
+		read := stabilizer.UpdatePair(img, hpBar, mapped, pairOK)
 		if read.Status != BarStatusLow {
 			return
 		}
 		before := read.Percent
 		if err := session.TapKey(vk, KeyTapHold); err != nil {
-			a.log(fmt.Sprintf("Key %s failed: %v", KeyName(vk), err))
+			cfg.Log(fmt.Sprintf("Key %s failed: %v", KeyName(vk), err))
 			return
 		}
 		for {
@@ -239,14 +212,16 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, h
 				sleep(ctx, PollInterval)
 				continue
 			}
-			if _, ok := healTarget(a.settings(), hpBar); !ok {
+			cfg = a.settings()
+			if _, ok := healTarget(cfg, hpBar); !ok {
 				return
 			}
 			img, _, err := CapturePlayerBarSearch()
 			if err != nil {
 				continue
 			}
-			read := stabilizer.Update(img, hpBar)
+			mapped, pairOK := refreshStableBarPair(img)
+			read := stabilizer.UpdatePair(img, hpBar, mapped, pairOK)
 			if read.Status != BarStatusLow {
 				return
 			}

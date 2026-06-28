@@ -80,9 +80,9 @@ func TestRefreshBarPairFixtures(t *testing.T) {
 }
 
 func TestStabilizerMatchesGameValues(t *testing.T) {
-	_, hpStab, spStab := newTestStabilizers(1)
 	for _, file := range knownFixtureFiles(t) {
 		t.Run(file, func(t *testing.T) {
+			hpStab, spStab := newTestStabilizers(1)
 			tc := knownBarCases()[file]
 			img := loadFixture(t, file)
 			mapped, err := RefreshBarPair(img)
@@ -90,7 +90,7 @@ func TestStabilizerMatchesGameValues(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			thp := hpStab.Update(img, true)
+			thp := hpStab.UpdatePair(img, true, mapped, true)
 			if !thp.Found || thp.Status == BarStatusUnknown {
 				t.Fatal("HP stabilizer read failed")
 			}
@@ -101,7 +101,7 @@ func TestStabilizerMatchesGameValues(t *testing.T) {
 				t.Fatalf("HP falsely full %.1f%% (game %.1f%%)", thp.Percent, tc.hpPct)
 			}
 
-			tsp := spStab.Update(img, false)
+			tsp := spStab.UpdatePair(img, false, mapped, true)
 			if !tsp.Found || tsp.Status == BarStatusUnknown {
 				t.Fatal("SP stabilizer read failed")
 			}

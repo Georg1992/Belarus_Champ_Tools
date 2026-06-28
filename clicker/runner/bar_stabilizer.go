@@ -15,41 +15,35 @@ const (
 )
 
 type StableBarRead struct {
-	Found      bool
-	Percent    float64
-	Status     BarStatus
-	Rect       Rect
-	Confidence float64
-}
-
-type BarPairCache struct{}
-
-func (c *BarPairCache) Reset() {}
-
-func (c *BarPairCache) trustedPair(img image.Image) (MappedBars, bool) {
-	return refreshStableBarPair(img)
+	Found   bool
+	Percent float64
+	Status  BarStatus
+	Rect    Rect
 }
 
 type BarStabilizer struct {
-	pair      *BarPairCache
 	hpBar     bool
 	threshold int
 
-	mu                 sync.Mutex
-	lastValidRect      Rect
-	fullLatched        bool
+	mu            sync.Mutex
+	lastValidRect Rect
+	fullLatched   bool
 	notFullStreak int
 	lowStreak     int
 }
 
-func NewBarStabilizer(pair *BarPairCache, hpBar bool, threshold int) *BarStabilizer {
-	return &BarStabilizer{pair: pair, hpBar: hpBar, threshold: threshold}
+func NewBarStabilizer(hpBar bool, threshold int) *BarStabilizer {
+	return &BarStabilizer{hpBar: hpBar, threshold: threshold}
 }
 
 func (s *BarStabilizer) SetThreshold(threshold int) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if threshold == s.threshold {
+		return
+	}
 	s.threshold = threshold
-	s.mu.Unlock()
+	s.lowStreak = 0
 }
 
 func (s *BarStabilizer) Reset() {
@@ -61,19 +55,17 @@ func (s *BarStabilizer) Reset() {
 	s.mu.Unlock()
 }
 
-func (s *BarStabilizer) Update(img image.Image, hpBar bool) StableBarRead {
+func (s *BarStabilizer) UpdatePair(img image.Image, hpBar bool, mapped MappedBars, pairOK bool) StableBarRead {
 	if hpBar != s.hpBar || img == nil {
-		return s.latchedFullOrUnknown()
+		return s.readUnknown()
 	}
-
-	mapped, ok := s.pair.trustedPair(img)
-	if !ok {
-		return s.latchedFullOrUnknown()
+	if !pairOK {
+		return s.readUnknown()
 	}
 
 	hp, sp := ReadMappedBars(img, mapped)
 	if !hp.Found || !sp.Found {
-		return s.latchedFullOrUnknown()
+		return s.readUnknown()
 	}
 
 	var read BarRead
@@ -84,38 +76,65 @@ func (s *BarStabilizer) Update(img image.Image, hpBar bool) StableBarRead {
 		read, rect = sp, mapped.SP
 	}
 	if !read.Found || !barReadConsistent(img, rect, s.hpBar, read) {
-		return s.latchedFullOrUnknown()
+		return s.readUnknown()
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.fullLatched {
+		rectStable := s.lastValidRect.W < 1 || !rectDrifted(s.lastValidRect, rect, BarPositionMaxDrift)
+
+		if barLooksFull(img, rect, s.hpBar) || read.Percent >= 99.9 {
+			s.lastValidRect = rect
+			s.notFullStreak = 0
+			s.lowStreak = 0
+			return s.fullReadLocked(rect)
+		}
+		if rectStable && barConfirmedNotFull(img, rect, s.hpBar, read) {
+			s.notFullStreak++
+			if s.notFullStreak >= PotUnlatchReads {
+				s.fullLatched = false
+				s.notFullStreak = 0
+				s.lastValidRect = rect
+			}
+		} else if !rectStable {
+			s.notFullStreak = 0
+			return s.readUnknownLocked()
+		} else {
+			s.notFullStreak = 0
+			return s.readUnknownLocked()
+		}
+		if s.fullLatched {
+			return s.readUnknownLocked()
+		}
+	}
+
 	if s.lastValidRect.W >= 1 && rectDrifted(s.lastValidRect, rect, BarPositionMaxDrift) {
 		s.lowStreak = 0
-		s.fullLatched = false
-		s.notFullStreak = 0
 	}
 
 	s.lastValidRect = rect
 	return s.applyTrustedReadLocked(img, rect, read)
 }
 
-func (s *BarStabilizer) latchedFullOrUnknown() StableBarRead {
+func (s *BarStabilizer) readUnknown() StableBarRead {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.fullLatched && s.lastValidRect.W >= 1 {
-		return s.fullReadLocked()
-	}
-	return StableBarRead{Status: BarStatusUnknown, Confidence: 0}
+	return s.readUnknownLocked()
 }
 
-func (s *BarStabilizer) fullReadLocked() StableBarRead {
+func (s *BarStabilizer) readUnknownLocked() StableBarRead {
+	s.lowStreak = 0
+	return StableBarRead{Status: BarStatusUnknown}
+}
+
+func (s *BarStabilizer) fullReadLocked(rect Rect) StableBarRead {
 	return StableBarRead{
-		Found:      true,
-		Percent:    100,
-		Status:     BarStatusFull,
-		Rect:       s.lastValidRect,
-		Confidence: 1,
+		Found:   true,
+		Percent: 100,
+		Status:  BarStatusFull,
+		Rect:    rect,
 	}
 }
 
@@ -124,28 +143,7 @@ func (s *BarStabilizer) applyTrustedReadLocked(img image.Image, rect Rect, read 
 		s.fullLatched = true
 		s.notFullStreak = 0
 		s.lowStreak = 0
-		return StableBarRead{
-			Found:      true,
-			Percent:    100,
-			Status:     BarStatusFull,
-			Rect:       rect,
-			Confidence: 1,
-		}
-	}
-
-	if s.fullLatched {
-		if barConfirmedNotFull(img, rect, s.hpBar, read) {
-			s.notFullStreak++
-			if s.notFullStreak >= PotUnlatchReads {
-				s.fullLatched = false
-				s.notFullStreak = 0
-			}
-		} else {
-			s.notFullStreak = 0
-		}
-		if s.fullLatched {
-			return s.fullReadLocked()
-		}
+		return s.fullReadLocked(rect)
 	}
 
 	if read.Percent < float64(s.threshold) {
@@ -156,24 +154,17 @@ func (s *BarStabilizer) applyTrustedReadLocked(img image.Image, rect Rect, read 
 
 	if s.lowStreak >= PotConfirmReads {
 		return StableBarRead{
-			Found:      true,
-			Percent:    read.Percent,
-			Status:     BarStatusLow,
-			Rect:       rect,
-			Confidence: 1,
+			Found:   true,
+			Percent: read.Percent,
+			Status:  BarStatusLow,
+			Rect:    rect,
 		}
 	}
 
-	confidence := 0.9
-	if read.Percent < float64(s.threshold) && s.lowStreak > 0 {
-		confidence = 0.5 + 0.4*float64(s.lowStreak)/float64(PotConfirmReads)
-	}
-
 	return StableBarRead{
-		Found:      true,
-		Percent:    read.Percent,
-		Status:     BarStatusOK,
-		Rect:       rect,
-		Confidence: confidence,
+		Found:   true,
+		Percent: read.Percent,
+		Status:  BarStatusOK,
+		Rect:    rect,
 	}
 }

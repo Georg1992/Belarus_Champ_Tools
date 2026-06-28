@@ -19,17 +19,14 @@ func (m *mockAutoPotRunner) UpdateSettings(cfg runner.AutoPotConfig) {
 	m.updates = append(m.updates, cfg)
 }
 
-func TestLogAppliedThresholdsTracksRunnerValues(t *testing.T) {
-	app := &guiApp{lastAppliedHPThreshold: 50, lastAppliedSPThreshold: 30}
-
-	app.logAppliedThresholds(runner.AutoPotConfig{HPThreshold: 60, SPThreshold: 30})
-	if app.lastAppliedHPThreshold != 60 || app.lastAppliedSPThreshold != 30 {
-		t.Fatalf("lastApplied=%d/%d want 60/30", app.lastAppliedHPThreshold, app.lastAppliedSPThreshold)
+func TestCommittedThresholdFields(t *testing.T) {
+	app := &guiApp{hpThreshold: 50, spThreshold: 30}
+	if app.hpThreshold != 50 || app.spThreshold != 30 {
+		t.Fatalf("thresholds=%d/%d want 50/30", app.hpThreshold, app.spThreshold)
 	}
-
-	app.logAppliedThresholds(runner.AutoPotConfig{HPThreshold: 60, SPThreshold: 50})
-	if app.lastAppliedSPThreshold != 50 {
-		t.Fatalf("lastAppliedSP=%d want 50", app.lastAppliedSPThreshold)
+	app.hpThreshold = 60
+	if app.hpThreshold != 60 || app.spThreshold != 30 {
+		t.Fatalf("thresholds=%d/%d want 60/30", app.hpThreshold, app.spThreshold)
 	}
 }
 

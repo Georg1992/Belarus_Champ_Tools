@@ -18,6 +18,7 @@ import (
 	_ "embed"
 
 	"experimental-clicker/runner"
+
 	"github.com/Alia5/VIIPER/viiperclient"
 	"golang.org/x/sys/windows"
 )
@@ -31,10 +32,10 @@ const (
 )
 
 var (
-	serverMu    sync.Mutex
-	serverCmd   *exec.Cmd
+	serverMu      sync.Mutex
+	serverCmd     *exec.Cmd
 	serverStarted bool
-	serverPID   int
+	serverPID     int
 	viiperTempDir string
 )
 
@@ -111,6 +112,7 @@ func stopViiperServerIfStarted() {
 
 	killProcessTree(pid)
 	if cmd != nil && cmd.Process != nil {
+		// Best-effort wait; process may have already terminated
 		_, _ = cmd.Process.Wait()
 	}
 	removeViiperTempDirPath(dir)
@@ -120,6 +122,7 @@ func killProcessTree(pid int) {
 	if pid <= 0 {
 		return
 	}
+	// Best-effort kill; process may have already exited or be unkillable
 	_ = exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").Run()
 }
 
@@ -127,6 +130,7 @@ func removeViiperTempDirPath(dir string) {
 	if dir == "" {
 		return
 	}
+	// Best-effort cleanup; files may still be in use by the process
 	_ = os.RemoveAll(dir)
 }
 
@@ -137,6 +141,7 @@ func extractViiper() (string, string, error) {
 	}
 	path := filepath.Join(dir, "viiper.exe")
 	if err := os.WriteFile(path, viiperBin, 0o755); err != nil {
+		// Best-effort cleanup on write failure
 		_ = os.RemoveAll(dir)
 		return "", "", fmt.Errorf("write viiper.exe: %w", err)
 	}
