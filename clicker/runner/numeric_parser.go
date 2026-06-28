@@ -4,83 +4,62 @@ import (
 	"errors"
 	"image"
 	"image/color"
-	"time"
+	"regexp"
+	"strconv"
 )
 
-// NumericResourceRead holds the result of parsing numeric HP/SP from the status window.
-type NumericResourceRead struct {
-	Found      bool
-	Current    int
-	Max        int
-	Percent    float64
-	UpdatedAt  time.Time
-	Confidence float64 // 0.0 to 1.0
-}
-
-// IsStale returns true if the read is older than the given duration.
-func (r *NumericResourceRead) IsStale(maxAge time.Duration) bool {
-	return time.Since(r.UpdatedAt) > maxAge
-}
-
-// Age returns the age of this read in milliseconds.
-func (r *NumericResourceRead) Age() int64 {
-	return int64(time.Since(r.UpdatedAt).Milliseconds())
-}
-
-// NumericRead holds parsed HP and SP values from the status window.
-type NumericRead struct {
-	HP NumericResourceRead
-	SP NumericResourceRead
-}
-
-// ParseNumericResources parses numeric HP/SP values from a game screenshot.
-// The status window is expected to be in the top-left corner with fixed layout:
-//
-//	HP. 751 / 1290
-//	SP. 102 / 201
-//
-// Returns NumericRead with Found=false if parsing fails or confidence is too low.
+// ParseNumericResources parses HP and SP values from the status window.
+// Uses fixed line ROIs, column-based glyph segmentation, and exemplar-based matching.
 func ParseNumericResources(img image.Image) (NumericRead, error) {
 	if img == nil {
 		return NumericRead{}, errors.New("image is nil")
 	}
 
-	// Step 1: Capture and validate ROI
-	roi := CaptureStatusWindowROI(img)
-	if roi.Empty() {
+	// Step 1: Extract status window ROI
+	statusROI := CaptureStatusWindowROI(img)
+	if statusROI.Empty() {
 		return NumericRead{}, errors.New("invalid status window ROI")
 	}
 
-	// Step 2: Extract and preprocess the ROI
-	roiImg := ExtractROI(img, roi)
-	if roiImg == nil {
-		return NumericRead{}, errors.New("failed to extract ROI")
+	statusImg := ExtractROI(img, statusROI)
+	if statusImg == nil {
+		return NumericRead{}, errors.New("failed to extract status ROI")
 	}
 
-	// Step 2b: Upscale the ROI to make small text readable
-	// The status window text is typically very small (2-3 pixels high)
-	// Upscale by 4x to make it 8-12 pixels high for better recognition
-	roiImg = UpscaleImage(roiImg, 4)
+	// Step 2: Upscale for better text quality
+	statusImg = UpscaleImage(statusImg, 4)
 
-	// Step 3: Preprocess (grayscale, threshold)
-	binary := PreprocessImage(roiImg)
-
-	// Step 4: Segment glyphs (connected components)
-	glyphs := SegmentGlyphs(binary)
-	if len(glyphs) == 0 {
-		return NumericRead{}, errors.New("no glyphs detected")
+	// Step 3: Preprocess to binary
+	binary := PreprocessImage(statusImg)
+	if len(binary) == 0 {
+		return NumericRead{}, errors.New("preprocessing failed")
 	}
 
-	// Step 5: Recognize glyphs and build the text line
-	recognizedLine, avgConfidence := RecognizeGlyphSequence(glyphs)
-	if recognizedLine == "" || avgConfidence < minConfidenceThreshold {
-		return NumericRead{}, errors.New("recognition confidence too low")
-	}
+	// Step 4: Define the full line ROI for HP/SP recognition
+	// After fixing CaptureStatusWindowROI to extract ONLY the 2nd row (HP/SP line),
+	// the entire extracted and upscaled image is the HP/SP line.
+	// There's no need to split by Y coordinate anymore.
+	upscaledHeight := len(binary)
+	upscaledWidth := len(binary[0])
 
-	// Step 6: Parse HP and SP from recognized text
-	hp, sp, ok := ParseHPSPLine(recognizedLine)
+	// Process the ENTIRE upscaled image (it's already just the HP/SP line)
+	hpspLineROI := image.Rect(0, 0, upscaledWidth, upscaledHeight)
+
+	// Step 5: Recognize all characters on the HP/SP line
+	fullLineText := parseLineV2(binary, hpspLineROI)
+
+	// Step 6: Parse HP and SP from the single line text
+	// Expected format: "HP. XXX / XXXX | SP. XXX / XXXX" or similar
+	// Extract HP and SP values from the recognized text
+	hp, sp, ok := ParseHPSPFromFullLine(fullLineText)
 	if !ok {
-		return NumericRead{}, errors.New("failed to parse HP/SP values")
+		return NumericRead{}, errors.New("failed to parse HP/SP from line: " + fullLineText)
+	}
+
+	// Calculate confidence based on recognition
+	confidence := 0.8 // Fixed confidence if successfully parsed
+	if hp.Found && sp.Found {
+		confidence = 0.9
 	}
 
 	result := NumericRead{
@@ -89,49 +68,291 @@ func ParseNumericResources(img image.Image) (NumericRead, error) {
 			Current:    hp.Current,
 			Max:        hp.Max,
 			Percent:    hp.Percent,
-			Confidence: avgConfidence,
+			Confidence: confidence,
 		},
 		SP: NumericResourceRead{
 			Found:      sp.Found,
 			Current:    sp.Current,
 			Max:        sp.Max,
 			Percent:    sp.Percent,
-			Confidence: avgConfidence,
+			Confidence: confidence,
 		},
 	}
 
 	return result, nil
 }
 
-// UpscaleImage enlarges an image using nearest-neighbor interpolation
-func UpscaleImage(img image.Image, factor int) image.Image {
-	if factor <= 1 {
-		return img
+// parseLineV2 parses a single HP or SP line using column-based segmentation.
+// Returns recognized text like "751/1290" or "102/201".
+func parseLineV2(binary [][]bool, lineROI image.Rectangle) string {
+	if lineROI.Empty() || len(binary) == 0 {
+		return ""
 	}
 
-	bounds := img.Bounds()
-	newWidth := bounds.Dx() * factor
-	newHeight := bounds.Dy() * factor
-	upscaled := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
+	// Step 1: Find connected components of foreground pixels
+	components := FindConnectedComponents(binary, lineROI)
 
-	for y := 0; y < bounds.Dy(); y++ {
-		for x := 0; x < bounds.Dx(); x++ {
-			r, g, b, a := img.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
-			// Fill a factor×factor block with the same color
-			for dy := 0; dy < factor; dy++ {
-				for dx := 0; dx < factor; dx++ {
-					upscaled.SetRGBA(x*factor+dx, y*factor+dy, color.RGBA{
-						R: uint8(r >> 8),
-						G: uint8(g >> 8),
-						B: uint8(b >> 8),
-						A: uint8(a >> 8),
-					})
+	// Step 2: Convert components to glyph bounding boxes
+	// Merge components that are within 10 pixels of each other
+	glyphs := BoundingBoxesToGlyphs(components, 10)
+
+	// Step 3: Recognize each glyph using exemplar-based matching
+	recognized := ""
+	lib := NewGlyphExemplarLibrary()
+
+	for _, glyphROI := range glyphs {
+		char := recognizeGlyphV2Exemplar(binary, glyphROI, lib)
+		if char != 0 {
+			recognized += string(char)
+		}
+	}
+
+	return recognized
+}
+
+// recognizeGlyphV2Exemplar recognizes a single glyph using exemplar-based matching.
+// Uses unified normalization pipeline: extract ROI → trim → normalize → compare.
+func recognizeGlyphV2Exemplar(binary [][]bool, glyphROI image.Rectangle, lib *GlyphExemplarLibrary) rune {
+	height := glyphROI.Dy()
+	width := glyphROI.Dx()
+
+	if height < 3 || width < 2 {
+		return 0 // Too small
+	}
+
+	// Step 1: Extract binary glyph from ROI
+	glyphBinary := extractBinaryROI(binary, glyphROI)
+	if len(glyphBinary) == 0 {
+		return 0
+	}
+
+	// Step 2: Preprocess using UNIFIED FUNCTION
+	// This does: trim to foreground bounds, then normalize to canonical size
+	runtimeNormalized := PreprocessGlyph(glyphBinary)
+	if len(runtimeNormalized.Pattern) != CanonicalBits {
+		return 0
+	}
+
+	// Step 3: Match against exemplars
+	char, distance, _, _ := lib.MatchGlyph(runtimeNormalized)
+
+	// Accept if distance is reasonable (0 = perfect match, 1 = opposite)
+	// Distance < 0.5 means at least 50% of bits match
+	if distance > 0.5 {
+		return 0
+	}
+
+	return char
+}
+
+// extractBinaryROI extracts a binary region from the larger binary image.
+func extractBinaryROI(binary [][]bool, roi image.Rectangle) [][]bool {
+	height := len(binary)
+	width := 0
+	if height > 0 {
+		width = len(binary[0])
+	}
+
+	// Clip ROI to image bounds
+	minX := roi.Min.X
+	minY := roi.Min.Y
+	maxX := roi.Max.X
+	maxY := roi.Max.Y
+
+	if minX < 0 {
+		minX = 0
+	}
+	if minY < 0 {
+		minY = 0
+	}
+	if maxX > width {
+		maxX = width
+	}
+	if maxY > height {
+		maxY = height
+	}
+
+	if minX >= maxX || minY >= maxY {
+		return nil
+	}
+
+	// Extract region
+	extracted := make([][]bool, maxY-minY)
+	for y := minY; y < maxY; y++ {
+		row := make([]bool, maxX-minX)
+		for x := minX; x < maxX; x++ {
+			if y < len(binary) && x < len(binary[y]) {
+				row[x-minX] = binary[y][x]
+			}
+		}
+		extracted[y-minY] = row
+	}
+
+	return extracted
+}
+
+// ParseHPSPFromText extracts HP and SP values from recognized text.
+// Expected format: hpText="751/1290" spText="102/201"
+func ParseHPSPFromText(hpText, spText string) (hp, sp NumericResourceRead, ok bool) {
+	// Parse HP
+	if hpText == "" {
+		return NumericResourceRead{}, NumericResourceRead{}, false
+	}
+
+	hpCur, hpMax, err1 := parseValuePair(hpText)
+	if err1 != nil {
+		return NumericResourceRead{}, NumericResourceRead{}, false
+	}
+
+	// Parse SP
+	spCur, spMax, err2 := parseValuePair(spText)
+	if err2 != nil {
+		return NumericResourceRead{}, NumericResourceRead{}, false
+	}
+
+	// Validate ranges
+	if hpMax <= 0 || hpCur < 0 || hpCur > hpMax {
+		return NumericResourceRead{}, NumericResourceRead{}, false
+	}
+	if spMax <= 0 || spCur < 0 || spCur > spMax {
+		return NumericResourceRead{}, NumericResourceRead{}, false
+	}
+
+	hp = NumericResourceRead{
+		Found:   true,
+		Current: hpCur,
+		Max:     hpMax,
+		Percent: float64(hpCur) / float64(hpMax) * 100.0,
+	}
+
+	sp = NumericResourceRead{
+		Found:   true,
+		Current: spCur,
+		Max:     spMax,
+		Percent: float64(spCur) / float64(spMax) * 100.0,
+	}
+
+	return hp, sp, true
+}
+
+// parseValuePair parses "current/max" format.
+func parseValuePair(text string) (current, max int, err error) {
+	// Remove spaces
+	text = regexp.MustCompile(`\s+`).ReplaceAllString(text, "")
+
+	// Find slash
+	parts := regexp.MustCompile(`/`).Split(text, -1)
+	if len(parts) != 2 {
+		return 0, 0, errors.New("invalid format: missing slash")
+	}
+
+	current, err1 := strconv.Atoi(parts[0])
+	max, err2 := strconv.Atoi(parts[1])
+
+	if err1 != nil || err2 != nil {
+		return 0, 0, errors.New("parse error: invalid numbers")
+	}
+
+	return current, max, nil
+}
+
+// ParseHPSPFromFullLine extracts HP and SP values from a full line text.
+// Expected format may include labels like: "HP.XXX/XXXX|SP.AAA/BBB"
+// It extracts numeric sequences (digits/slashes) and parses them as HP/SP values.
+func ParseHPSPFromFullLine(fullLine string) (hp, sp NumericResourceRead, ok bool) {
+	if fullLine == "" {
+		return NumericResourceRead{}, NumericResourceRead{}, false
+	}
+
+	// Extract all digit/slash sequences from the line
+	// Remove labels like "HP", "SP", dots, pipes, spaces
+	cleanedLine := ""
+	for _, ch := range fullLine {
+		if (ch >= '0' && ch <= '9') || ch == '/' {
+			cleanedLine += string(ch)
+		} else if ch == '|' {
+			// Pipe separates HP and SP sections
+			cleanedLine += "|"
+		}
+		// Skip everything else (letters, dots, spaces, etc.)
+	}
+
+	if cleanedLine == "" {
+		return NumericResourceRead{}, NumericResourceRead{}, false
+	}
+
+	// Now cleanedLine should be something like "751/1290|102/201"
+	var hpText, spText string
+
+	// Try splitting by pipe separator
+	parts := regexp.MustCompile(`\|`).Split(cleanedLine, -1)
+	if len(parts) >= 2 {
+		hpText = parts[0]
+		spText = parts[1]
+	} else if len(parts) == 1 {
+		// No pipe separator, entire line might be HP or might include both
+		// Try to detect if there are two slash patterns
+		slashCount := regexp.MustCompile(`/`).FindAllString(cleanedLine, -1)
+		if len(slashCount) >= 2 {
+			// Multiple slash patterns - try to split in middle
+			matches := regexp.MustCompile(`(\d+)/(\d+)`).FindAllStringIndex(cleanedLine, -1)
+			if len(matches) >= 2 {
+				// Use first pattern as HP, second as SP
+				hpText = cleanedLine[matches[0][0]:matches[0][1]]
+				spText = cleanedLine[matches[1][0]:matches[1][1]]
+			} else {
+				hpText = cleanedLine
+			}
+		} else {
+			hpText = cleanedLine
+		}
+	}
+
+	// Extract HP value
+	if hpText == "" {
+		return NumericResourceRead{}, NumericResourceRead{}, false
+	}
+
+	hpMatch := regexp.MustCompile(`^(\d+)/(\d+)`).FindStringSubmatch(hpText)
+	if len(hpMatch) < 3 {
+		return NumericResourceRead{}, NumericResourceRead{}, false
+	}
+
+	hpCur, _ := strconv.Atoi(hpMatch[1])
+	hpMax, _ := strconv.Atoi(hpMatch[2])
+
+	if hpMax <= 0 || hpCur < 0 || hpCur > hpMax {
+		return NumericResourceRead{}, NumericResourceRead{}, false
+	}
+
+	hp = NumericResourceRead{
+		Found:   true,
+		Current: hpCur,
+		Max:     hpMax,
+		Percent: float64(hpCur) / float64(hpMax) * 100.0,
+	}
+
+	// Extract SP value if available
+	if spText != "" {
+		spMatch := regexp.MustCompile(`^(\d+)/(\d+)`).FindStringSubmatch(spText)
+		if len(spMatch) >= 3 {
+			spCur, _ := strconv.Atoi(spMatch[1])
+			spMax, _ := strconv.Atoi(spMatch[2])
+
+			if spMax > 0 && spCur >= 0 && spCur <= spMax {
+				sp = NumericResourceRead{
+					Found:   true,
+					Current: spCur,
+					Max:     spMax,
+					Percent: float64(spCur) / float64(spMax) * 100.0,
 				}
+				return hp, sp, true
 			}
 		}
 	}
 
-	return upscaled
+	// Return HP even if SP parsing failed
+	return hp, NumericResourceRead{}, true
 }
 
 // CaptureStatusWindowROI returns the fixed ROI for the status window.
@@ -143,10 +364,17 @@ func UpscaleImage(img image.Image, factor int) image.Image {
 func CaptureStatusWindowROI(img image.Image) image.Rectangle {
 	bounds := img.Bounds()
 
-	// Adjusted to focus on just the text, skipping top decorations
-	// The actual HP/SP text starts around row 8 in a 250x70 region
-	x0, y0 := 15, 20         // Move down to skip decorations
-	width, height := 200, 35 // Smaller height, focus on text area
+	// Status window has 2 rows:
+	// Row 1: "Lv XX / Class / Lv XX / Exp. XX.X %"
+	// Row 2: "HP. XXXX / XXXX | SP. XXX / XXX" <- WE NEED THIS ROW!
+	//
+	// The status window is typically ~200px wide at (10, 20)-(210, 55)
+	// But we need ONLY the 2nd row for HP/SP parsing
+	// Row 1 is approximately y=20 to y=37
+	// Row 2 is approximately y=37 to y=55
+
+	x0, y0 := 10, 37         // Start of 2nd row (HP/SP line) - moved left to include "H"
+	width, height := 200, 18 // Only 2nd row height
 
 	x1 := x0 + width
 	y1 := y0 + height
@@ -183,6 +411,37 @@ func ExtractROI(img image.Image, roi image.Rectangle) image.Image {
 	return roiImg
 }
 
+// UpscaleImage enlarges an image using nearest-neighbor interpolation
+func UpscaleImage(img image.Image, factor int) image.Image {
+	if factor <= 1 {
+		return img
+	}
+
+	bounds := img.Bounds()
+	newWidth := bounds.Dx() * factor
+	newHeight := bounds.Dy() * factor
+	upscaled := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
+
+	for y := 0; y < bounds.Dy(); y++ {
+		for x := 0; x < bounds.Dx(); x++ {
+			r, g, b, a := img.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
+			// Fill a factor×factor block with the same color
+			for dy := 0; dy < factor; dy++ {
+				for dx := 0; dx < factor; dx++ {
+					upscaled.SetRGBA(x*factor+dx, y*factor+dy, color.RGBA{
+						R: uint8(r >> 8),
+						G: uint8(g >> 8),
+						B: uint8(b >> 8),
+						A: uint8(a >> 8),
+					})
+				}
+			}
+		}
+	}
+
+	return upscaled
+}
+
 // PreprocessImage converts the image to binary (black/white) for glyph recognition.
 // Steps:
 //  1. Convert to grayscale
@@ -212,227 +471,3 @@ func PreprocessImage(img image.Image) [][]bool {
 
 	return binary
 }
-
-// GlyphBitmap represents a recognized glyph with its bounds and pixel data.
-type GlyphBitmap struct {
-	X, Y   int      // Top-left position in the binary image
-	Width  int      // Width in pixels
-	Height int      // Height in pixels
-	Pixels [][]bool // Binary pixel data
-}
-
-// SegmentGlyphs finds connected components in the binary image.
-// Returns glyphs sorted left-to-right by X coordinate.
-func SegmentGlyphs(binary [][]bool) []GlyphBitmap {
-	if len(binary) == 0 {
-		return nil
-	}
-
-	height := len(binary)
-	width := len(binary[0])
-
-	visited := make([][]bool, height)
-	for y := 0; y < height; y++ {
-		visited[y] = make([]bool, width)
-	}
-
-	var glyphs []GlyphBitmap
-
-	// Find connected components
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			if binary[y][x] && !visited[y][x] {
-				// Found a new glyph, flood-fill to find its bounds
-				glyph := oldFloodFill(binary, visited, x, y)
-				if glyph != nil && isValidGlyph(glyph) {
-					glyphs = append(glyphs, *glyph)
-				}
-			}
-		}
-	}
-
-	// Sort glyphs left-to-right by X coordinate
-	sortGlyphsByX(glyphs)
-
-	return glyphs
-}
-
-// oldFloodFill finds a connected component starting from (x, y).
-// Deprecated: Use connected_components.go instead.
-func oldFloodFill(binary [][]bool, visited [][]bool, startX, startY int) *GlyphBitmap {
-	height := len(binary)
-	width := len(binary[0])
-
-	// Find bounds of connected component
-	minX, maxX := startX, startX
-	minY, maxY := startY, startY
-
-	queue := [][2]int{{startX, startY}}
-	visited[startY][startX] = true
-
-	for len(queue) > 0 {
-		x, y := queue[0][0], queue[0][1]
-		queue = queue[1:]
-
-		if x < minX {
-			minX = x
-		}
-		if x > maxX {
-			maxX = x
-		}
-		if y < minY {
-			minY = y
-		}
-		if y > maxY {
-			maxY = y
-		}
-
-		// Check 4-connected neighbors
-		for _, d := range [][2]int{{0, 1}, {0, -1}, {1, 0}, {-1, 0}} {
-			nx, ny := x+d[0], y+d[1]
-			if nx >= 0 && nx < width && ny >= 0 && ny < height &&
-				!visited[ny][nx] && binary[ny][nx] {
-				visited[ny][nx] = true
-				queue = append(queue, [2]int{nx, ny})
-			}
-		}
-	}
-
-	// Extract glyph bitmap
-	glyphWidth := maxX - minX + 1
-	glyphHeight := maxY - minY + 1
-	glyphPixels := make([][]bool, glyphHeight)
-
-	for y := 0; y < glyphHeight; y++ {
-		glyphPixels[y] = make([]bool, glyphWidth)
-		for x := 0; x < glyphWidth; x++ {
-			glyphPixels[y][x] = binary[minY+y][minX+x]
-		}
-	}
-
-	return &GlyphBitmap{
-		X:      minX,
-		Y:      minY,
-		Width:  glyphWidth,
-		Height: glyphHeight,
-		Pixels: glyphPixels,
-	}
-}
-
-// isValidGlyph checks if the glyph is large enough to be a digit (not noise).
-func isValidGlyph(g *GlyphBitmap) bool {
-	// Minimum size for a digit (adjust based on actual rendering)
-	minSize := 3
-	return g.Width >= minSize && g.Height >= minSize &&
-		g.Width <= 50 && g.Height <= 50 // Maximum size to reject large noise
-}
-
-// sortGlyphsByX sorts glyphs left-to-right by X coordinate.
-func sortGlyphsByX(glyphs []GlyphBitmap) {
-	for i := 0; i < len(glyphs); i++ {
-		for j := i + 1; j < len(glyphs); j++ {
-			if glyphs[j].X < glyphs[i].X {
-				glyphs[i], glyphs[j] = glyphs[j], glyphs[i]
-			}
-		}
-	}
-}
-
-// ParseHPSPLine parses the recognized text line to extract HP and SP values.
-// Expected format: "HP. XXX / XXX SP. YYY / YYY" or similar.
-// Returns (hp, sp, ok).
-func ParseHPSPLine(line string) (hp, sp NumericResourceRead, ok bool) {
-	// Find the '/' separators
-	slashIndices := findAllIndices(line, "/")
-	if len(slashIndices) < 2 {
-		return NumericResourceRead{}, NumericResourceRead{}, false
-	}
-
-	// Extract HP current/max
-	hpCurrentStr, hpMaxStr := extractNumberPair(line, slashIndices[0])
-	hpCurrent, hpErr1 := parseNumber(hpCurrentStr)
-	hpMax, hpErr2 := parseNumber(hpMaxStr)
-
-	if hpErr1 != nil || hpErr2 != nil || hpMax <= 0 || hpCurrent > hpMax || hpCurrent < 0 {
-		return NumericResourceRead{}, NumericResourceRead{}, false
-	}
-
-	// Extract SP current/max
-	spCurrentStr, spMaxStr := extractNumberPair(line, slashIndices[1])
-	spCurrent, spErr1 := parseNumber(spCurrentStr)
-	spMax, spErr2 := parseNumber(spMaxStr)
-
-	if spErr1 != nil || spErr2 != nil || spMax <= 0 || spCurrent > spMax || spCurrent < 0 {
-		return NumericResourceRead{}, NumericResourceRead{}, false
-	}
-
-	hpPercent := float64(hpCurrent) / float64(hpMax) * 100.0
-	spPercent := float64(spCurrent) / float64(spMax) * 100.0
-
-	hp = NumericResourceRead{
-		Found:   true,
-		Current: hpCurrent,
-		Max:     hpMax,
-		Percent: hpPercent,
-	}
-
-	sp = NumericResourceRead{
-		Found:   true,
-		Current: spCurrent,
-		Max:     spMax,
-		Percent: spPercent,
-	}
-
-	return hp, sp, true
-}
-
-// findAllIndices finds all indices of a substring in a string.
-func findAllIndices(s, substr string) []int {
-	var indices []int
-	for i := 0; i < len(s)-len(substr)+1; i++ {
-		if s[i:i+len(substr)] == substr {
-			indices = append(indices, i)
-		}
-	}
-	return indices
-}
-
-// extractNumberPair extracts the number before and after a separator index.
-func extractNumberPair(line string, separatorIdx int) (before, after string) {
-	// Extract number before separator
-	beforeIdx := separatorIdx - 1
-	for beforeIdx >= 0 && isDigit(rune(line[beforeIdx])) {
-		beforeIdx--
-	}
-	beforeIdx++
-	before = line[beforeIdx:separatorIdx]
-
-	// Extract number after separator
-	afterIdx := separatorIdx + 1
-	for afterIdx < len(line) && isDigit(rune(line[afterIdx])) {
-		afterIdx++
-	}
-	after = line[separatorIdx+1 : afterIdx]
-
-	return before, after
-}
-
-// isDigit checks if a rune is a digit.
-func isDigit(r rune) bool {
-	return r >= '0' && r <= '9'
-}
-
-// parseNumber parses a number string to an integer.
-func parseNumber(s string) (int, error) {
-	result := 0
-	for _, ch := range s {
-		if !isDigit(ch) {
-			return 0, errors.New("invalid digit")
-		}
-		result = result*10 + int(ch-'0')
-	}
-	return result, nil
-}
-
-// minConfidenceThreshold is the minimum confidence to accept a parse.
-const minConfidenceThreshold = 0.3
