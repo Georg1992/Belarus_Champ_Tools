@@ -3,6 +3,9 @@ package runner
 import (
 	"image"
 	"image/color"
+	"image/png"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -344,3 +347,142 @@ func createTestImageWithHPSPLine(hpCur, hpMax, spCur, spMax int) image.Image {
 
 	return img
 }
+
+// TestParseScreenshotsIntegration tests parsing real screenshots from testdata.
+// This loads actual game screenshots and attempts to parse HP/SP values.
+func TestParseScreenshotsIntegration(t *testing.T) {
+	// Find testdata directory
+	testdataDir := filepath.Join("testdata")
+
+	// Check if testdata exists
+	if _, err := os.Stat(testdataDir); os.IsNotExist(err) {
+		t.Skipf("testdata directory not found at %s", testdataDir)
+	}
+
+	// Load all PNG files from testdata
+	entries, err := os.ReadDir(testdataDir)
+	if err != nil {
+		t.Fatalf("Failed to read testdata directory: %v", err)
+	}
+
+	parsedCount := 0
+	failedCount := 0
+
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".png" {
+			continue
+		}
+
+		filePath := filepath.Join(testdataDir, entry.Name())
+
+		// Load screenshot
+		file, err := os.Open(filePath)
+		if err != nil {
+			t.Logf("Failed to open %s: %v", entry.Name(), err)
+			failedCount++
+			continue
+		}
+		defer file.Close()
+
+		img, err := png.Decode(file)
+		if err != nil {
+			t.Logf("Failed to decode %s: %v", entry.Name(), err)
+			failedCount++
+			continue
+		}
+
+		// Attempt to parse HP/SP - recover from panics
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Logf("%-30s PANIC: %v", entry.Name(), r)
+					failedCount++
+				}
+			}()
+
+			read, err := ParseNumericResources(img)
+
+			// Log results
+			if err != nil {
+				t.Logf("%-30s PARSE_ERROR: %v", entry.Name(), err)
+				failedCount++
+			} else if read.HP.Found || read.SP.Found {
+				t.Logf("%-30s SUCCESS: HP=%d/%d (%.1f%%, conf=%.2f), SP=%d/%d (%.1f%%, conf=%.2f)",
+					entry.Name(),
+					read.HP.Current, read.HP.Max, read.HP.Percent, read.HP.Confidence,
+					read.SP.Current, read.SP.Max, read.SP.Percent, read.SP.Confidence)
+				parsedCount++
+			} else {
+				t.Logf("%-30s NO_RESOURCES_FOUND", entry.Name())
+				failedCount++
+			}
+		}()
+	}
+
+	// Summary
+	total := parsedCount + failedCount
+	if total > 0 {
+		successRate := float64(parsedCount) / float64(total) * 100
+		t.Logf("\n=== INTEGRATION TEST SUMMARY ===")
+		t.Logf("Total screenshots: %d", total)
+		t.Logf("Successfully parsed: %d (%.1f%%)", parsedCount, successRate)
+		t.Logf("Failed to parse: %d (%.1f%%)", failedCount, float64(failedCount)/float64(total)*100)
+		t.Logf("================================")
+	}
+}
+
+// TestParseScreenshotsDebug analyzes glyphs and confidence scores from testdata.
+// This helps debug why templates don't match well.
+func TestParseScreenshotsDebug(t *testing.T) {
+	testdataDir := filepath.Join("testdata")
+	
+	if _, err := os.Stat(testdataDir); os.IsNotExist(err) {
+		t.Skipf("testdata directory not found")
+	}
+
+	entries, err := os.ReadDir(testdataDir)
+	if err != nil {
+		t.Fatalf("Failed to read testdata: %v", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".png" {
+			continue
+		}
+
+		filePath := filepath.Join(testdataDir, entry.Name())
+		file, err := os.Open(filePath)
+		if err != nil {
+			continue
+		}
+		defer file.Close()
+
+		img, err := png.Decode(file)
+		if err != nil {
+			continue
+		}
+
+		// Analyze segmentation
+		roi := CaptureStatusWindowROI(img)
+		if roi.Empty() {
+			t.Logf("%-30s ROI_EMPTY", entry.Name())
+			continue
+		}
+
+		roiImg := ExtractROI(img, roi)
+		if roiImg == nil {
+			t.Logf("%-30s EXTRACT_FAILED", entry.Name())
+			continue
+		}
+
+		binary := PreprocessImage(roiImg)
+		glyphs := SegmentGlyphs(binary)
+
+		// Get glyph sequence and confidence
+		recognizedLine, avgConfidence := RecognizeGlyphSequence(glyphs)
+
+		t.Logf("%-30s glyphs=%2d conf=%.3f line=%q",
+			entry.Name(), len(glyphs), avgConfidence, recognizedLine)
+	}
+}
+

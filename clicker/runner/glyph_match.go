@@ -91,11 +91,25 @@ func resizeBitmap(bitmap [][]bool, targetWidth, targetHeight int) [][]bool {
 			srcY = srcHeight - 1
 		}
 
+		// Ensure source row exists and has columns
+		if srcY >= len(bitmap) {
+			srcY = len(bitmap) - 1
+		}
+		srcRowLen := len(bitmap[srcY])
+		if srcRowLen == 0 {
+			continue
+		}
+
 		for x := 0; x < targetWidth; x++ {
 			// Map target X to source X
 			srcX := x * srcWidth / targetWidth
 			if srcX >= srcWidth {
 				srcX = srcWidth - 1
+			}
+
+			// Clamp to actual row length (handles ragged arrays)
+			if srcX >= srcRowLen {
+				srcX = srcRowLen - 1
 			}
 
 			result[y][x] = bitmap[srcY][srcX]

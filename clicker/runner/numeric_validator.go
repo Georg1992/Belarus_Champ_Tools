@@ -48,8 +48,8 @@ func (s *SafetySnapshot) Age() int64 {
 type NumericSafetyValidator struct {
 	// Configuration (locked only for updates, not on hot path)
 	mu            sync.RWMutex
-	hpThreshold   int           // Threshold: HPDoNotPot = (HPPercent > hpThreshold)
-	spThreshold   int           // Threshold: SPDoNotPot = (SPPercent > spThreshold)
+	hpThreshold   int // Threshold: HPDoNotPot = (HPPercent > hpThreshold)
+	spThreshold   int // Threshold: SPDoNotPot = (SPPercent > spThreshold)
 	pollInterval  time.Duration
 	maxStateAge   time.Duration
 	minConfidence float64
@@ -65,7 +65,7 @@ func NewNumericSafetyValidator() *NumericSafetyValidator {
 	v := &NumericSafetyValidator{
 		hpThreshold:   30,
 		spThreshold:   30,
-		pollInterval:  750 * time.Millisecond,
+		pollInterval:  500 * time.Millisecond,
 		maxStateAge:   2 * time.Second,
 		minConfidence: 0.7,
 		log:           func(string) {},

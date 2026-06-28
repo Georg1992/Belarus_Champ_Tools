@@ -130,7 +130,7 @@ func TestPushMonitorStaleNeverBlocks(t *testing.T) {
 
 	// AutoPot checks freshness before using DoNotPot
 	// Stale snapshot should not block
-	if safety.IsFresh(2 * time.Second) && safety.HPDoNotPot {
+	if safety.IsFresh(2*time.Second) && safety.HPDoNotPot {
 		t.Errorf("Stale snapshot should not cause block")
 	}
 }
