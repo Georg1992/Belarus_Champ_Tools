@@ -495,23 +495,23 @@ func TestParseScreenshotsGroundTruth(t *testing.T) {
 	groundTruth := map[string]struct {
 		hpCur, hpMax, spCur, spMax int
 	}{
-		"drift1.png":               {1290, 1290, 201, 201},
-		"aa.png":                   {751, 1290, 102, 201},
-		"drift2.png":               {1290, 1290, 201, 201},
-		"drift3.png":               {1290, 1290, 201, 201},
-		"drift4.png":               {1290, 1290, 201, 201},
-		"drift5.png":               {639, 1290, 33, 201},
-		"drift6.png":               {651, 1290, 57, 201},
-		"Drift7.png":               {663, 1290, 93, 201},
-		"Drift8.png":               {1290, 1290, 201, 201},
-		"assasincrossskill.png":    {1290, 1290, 201, 201},
-		"drift1.2.png":             {1290, 1290, 201, 201},
-		"gg.png":                   {411, 1254, 117, 195},
-		"ii.png":                   {1254, 1254, 195, 195},
-		"jj.png":                   {120, 1280, 6, 201},
-		"pp.png":                   {1045, 1230, 66, 201},
-		"tt.png":                   {674, 1290, 18, 201},
-		"zoomed1.png":              {675, 1290, 117, 201},
+		"drift1.png":            {1290, 1290, 201, 201},
+		"aa.png":                {751, 1290, 102, 201},
+		"drift2.png":            {1290, 1290, 201, 201},
+		"drift3.png":            {1290, 1290, 201, 201},
+		"drift4.png":            {1290, 1290, 201, 201},
+		"drift5.png":            {639, 1290, 33, 201},
+		"drift6.png":            {651, 1290, 57, 201},
+		"Drift7.png":            {663, 1290, 93, 201},
+		"Drift8.png":            {1290, 1290, 201, 201},
+		"assasincrossskill.png": {1290, 1290, 201, 201},
+		"drift1.2.png":          {1290, 1290, 201, 201},
+		"gg.png":                {411, 1254, 117, 195},
+		"ii.png":                {1254, 1254, 195, 195},
+		"jj.png":                {120, 1280, 6, 201},
+		"pp.png":                {1045, 1230, 66, 201},
+		"tt.png":                {674, 1290, 18, 201},
+		"zoomed1.png":           {675, 1290, 117, 201},
 	}
 
 	correctHP := 0
@@ -576,6 +576,331 @@ func TestParseScreenshotsGroundTruth(t *testing.T) {
 	t.Logf("SP correct: %d/%d (%.1f%%)", correctSP, totalTests, float64(correctSP)/float64(totalTests)*100)
 	t.Logf("Both correct: %d/%d (%.1f%%)", min(correctHP, correctSP), totalTests, float64(min(correctHP, correctSP))/float64(totalTests)*100)
 	t.Logf("==================================")
+}
+
+// TestExtractTemplatesFromScreenshots extracts glyph templates from real game screenshots
+// using ground truth HP/SP values to label each digit
+func TestExtractTemplatesFromScreenshots(t *testing.T) {
+	testdataDir := "testdata"
+
+	groundTruth := map[string]struct {
+		hpCur, hpMax, spCur, spMax int
+	}{
+		"drift1.png":            {1290, 1290, 201, 201},
+		"aa.png":                {751, 1290, 102, 201},
+		"drift2.png":            {1290, 1290, 201, 201},
+		"Drift7.png":            {663, 1290, 93, 201},
+		"Drift8.png":            {1290, 1290, 201, 201},
+		"gg.png":                {411, 1254, 117, 195},
+		"pp.png":                {1045, 1230, 66, 201},
+		"drift6.png":            {651, 1290, 57, 201},
+		"drift3.png":            {1290, 1290, 201, 201},
+		"ii.png":                {1254, 1254, 195, 195},
+		"tt.png":                {674, 1290, 18, 201},
+		"zoomed1.png":           {675, 1290, 117, 201},
+		"drift4.png":            {1290, 1290, 201, 201},
+		"drift5.png":            {639, 1290, 33, 201},
+		"assasincrossskill.png": {1290, 1290, 201, 201},
+		"drift1.2.png":          {1290, 1290, 201, 201},
+		"jj.png":                {120, 1280, 6, 201},
+	}
+
+	// Map to collect glyph samples for each digit: digit -> list of 2D bitmaps
+	digitSamples := make(map[int][][][]bool)
+
+	t.Logf("\n=== TEMPLATE EXTRACTION ===")
+
+	for filename, gt := range groundTruth {
+		filePath := filepath.Join(testdataDir, filename)
+		file, err := os.Open(filePath)
+		if err != nil {
+			t.Logf("%-30s SKIP (file not found)", filename)
+			continue
+		}
+		defer file.Close()
+
+		img, err := png.Decode(file)
+		if err != nil {
+			t.Logf("%-30s SKIP (decode failed)", filename)
+			continue
+		}
+
+		// Preprocess image
+		binary := PreprocessImage(img)
+		glyphs := SegmentGlyphs(binary)
+
+		// Get digit sequence for this screenshot
+		digits := getDigitSequence(gt.hpCur, gt.hpMax, gt.spCur, gt.spMax)
+
+		t.Logf("%-30s: %d glyphs, %d digits expected: %v",
+			filename, len(glyphs), len(digits), digits)
+
+		// Extract bitmaps from glyphs and label them by digit
+		if len(glyphs) >= len(digits) {
+			// Filter glyphs: only use reasonable-sized ones with moderate fill
+			usableGlyphs := []GlyphBitmap{}
+			for _, glyph := range glyphs {
+				// Count filled pixels
+				filled := 0
+				for _, row := range glyph.Pixels {
+					for _, val := range row {
+						if val {
+							filled++
+						}
+					}
+				}
+				totalPixels := glyph.Width * glyph.Height
+				density := float64(filled) / float64(totalPixels)
+				
+				// Keep glyphs that are:
+				// - Reasonably sized (> 20 pixels at least one dimension)
+				// - Not mostly empty or mostly filled (0.2 < density < 0.95)
+				if (glyph.Width > 8 || glyph.Height > 8) && density > 0.1 && density < 0.98 {
+					usableGlyphs = append(usableGlyphs, glyph)
+				}
+			}
+			
+			// Use usable glyphs, match to digit sequence
+			for i, digit := range digits {
+				if i < len(usableGlyphs) {
+					// Use the usable glyph's pixels directly
+					glyph := usableGlyphs[i]
+					bitmap := resizeBitmapTo16x16(glyph.Pixels)
+					if bitmap != nil {
+						digitSamples[digit] = append(digitSamples[digit], bitmap)
+					}
+				}
+			}
+		}
+	}
+
+	// Generate template code from collected samples
+	t.Logf("\n=== GENERATED TEMPLATES (Go Code) ===\n")
+	t.Log("var templates = [10]string{")
+	for digit := 0; digit <= 9; digit++ {
+		samples := digitSamples[digit]
+		if len(samples) == 0 {
+			t.Logf("// Digit %d: NO SAMPLES", digit)
+			continue
+		}
+
+		// Use the first good sample or average
+		bitmap := selectBestTemplate(samples)
+		templateStr := bitmapToTemplateStringEncoded(bitmap)
+
+		t.Logf("\t%q, // Digit %d (%d samples)", templateStr, digit, len(samples))
+	}
+	t.Log("}")
+}
+
+// getDigitSequence converts HP/SP values to a sequence of digits
+func getDigitSequence(hpCur, hpMax, spCur, spMax int) []int {
+	var digits []int
+
+	// Add HP digits
+	for _, d := range digitsFromNumber(hpCur) {
+		digits = append(digits, d)
+	}
+	for _, d := range digitsFromNumber(hpMax) {
+		digits = append(digits, d)
+	}
+
+	// Add SP digits
+	for _, d := range digitsFromNumber(spCur) {
+		digits = append(digits, d)
+	}
+	for _, d := range digitsFromNumber(spMax) {
+		digits = append(digits, d)
+	}
+
+	return digits
+}
+
+// digitsFromNumber converts a number to its individual digits
+func digitsFromNumber(n int) []int {
+	if n == 0 {
+		return []int{0}
+	}
+
+	var digits []int
+	for n > 0 {
+		digits = append([]int{n % 10}, digits...)
+		n /= 10
+	}
+	return digits
+}
+
+// resizeBitmapTo16x16 resizes a bitmap to 16x16 pixels
+func resizeBitmapTo16x16(bitmap [][]bool) [][]bool {
+	result := make([][]bool, 16)
+	for i := range result {
+		result[i] = make([]bool, 16)
+	}
+
+	if len(bitmap) == 0 || len(bitmap[0]) == 0 {
+		return result
+	}
+
+	srcH := len(bitmap)
+	srcW := len(bitmap[0])
+
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			srcY := (y * srcH) / 16
+			srcX := (x * srcW) / 16
+			if srcY < len(bitmap) && srcX < len(bitmap[srcY]) {
+				result[y][x] = bitmap[srcY][srcX]
+			}
+		}
+	}
+
+	return result
+}
+
+// selectBestTemplate selects the best template from a list of samples
+func selectBestTemplate(samples [][][]bool) [][]bool {
+	if len(samples) == 0 {
+		return nil
+	}
+	// For now, just return the first sample
+	// Could be improved to average or select based on quality
+	return samples[0]
+}
+
+// bitmapToTemplateString converts a bitmap to the template string format
+func bitmapToTemplateString(bitmap [][]bool) string {
+	if bitmap == nil || len(bitmap) == 0 {
+		return ""
+	}
+
+	result := ""
+	for _, row := range bitmap {
+		for _, val := range row {
+			if val {
+				result += "█"
+			} else {
+				result += "░"
+			}
+		}
+	}
+	return result
+}
+
+// bitmapToTemplateStringEncoded converts a bitmap to a compact encoded format for code
+func bitmapToTemplateStringEncoded(bitmap [][]bool) string {
+	if bitmap == nil || len(bitmap) == 0 {
+		return ""
+	}
+
+	// Use 1 for true, 0 for false in a dense string
+	result := ""
+	for _, row := range bitmap {
+		for _, val := range row {
+			if val {
+				result += "1"
+			} else {
+				result += "0"
+			}
+		}
+	}
+	return result
+}
+
+// TestDebugROIExtraction shows what ROI is being extracted
+func TestDebugROIExtraction(t *testing.T) {
+	testdataDir := "testdata"
+	filename := "aa.png"
+	
+	filePath := filepath.Join(testdataDir, filename)
+	file, err := os.Open(filePath)
+	if err != nil {
+		t.Fatalf("Cannot open %s: %v", filename, err)
+	}
+	defer file.Close()
+
+	img, err := png.Decode(file)
+	if err != nil {
+		t.Fatalf("Cannot decode %s: %v", filename, err)
+	}
+
+	bounds := img.Bounds()
+	t.Logf("Image dimensions: %dx%d", bounds.Dx(), bounds.Dy())
+	
+	roi := CaptureStatusWindowROI(img)
+	t.Logf("Status window ROI: (%d,%d) to (%d,%d) = %dx%d",
+		roi.Min.X, roi.Min.Y, roi.Max.X, roi.Max.Y, roi.Dx(), roi.Dy())
+	
+	roiImg := ExtractROI(img, roi)
+	t.Logf("Extracted ROI dimensions: %dx%d", roiImg.Bounds().Dx(), roiImg.Bounds().Dy())
+	
+	binary := PreprocessImage(roiImg)
+	t.Logf("Binary image dimensions: %dx%d", len(binary[0]), len(binary))
+	
+	// Show what's in the binary image
+	t.Log("\nFirst 70 rows of binary (8 chars wide):")
+	for y := 0; y < min(10, len(binary)); y++ {
+		line := ""
+		for x := 0; x < min(40, len(binary[y])); x++ {
+			if binary[y][x] {
+				line += "█"
+			} else {
+				line += " "
+			}
+		}
+		t.Logf("Row %2d: %s", y, line)
+	}
+}
+
+// TestDebugGlyphExtraction shows what glyphs are being extracted from first screenshot
+func TestDebugGlyphExtraction(t *testing.T) {
+	testdataDir := "testdata"
+	filename := "aa.png"
+	
+	filePath := filepath.Join(testdataDir, filename)
+	file, err := os.Open(filePath)
+	if err != nil {
+		t.Fatalf("Cannot open %s: %v", filename, err)
+	}
+	defer file.Close()
+
+	img, err := png.Decode(file)
+	if err != nil {
+		t.Fatalf("Cannot decode %s: %v", filename, err)
+	}
+
+	binary := PreprocessImage(img)
+	glyphs := SegmentGlyphs(binary)
+	
+	t.Logf("Total glyphs: %d", len(glyphs))
+	
+	for i, glyph := range glyphs[:min(6, len(glyphs))] {
+		// Count true pixels
+		trueCount := 0
+		for _, row := range glyph.Pixels {
+			for _, val := range row {
+				if val {
+					trueCount++
+				}
+			}
+		}
+		totalPixels := glyph.Width * glyph.Height
+		density := float64(trueCount) / float64(totalPixels)
+		
+		// Visualize the glyph
+		visual := ""
+		for _, row := range glyph.Pixels {
+			for _, val := range row {
+				if val {
+					visual += "█"
+				} else {
+					visual += " "
+				}
+			}
+			visual += "\n"
+		}
+		
+		t.Logf("Glyph %d: %dx%d (density %.2f)\n%s", i, glyph.Width, glyph.Height, density, visual)
+	}
 }
 
 func min(a, b int) int {

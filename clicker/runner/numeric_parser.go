@@ -106,10 +106,10 @@ func ParseNumericResources(img image.Image) (NumericRead, error) {
 func CaptureStatusWindowROI(img image.Image) image.Rectangle {
 	bounds := img.Bounds()
 
-	// Typical Ragnarok status window location and size
-	// Adjust these values based on actual game rendering
-	x0, y0 := 15, 15         // top-left offset from screen corner
-	width, height := 250, 70 // width and height of status window
+	// Adjusted to focus on just the text, skipping top decorations
+	// The actual HP/SP text starts around row 8 in a 250x70 region
+	x0, y0 := 15, 20         // Move down to skip decorations
+	width, height := 200, 35 // Smaller height, focus on text area
 
 	x1 := x0 + width
 	y1 := y0 + height
