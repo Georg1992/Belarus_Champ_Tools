@@ -435,7 +435,7 @@ func TestParseScreenshotsIntegration(t *testing.T) {
 // This helps debug why templates don't match well.
 func TestParseScreenshotsDebug(t *testing.T) {
 	testdataDir := filepath.Join("testdata")
-	
+
 	if _, err := os.Stat(testdataDir); os.IsNotExist(err) {
 		t.Skipf("testdata directory not found")
 	}
@@ -486,3 +486,101 @@ func TestParseScreenshotsDebug(t *testing.T) {
 	}
 }
 
+// TestParseScreenshotsGroundTruth validates parser against manual ground truth values.
+// These are actual HP/SP values manually read from each screenshot.
+func TestParseScreenshotsGroundTruth(t *testing.T) {
+	testdataDir := filepath.Join("testdata")
+
+	// Ground truth values manually extracted from screenshots
+	groundTruth := map[string]struct {
+		hpCur, hpMax, spCur, spMax int
+	}{
+		"drift1.png":               {1290, 1290, 201, 201},
+		"aa.png":                   {751, 1290, 102, 201},
+		"drift2.png":               {1290, 1290, 201, 201},
+		"drift3.png":               {1290, 1290, 201, 201},
+		"drift4.png":               {1290, 1290, 201, 201},
+		"drift5.png":               {639, 1290, 33, 201},
+		"drift6.png":               {651, 1290, 57, 201},
+		"Drift7.png":               {663, 1290, 93, 201},
+		"Drift8.png":               {1290, 1290, 201, 201},
+		"assasincrossskill.png":    {1290, 1290, 201, 201},
+		"drift1.2.png":             {1290, 1290, 201, 201},
+		"gg.png":                   {411, 1254, 117, 195},
+		"ii.png":                   {1254, 1254, 195, 195},
+		"jj.png":                   {120, 1280, 6, 201},
+		"pp.png":                   {1045, 1230, 66, 201},
+		"tt.png":                   {674, 1290, 18, 201},
+		"zoomed1.png":              {675, 1290, 117, 201},
+	}
+
+	correctHP := 0
+	correctSP := 0
+	totalTests := 0
+
+	for filename, expected := range groundTruth {
+		filePath := filepath.Join(testdataDir, filename)
+		file, err := os.Open(filePath)
+		if err != nil {
+			t.Logf("%-30s SKIP (file not found)", filename)
+			continue
+		}
+		defer file.Close()
+
+		img, err := png.Decode(file)
+		if err != nil {
+			t.Logf("%-30s SKIP (decode failed)", filename)
+			continue
+		}
+
+		// Parse with panic recovery
+		var read NumericRead
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Logf("%-30s PANIC: %v", filename, r)
+				}
+			}()
+			read, _ = ParseNumericResources(img)
+		}()
+
+		totalTests++
+
+		// Check results
+		hpMatch := read.HP.Found && read.HP.Current == expected.hpCur && read.HP.Max == expected.hpMax
+		spMatch := read.SP.Found && read.SP.Current == expected.spCur && read.SP.Max == expected.spMax
+
+		if hpMatch {
+			correctHP++
+		}
+		if spMatch {
+			correctSP++
+		}
+
+		status := "FAIL"
+		if hpMatch && spMatch {
+			status = "PASS"
+		}
+
+		t.Logf("%-30s %s HP: got %3d/%3d (want %3d/%3d) SP: got %3d/%3d (want %3d/%3d) conf=%.2f/%.2f",
+			filename, status,
+			read.HP.Current, read.HP.Max, expected.hpCur, expected.hpMax,
+			read.SP.Current, read.SP.Max, expected.spCur, expected.spMax,
+			read.HP.Confidence, read.SP.Confidence)
+	}
+
+	// Summary
+	t.Logf("\n=== GROUND TRUTH TEST SUMMARY ===")
+	t.Logf("Total tests: %d", totalTests)
+	t.Logf("HP correct: %d/%d (%.1f%%)", correctHP, totalTests, float64(correctHP)/float64(totalTests)*100)
+	t.Logf("SP correct: %d/%d (%.1f%%)", correctSP, totalTests, float64(correctSP)/float64(totalTests)*100)
+	t.Logf("Both correct: %d/%d (%.1f%%)", min(correctHP, correctSP), totalTests, float64(min(correctHP, correctSP))/float64(totalTests)*100)
+	t.Logf("==================================")
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
