@@ -26,15 +26,17 @@ type AutoPotRunner struct {
 	liveMu sync.RWMutex
 	live   AutoPotConfig
 
-	hpStabilizer *BarStabilizer
-	spStabilizer *BarStabilizer
+	hpStabilizer   *BarStabilizer
+	spStabilizer   *BarStabilizer
+	numericValidator *NumericSafetyValidator
 }
 
 func NewAutoPot(cfg AutoPotConfig) *AutoPotRunner {
 	return &AutoPotRunner{
-		live:         cfg,
-		hpStabilizer: NewBarStabilizer(true, cfg.HPThreshold),
-		spStabilizer: NewBarStabilizer(false, cfg.SPThreshold),
+		live:             cfg,
+		hpStabilizer:     NewBarStabilizer(true, cfg.HPThreshold),
+		spStabilizer:     NewBarStabilizer(false, cfg.SPThreshold),
+		numericValidator: NewNumericSafetyValidator(),
 	}
 }
 
@@ -94,6 +96,11 @@ func (a *AutoPotRunner) Start() error {
 	a.cancel = cancel
 	a.running = true
 	a.done = make(chan struct{})
+
+	// Initialize numeric validator
+	a.numericValidator.SetLogFunc(cfg.Log)
+	a.numericValidator.Start(ctx)
+
 	a.mu.Unlock()
 
 	go func() {
@@ -200,6 +207,21 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, h
 			return
 		}
 		before := read.Percent
+
+		// Check numeric validator before potting
+		threshold := cfg.HPThreshold
+		if !hpBar {
+			threshold = cfg.SPThreshold
+		}
+		if hpBar && a.numericValidator.ShouldBlockHP(threshold) {
+			cfg.Log("HP pot blocked by numeric safety validator")
+			return
+		}
+		if !hpBar && a.numericValidator.ShouldBlockSP(threshold) {
+			cfg.Log("SP pot blocked by numeric safety validator")
+			return
+		}
+
 		if err := session.TapKey(vk, KeyTapHold); err != nil {
 			cfg.Log(fmt.Sprintf("Key %s failed: %v", KeyName(vk), err))
 			return
