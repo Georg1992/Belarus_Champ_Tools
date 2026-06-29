@@ -10,14 +10,6 @@ import (
 	status "experimental-clicker/runner/statusui"
 )
 
-// PotionKind represents the type of potion (HP or SP).
-type PotionKind int
-
-const (
-	PotionHP PotionKind = iota
-	PotionSP
-)
-
 // SafetySnapshot is the immutable safety state published by the validator.
 // It contains pre-computed DoNotPot flags based on current thresholds.
 type SafetySnapshot struct {
