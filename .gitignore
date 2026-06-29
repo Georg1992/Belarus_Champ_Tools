@@ -27,6 +27,9 @@ clicker/gui/*.syso
 release/*
 !release/.gitignore
 
+# Local testdata duplicates (the canonical one is in clicker/runner/autopot/testdata/)
+clicker/runner/testdata/
+
 # OS / editor
 .DS_Store
 Thumbs.db
