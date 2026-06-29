@@ -44,7 +44,7 @@ func (m *mockSession) MouseUp() error   { return nil }
 //   - session.Paused()    (InputSession.RLock in real ViiperSession)
 //   - timing.Sleep        (ctx-aware sleep — Stop works)
 // and the spawned numericValidator goroutine also loops, calling
-// SetLogFunc / SetThresholds on the validator and atomic Store of
+// SetThresholds on the validator and atomic Store of
 // cachedSafety. Hammering UpdateSettings from outside covers the same
 // surface the healUntil() hot path reads.
 func TestAutoPotRunnerStress(t *testing.T) {

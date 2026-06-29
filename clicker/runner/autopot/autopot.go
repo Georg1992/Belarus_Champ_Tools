@@ -111,7 +111,6 @@ func (a *AutoPotRunner) resetStabilizers() {
 func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 	defer a.resetStabilizers()
 
-	a.numericValidator.SetLogFunc(cfg.Log)
 	a.numericValidator.SetThresholds(cfg.HPThreshold, cfg.SPThreshold)
 	a.numericValidator.Start(ctx)
 

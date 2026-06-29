@@ -10,11 +10,13 @@ import (
 // TestNumericSafetyValidatorConcurrent stresses the parts of
 // NumericSafetyValidator that autopot reads on the hot path:
 //   - GetCachedSafety() reads cachedSafety via atomic.Value.Load
-//   - SetThresholds() and SetLogFunc() mutate cfg under mu (RWMutex)
+//   - SetThresholds() mutates cfg under mu (RWMutex)
 //
 // Note: the SetPollInterval / SetMaxStateAge / SetMinConfidence setters are
 // intentionally NOT exercised here — those write unlocked fields that the
-// run() goroutine also reads without locking. They are a separate fix.
+// run() goroutine also reads without locking. They have a separate
+// stress test (TestNumericSafetyValidatorConfigRace) that pairs them
+// with the lock fix.
 func TestNumericSafetyValidatorConcurrent(t *testing.T) {
 	v := NewNumericSafetyValidator()
 	const duration = 250 * time.Millisecond
@@ -57,19 +59,6 @@ func TestNumericSafetyValidatorConcurrent(t *testing.T) {
 			}
 		}(i)
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-				v.SetLogFunc(func(string) {})
-			}
-		}
-	}()
-
 	time.Sleep(duration)
 	close(stop)
 	wg.Wait()

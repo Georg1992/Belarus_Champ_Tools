@@ -56,7 +56,6 @@ type NumericSafetyValidator struct {
 	pollInterval  time.Duration
 	maxStateAge   time.Duration
 	minConfidence float64
-	log           func(string)
 
 	// Atomic cache: stores *SafetySnapshot
 	// Parser publishes safety flags here; AutoPot reads from here
@@ -71,18 +70,10 @@ func NewNumericSafetyValidator() *NumericSafetyValidator {
 		pollInterval:  500 * time.Millisecond,
 		maxStateAge:   2 * time.Second,
 		minConfidence: 0.7,
-		log:           func(string) {},
 	}
 	// Initialize with empty safety snapshot
 	v.cachedSafety.Store(&SafetySnapshot{UpdatedAt: time.Now()})
 	return v
-}
-
-// SetLogFunc sets the logging function.
-func (v *NumericSafetyValidator) SetLogFunc(fn func(string)) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	v.log = fn
 }
 
 // SetThresholds sets both HP and SP thresholds for DoNotPot calculations.
@@ -193,8 +184,9 @@ func (v *NumericSafetyValidator) captureAndPublishSafety() {
 // publishSafetySnapshot computes safety flags and publishes immutable snapshot.
 func (v *NumericSafetyValidator) publishSafetySnapshot(state status.NumericRead, found bool, errorReason string) {
 	// Read all config fields under one RLock so the locked setters
-	// (SetThresholds, SetLogFunc, SetPollInterval, SetMinConfidence)
-	// are serialized with these reads.
+	// (SetThresholds, SetMinConfidence) are serialized with these
+	// reads; SetPollInterval is also locked but its write is paired
+	// with run()'s one-time read of v.pollInterval at start.
 	v.mu.RLock()
 	hpThreshold := v.hpThreshold
 	spThreshold := v.spThreshold
