@@ -1,14 +1,19 @@
+// TimerKeyRunner fires each enabled slot's key on its interval.
+// Lifecycle driven by internal/lifecycle.
 package runner
 
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
+
+	"experimental-clicker/runner/internal/lifecycle"
+	"experimental-clicker/runner/internal/session"
+	"experimental-clicker/runner/internal/timing"
 )
 
 const (
-	TimerKeySlotCount         = 5
+	TimerKeySlotCount          = 5
 	DefaultTimerKeyIntervalSec = 1
 	DefaultTimerKeyIntervalMs  = DefaultTimerKeyIntervalSec * 1000
 )
@@ -19,8 +24,10 @@ type TimerSlot struct {
 	IntervalMs int
 }
 
+// TimerKeyConfig is what NewTimerKey takes. Session is the canonical
+// session.InputSession.
 type TimerKeyConfig struct {
-	Session *ViiperSession
+	Session session.InputSession
 	Slots   [TimerKeySlotCount]TimerSlot
 	Log     func(string)
 }
@@ -45,103 +52,53 @@ func (c TimerKeyConfig) AnyActive() bool {
 	return false
 }
 
+// TimerKeyRunner fires each enabled slot on its interval.
 type TimerKeyRunner struct {
-	cfg TimerKeyConfig
-
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	done    chan struct{}
-	running bool
-
-	liveMu sync.RWMutex
-	live   TimerKeyConfig
+	lc *lifecycle.Lifecycle[TimerKeyConfig]
 }
 
+// NewTimerKey constructs a TimerKeyRunner. Applies defaults.
 func NewTimerKey(cfg TimerKeyConfig) *TimerKeyRunner {
 	cfg.applyDefaults()
-	return &TimerKeyRunner{cfg: cfg, live: cfg}
+	return &TimerKeyRunner{
+		lc: lifecycle.New[TimerKeyConfig](
+			cfg,
+			func(c TimerKeyConfig) error {
+				if !c.AnyActive() {
+					return nil
+				}
+				if c.Session == nil {
+					return fmt.Errorf("input session is required")
+				}
+				return nil
+			},
+			nil,
+		),
+	}
 }
 
-func (t *TimerKeyRunner) Running() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.running
-}
+func (t *TimerKeyRunner) Running() bool { return t.lc.Running() }
 
 func (t *TimerKeyRunner) UpdateSettings(cfg TimerKeyConfig) {
 	cfg.applyDefaults()
-	t.liveMu.Lock()
-	t.live = cfg
-	t.liveMu.Unlock()
+	t.lc.UpdateSettings(cfg)
 }
 
-func (t *TimerKeyRunner) settings() TimerKeyConfig {
-	t.liveMu.RLock()
-	defer t.liveMu.RUnlock()
-	return t.live
-}
+func (t *TimerKeyRunner) settings() TimerKeyConfig { return t.lc.Settings() }
 
 func (t *TimerKeyRunner) Start() error {
-	t.mu.Lock()
-	if t.running {
-		t.mu.Unlock()
-		return fmt.Errorf("timer key already running")
+	if err := t.lc.Start(t.run); err != nil {
+		return fmt.Errorf("timer key: %w", err)
 	}
-
-	cfg := t.settings()
-	if !cfg.AnyActive() {
-		t.mu.Unlock()
-		return nil
-	}
-	if cfg.Session == nil {
-		t.mu.Unlock()
-		return fmt.Errorf("input session is required")
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	t.cancel = cancel
-	t.running = true
-	t.done = make(chan struct{})
-	t.mu.Unlock()
-
-	go func() {
-		defer close(t.done)
-		defer func() {
-			t.mu.Lock()
-			t.running = false
-			t.cancel = nil
-			t.mu.Unlock()
-		}()
-		t.run(ctx)
-	}()
-
 	return nil
 }
 
-func (t *TimerKeyRunner) Stop() {
-	t.mu.Lock()
-	cancel := t.cancel
-	t.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-}
+func (t *TimerKeyRunner) Stop() { t.lc.Stop() }
 
-func (t *TimerKeyRunner) Wait() {
-	t.mu.Lock()
-	done := t.done
-	t.mu.Unlock()
-	if done != nil {
-		<-done
-	}
-}
+func (t *TimerKeyRunner) Wait() { t.lc.Wait() }
 
-func (t *TimerKeyRunner) log(msg string) {
-	t.cfg.Log(msg)
-}
-
-func (t *TimerKeyRunner) run(ctx context.Context) {
-	session := t.cfg.Session
+func (t *TimerKeyRunner) run(ctx context.Context, cfg TimerKeyConfig) {
+	session := cfg.Session
 
 	var lastSlots [TimerKeySlotCount]TimerSlot
 	var nextDue [TimerKeySlotCount]time.Time
@@ -151,17 +108,17 @@ func (t *TimerKeyRunner) run(ctx context.Context) {
 			return
 		}
 		if session.Paused() {
-			sleep(ctx, PollInterval)
+			timing.Sleep(ctx, timing.PollInterval)
 			continue
 		}
 
-		cfg := t.settings()
+		current := t.settings()
 		now := time.Now()
 		var earliest time.Time
 		anyActive := false
 
-		for i := range cfg.Slots {
-			slot := cfg.Slots[i]
+		for i := range current.Slots {
+			slot := current.Slots[i]
 			if !slot.Enabled || slot.KeyVK == 0 {
 				lastSlots[i] = TimerSlot{}
 				nextDue[i] = time.Time{}
@@ -179,8 +136,8 @@ func (t *TimerKeyRunner) run(ctx context.Context) {
 				nextDue[i] = now
 			}
 			if !now.Before(nextDue[i]) {
-				if err := session.TapKey(slot.KeyVK, KeyTapHold); err != nil {
-					t.log(fmt.Sprintf("Timer %d key %s failed: %v", i+1, KeyName(slot.KeyVK), err))
+				if err := session.TapKey(slot.KeyVK, timing.KeyTapHold); err != nil {
+					current.Log(fmt.Sprintf("Timer %d key %s failed: %v", i+1, KeyName(slot.KeyVK), err))
 					return
 				}
 				nextDue[i] = now.Add(interval)
@@ -191,7 +148,7 @@ func (t *TimerKeyRunner) run(ctx context.Context) {
 		}
 
 		if !anyActive {
-			sleep(ctx, CaptureRetryDelay)
+			timing.Sleep(ctx, timing.CaptureRetryDelay)
 			continue
 		}
 
@@ -199,9 +156,9 @@ func (t *TimerKeyRunner) run(ctx context.Context) {
 		if wait < time.Millisecond {
 			wait = time.Millisecond
 		}
-		if wait > PollInterval {
-			wait = PollInterval
+		if wait > timing.PollInterval {
+			wait = timing.PollInterval
 		}
-		sleep(ctx, wait)
+		timing.Sleep(ctx, wait)
 	}
 }

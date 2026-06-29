@@ -1,4 +1,4 @@
-package runner
+package autopot
 
 import (
 	_ "image/png"

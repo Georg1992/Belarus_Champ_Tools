@@ -206,34 +206,18 @@ func (a *guiApp) clearClickerKey(index int) {
 }
 
 func (a *guiApp) bindClickerKey(index int) {
-	if !a.isStarted() || a.clickerBindingSlot >= 0 {
-		return
-	}
-	if index < 0 || index >= runner.ClickerSlotCount {
-		return
-	}
-
-	a.clickerBindingSlot = index
-	a.appendLog(fmt.Sprintf("Press a key to add for %s (5s timeout)...", clickerSlotTitles[index]))
-
-	go func() {
-		defer func() {
-			a.clickerBindingSlot = -1
-			a.mainWindow.Synchronize(func() {
-				a.setClickerConfigEnabled(a.isStarted())
-			})
-		}()
-
-		vk, ok := runner.WaitForKeyPress(runner.KeyBindTimeout)
-		a.mainWindow.Synchronize(func() {
-			if !ok {
-				a.appendLog("Key bind timed out")
-				return
+	a.bindKeyFlow(
+		func() bool {
+			if !a.isStarted() || a.clickerBindingSlot >= 0 || index < 0 || index >= runner.ClickerSlotCount {
+				return false
 			}
-			if _, hidOK := runner.VKToHID(vk); !hidOK {
-				a.appendLog(fmt.Sprintf("Key %s is not supported", runner.KeyName(vk)))
-				return
-			}
+			a.clickerBindingSlot = index
+			return true
+		},
+		fmt.Sprintf("Press a key to add for %s (%s timeout)...", clickerSlotTitles[index], runner.KeyBindTimeout),
+		func() { a.clickerBindingSlot = -1 },
+		func() { a.setClickerConfigEnabled(a.isStarted()) },
+		func(vk int32) {
 			for i := 0; i < runner.ClickerSlotCount; i++ {
 				if slices.Contains(a.clickerTriggerVKs[i], vk) {
 					a.appendLog(fmt.Sprintf("Key %s is already bound to %s", runner.KeyName(vk), clickerSlotTitles[i]))
@@ -244,6 +228,6 @@ func (a *guiApp) bindClickerKey(index int) {
 			a.updateClickerKeyLabel(index)
 			a.appendLog(fmt.Sprintf("%s added key %s", clickerSlotTitles[index], runner.KeyName(vk)))
 			a.syncRunnerSettings()
-		})
-	}()
+		},
+	)
 }

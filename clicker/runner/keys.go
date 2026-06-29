@@ -3,6 +3,10 @@ package runner
 import (
 	"fmt"
 	"strings"
+	"time"
+
+	"experimental-clicker/runner/internal/timing"
+	windows "experimental-clicker/runner/platform/windows"
 
 	"github.com/Alia5/VIIPER/device/keyboard"
 )
@@ -84,4 +88,22 @@ func KeyName(vk int32) string {
 func VKToHID(vk int32) (uint8, bool) {
 	hid, ok := vkToHID[vk]
 	return hid, ok
+}
+
+// WaitForKeyPress polls physical key state for up to timeout and returns the
+// virtual-key code of the first key that becomes pressed. Returns ok=false on
+// timeout.
+func WaitForKeyPress(timeout time.Duration) (int32, bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		if time.Now().After(deadline) {
+			return 0, false
+		}
+		for vk := range keyNames {
+			if windows.PhysicalKeyDown(vk) {
+				return vk, true
+			}
+		}
+		time.Sleep(timing.PollInterval)
+	}
 }

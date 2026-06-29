@@ -2,6 +2,14 @@
 
 //go:generate go run github.com/akavel/rsrc@v0.10.2 -manifest app.manifest -o rsrc.syso
 
+// Package main is the walk-based Windows GUI for the clicker. It is
+// the topmost layer of a three-layer architecture; see README.md in
+// this directory for the full layering rules and the import boundary.
+//
+// Quick rule: this package must only import `experimental-clicker/runner`
+// (the public facade). Never import `runner/autopot`, `runner/statusui`,
+// `runner/internal/...`, or `runner/platform/...` directly — add the
+// missing surface to `runner` first, then consume it here.
 package main
 
 import (
@@ -271,39 +279,23 @@ func (a *guiApp) autopotWanted() runner.AutoPotConfig {
 }
 
 func (a *guiApp) startAutoPotRunner(cfg runner.AutoPotConfig) {
-	if !cfg.HPEnabled && !cfg.SPEnabled {
-		return
-	}
-	a.mu.Lock()
-	if a.autopotRunner != nil && a.autopotRunner.Running() {
-		a.mu.Unlock()
-		return
-	}
-	old := a.autopotRunner
-	a.autopotRunner = nil
-	a.mu.Unlock()
-
-	if old != nil {
-		old.Stop()
-		old.Wait()
-	}
-
-	cfg.Log = a.appendLog
-	a.mu.Lock()
-	cfg.Session = a.inputSession
-	a.mu.Unlock()
-	if cfg.Session == nil {
-		return
-	}
-	ap := runner.NewAutoPot(cfg)
-	if err := ap.Start(); err != nil {
-		a.appendLog(fmt.Sprintf("AutoPot start failed: %v", err))
-		return
-	}
-	a.mu.Lock()
-	a.autopotRunner = ap
-	a.mu.Unlock()
-	a.appendLog("AutoPot started")
+	take, store := makeLifecycleSlot[*runner.AutoPotRunner](&a.mu, &a.autopotRunner)
+	startLifecycle(
+		take, store,
+		"AutoPot",
+		a.appendLog,
+		func() runner.InputSession {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			return a.inputSession
+		},
+		func() bool { return cfg.HPEnabled || cfg.SPEnabled },
+		func(sess runner.InputSession) *runner.AutoPotRunner {
+			cfg.Session = sess
+			cfg.Log = a.appendLog
+			return runner.NewAutoPot(cfg)
+		},
+	)
 }
 
 func (a *guiApp) setStarted(started bool) {

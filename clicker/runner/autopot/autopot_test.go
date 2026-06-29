@@ -1,4 +1,4 @@
-package runner
+package autopot
 
 import (
 	"image"
@@ -10,7 +10,7 @@ func newTestStabilizers(threshold int) (*BarStabilizer, *BarStabilizer) {
 }
 
 func stabRead(img image.Image, stab *BarStabilizer, hpBar bool) StableBarRead {
-	mapped, ok := refreshStableBarPair(img)
+	mapped, ok := RefreshStableBarPair(img)
 	if !ok {
 		return stab.UpdatePair(img, hpBar, mapped, false)
 	}
@@ -217,10 +217,10 @@ func TestPartialBarsNotDetectedAsFull(t *testing.T) {
 			}
 			hp, sp := ReadMappedBars(img, mapped)
 			tc := knownBarCases()[name]
-			if tc.hpPct < 99.9 && barLooksFull(img, mapped.HP, true) {
+			if tc.hpPct < 99.9 && BarLooksFull(img, mapped.HP, true) {
 				t.Fatalf("HP %.1f%% (game %.1f%%) falsely detected full", hp.Percent, tc.hpPct)
 			}
-			if tc.spPct < 99.9 && barLooksFull(img, mapped.SP, false) {
+			if tc.spPct < 99.9 && BarLooksFull(img, mapped.SP, false) {
 				t.Fatalf("SP %.1f%% (game %.1f%%) falsely detected full", sp.Percent, tc.spPct)
 			}
 		})
@@ -251,7 +251,7 @@ func TestFullBarStableAcrossShiftedRects(t *testing.T) {
 		}
 		mapped.HP.X += dx
 		mapped.SP.X += dx
-		if barLooksFull(img, mapped.HP, true) {
+		if BarLooksFull(img, mapped.HP, true) {
 			t.Fatalf("dx=%+d shifted rect must not look full", dx)
 		}
 	}

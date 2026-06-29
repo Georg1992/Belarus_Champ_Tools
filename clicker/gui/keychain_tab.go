@@ -280,38 +280,23 @@ func (a *guiApp) setKeyChainConfigEnabled(enabled bool) {
 }
 
 func (a *guiApp) startKeyChainRunner(cfg runner.KeyChainConfig) {
-	if !cfg.Active() {
-		return
-	}
-	a.mu.Lock()
-	if a.keyChainRunner != nil && a.keyChainRunner.Running() {
-		a.mu.Unlock()
-		return
-	}
-	old := a.keyChainRunner
-	a.keyChainRunner = nil
-	a.mu.Unlock()
-
-	if old != nil {
-		old.Stop()
-		old.Wait()
-	}
-
-	cfg.Log = a.appendLog
-	a.mu.Lock()
-	cfg.Session = a.inputSession
-	a.mu.Unlock()
-	if cfg.Session == nil {
-		return
-	}
-	kc := runner.NewKeyChain(cfg)
-	if err := kc.Start(); err != nil {
-		a.appendLog(fmt.Sprintf("KeyChain start failed: %v", err))
-		return
-	}
-	a.mu.Lock()
-	a.keyChainRunner = kc
-	a.mu.Unlock()
+	take, store := makeLifecycleSlot[*runner.KeyChainRunner](&a.mu, &a.keyChainRunner)
+	startLifecycle(
+		take, store,
+		"KeyChain",
+		a.appendLog,
+		func() runner.InputSession {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			return a.inputSession
+		},
+		func() bool { return cfg.Active() },
+		func(sess runner.InputSession) *runner.KeyChainRunner {
+			cfg.Session = sess
+			cfg.Log = a.appendLog
+			return runner.NewKeyChain(cfg)
+		},
+	)
 }
 
 func (a *guiApp) stopKeyChainRunner() {
@@ -336,38 +321,22 @@ func (a *guiApp) clearKeyChain() {
 }
 
 func (a *guiApp) bindKeyChainKey(index int) {
-	if !a.isStarted() || a.keyChainBindingSlot >= 0 {
-		return
-	}
-	if index < 0 || index >= runner.KeyChainSlotCount {
-		return
-	}
-
-	a.keyChainBindingSlot = index
-	a.appendLog(fmt.Sprintf("Press a key for chain slot %d (5s timeout)...", index+1))
-
-	go func() {
-		defer func() {
-			a.keyChainBindingSlot = -1
-			a.mainWindow.Synchronize(func() {
-				a.setKeyChainConfigEnabled(a.isStarted())
-			})
-		}()
-
-		vk, ok := runner.WaitForKeyPress(runner.KeyBindTimeout)
-		a.mainWindow.Synchronize(func() {
-			if !ok {
-				a.appendLog("Key bind timed out")
-				return
+	a.bindKeyFlow(
+		func() bool {
+			if !a.isStarted() || a.keyChainBindingSlot >= 0 || index < 0 || index >= runner.KeyChainSlotCount {
+				return false
 			}
-			if _, hidOK := runner.VKToHID(vk); !hidOK {
-				a.appendLog(fmt.Sprintf("Key %s is not supported", runner.KeyName(vk)))
-				return
-			}
+			a.keyChainBindingSlot = index
+			return true
+		},
+		fmt.Sprintf("Press a key for chain slot %d (%s timeout)...", index+1, runner.KeyBindTimeout),
+		func() { a.keyChainBindingSlot = -1 },
+		func() { a.setKeyChainConfigEnabled(a.isStarted()) },
+		func(vk int32) {
 			a.keyChainKeyVKs[index] = vk
 			a.setKeyChainKeyText(index, vk)
 			a.appendLog(fmt.Sprintf("Chain key %d: %s", index+1, runner.KeyName(vk)))
 			a.syncKeyChainSettings()
-		})
-	}()
+		},
+	)
 }

@@ -34,7 +34,7 @@ func ScreenSize() (w, h int) {
 }
 
 // CaptureScreenRegion grabs a screen rectangle into an RGBA image.
-func CaptureScreenRegion(roi BarROI) (*image.RGBA, error) {
+func CaptureScreenRegion(roi ScreenROI) (*image.RGBA, error) {
 	if roi.W <= 0 || roi.H <= 0 {
 		return nil, fmt.Errorf("invalid capture roi %v", roi)
 	}
@@ -94,24 +94,24 @@ func CaptureScreenRegion(roi BarROI) (*image.RGBA, error) {
 }
 
 // CapturePlayerBarSearch grabs the center region below the character.
-func CapturePlayerBarSearch() (img *image.RGBA, roi BarROI, err error) {
+func CapturePlayerBarSearch() (img *image.RGBA, roi ScreenROI, err error) {
 	sw, sh := ScreenSize()
 	roi = PlayerBarSearchROI(sw, sh)
 	img, err = CaptureScreenRegion(roi)
 	return img, roi, err
 }
 
-// BarROI defines a rectangular region for screen capture.
-type BarROI struct {
+// ScreenROI defines a rectangular region for screen capture.
+type ScreenROI struct {
 	X, Y, W, H int
 }
 
 // PlayerBarSearchROI returns the region below the player’s status bar area.
-func PlayerBarSearchROI(sw, sh int) BarROI {
+func PlayerBarSearchROI(sw, sh int) ScreenROI {
 	width, height := 200, 40
 	x := (sw - width) / 2
 	y := sh/2 + 200
-	return BarROI{X: x, Y: y, W: width, H: height}
+	return ScreenROI{X: x, Y: y, W: width, H: height}
 }
 
 type bitmapInfoHeader struct {

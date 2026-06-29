@@ -227,7 +227,7 @@ func normalizeBarRead(img image.Image, r Rect, hpBar bool, read BarRead) BarRead
 	if !read.Found || r.W < 2 {
 		return read
 	}
-	if !barLooksFull(img, r, hpBar) {
+	if !BarLooksFull(img, r, hpBar) {
 		return read
 	}
 	if read.FullWidth < 1 {
@@ -340,7 +340,10 @@ func rectDrifted(a, b Rect, max int) bool {
 		absInt(a.W-b.W) > max
 }
 
-func refreshStableBarPair(img image.Image) (MappedBars, bool) {
+// RefreshStableBarPair returns a MappedBars only when two consecutive
+// RefreshBarPair calls agree within BarPairStableDrift, otherwise false.
+// Exported (uppercase) so the runner package can re-export it for tests.
+func RefreshStableBarPair(img image.Image) (MappedBars, bool) {
 	first, err := RefreshBarPair(img)
 	if err != nil {
 		return MappedBars{}, false
@@ -393,7 +396,9 @@ func barRightHasEmptyTrack(img image.Image, r Rect, hpBar bool) bool {
 	return false
 }
 
-func barLooksFull(img image.Image, r Rect, hpBar bool) bool {
+// BarLooksFull reports whether the bar in rect appears to be at 100% fill.
+// Exported (uppercase) so the runner package can re-export it for tests.
+func BarLooksFull(img image.Image, r Rect, hpBar bool) bool {
 	if r.W < 2 {
 		return false
 	}
@@ -407,7 +412,7 @@ func barConfirmedNotFull(img image.Image, r Rect, hpBar bool, read BarRead) bool
 	if !read.Found || !barReadConsistent(img, r, hpBar, read) {
 		return false
 	}
-	if barLooksFull(img, r, hpBar) || read.Percent >= 99 {
+	if BarLooksFull(img, r, hpBar) || read.Percent >= 99 {
 		return false
 	}
 	return barRightHasEmptyTrack(img, r, hpBar)
@@ -417,7 +422,7 @@ func barReadConsistent(img image.Image, r Rect, hpBar bool, read BarRead) bool {
 	if !read.Found || r.W < 2 {
 		return false
 	}
-	if barLooksFull(img, r, hpBar) {
+	if BarLooksFull(img, r, hpBar) {
 		return true
 	}
 	fillW := bestFillWidth(img, r, hpBar)

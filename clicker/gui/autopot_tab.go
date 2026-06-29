@@ -343,30 +343,18 @@ func (a *guiApp) onBindSPKey() {
 }
 
 func (a *guiApp) bindAutoPotKey(hp bool) {
-	if !a.isStarted() || a.autopotBinding {
-		return
-	}
-	a.autopotBinding = true
-	a.appendLog("Press a potion hotkey to assign (5s timeout)...")
-
-	go func() {
-		defer func() {
-			a.autopotBinding = false
-			a.mainWindow.Synchronize(func() {
-				a.setAutoPotConfigEnabled(a.isStarted())
-			})
-		}()
-
-		vk, ok := runner.WaitForKeyPress(runner.KeyBindTimeout)
-		a.mainWindow.Synchronize(func() {
-			if !ok {
-				a.appendLog("Key bind timed out")
-				return
+	a.bindKeyFlow(
+		func() bool {
+			if !a.isStarted() || a.autopotBinding {
+				return false
 			}
-			if _, hidOK := runner.VKToHID(vk); !hidOK {
-				a.appendLog(fmt.Sprintf("Key %s is not supported", runner.KeyName(vk)))
-				return
-			}
+			a.autopotBinding = true
+			return true
+		},
+		fmt.Sprintf("Press a potion hotkey to assign (%s timeout)...", runner.KeyBindTimeout),
+		func() { a.autopotBinding = false },
+		func() { a.setAutoPotConfigEnabled(a.isStarted()) },
+		func(vk int32) {
 			if hp {
 				if a.spKeyVK != 0 && a.spKeyVK == vk {
 					a.appendLog(fmt.Sprintf("Key %s is already assigned to SP potion", runner.KeyName(vk)))
@@ -385,7 +373,7 @@ func (a *guiApp) bindAutoPotKey(hp bool) {
 				a.appendLog(fmt.Sprintf("SP potion key: %s", runner.KeyName(vk)))
 			}
 			a.syncAutoPotSettings()
-		})
-	}()
+		},
+	)
 }
 

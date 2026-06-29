@@ -1,18 +1,25 @@
+// KeyChainRunner plays a sequence of keys when its trigger key is held down.
+// Lifecycle driven by internal/lifecycle.
 package runner
 
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	windows "experimental-clicker/runner/platform/windows"
+
+	"experimental-clicker/runner/internal/lifecycle"
+	"experimental-clicker/runner/internal/session"
+	"experimental-clicker/runner/internal/timing"
 )
 
 const KeyChainSlotCount = 7
 
+// KeyChainConfig is what NewKeyChain takes. Session is the canonical
+// session.InputSession — same interface other runners use.
 type KeyChainConfig struct {
-	Session  *ViiperSession
+	Session  session.InputSession
 	Keys     [KeyChainSlotCount]int32
 	DelaysMs [KeyChainSlotCount]int
 	Log      func(string)
@@ -28,121 +35,71 @@ func (c KeyChainConfig) Active() bool {
 	return c.Keys[0] != 0
 }
 
+// KeyChainRunner runs the macro.
 type KeyChainRunner struct {
-	cfg KeyChainConfig
-
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	done    chan struct{}
-	running bool
-
-	liveMu sync.RWMutex
-	live   KeyChainConfig
+	lc *lifecycle.Lifecycle[KeyChainConfig]
 }
 
+// NewKeyChain constructs a KeyChainRunner. Defaults the Log callback.
 func NewKeyChain(cfg KeyChainConfig) *KeyChainRunner {
 	cfg.applyDefaults()
-	return &KeyChainRunner{cfg: cfg, live: cfg}
+	return &KeyChainRunner{
+		lc: lifecycle.New[KeyChainConfig](
+			cfg,
+			func(c KeyChainConfig) error {
+				if !c.Active() {
+					return nil
+				}
+				if c.Session == nil {
+					return fmt.Errorf("input session is required")
+				}
+				return nil
+			},
+			nil,
+		),
+	}
 }
 
-func (k *KeyChainRunner) Running() bool {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	return k.running
-}
+func (k *KeyChainRunner) Running() bool { return k.lc.Running() }
 
 func (k *KeyChainRunner) UpdateSettings(cfg KeyChainConfig) {
 	cfg.applyDefaults()
-	k.liveMu.Lock()
-	k.live = cfg
-	k.liveMu.Unlock()
+	k.lc.UpdateSettings(cfg)
 }
 
-func (k *KeyChainRunner) settings() KeyChainConfig {
-	k.liveMu.RLock()
-	defer k.liveMu.RUnlock()
-	return k.live
-}
+func (k *KeyChainRunner) settings() KeyChainConfig { return k.lc.Settings() }
 
 func (k *KeyChainRunner) Start() error {
-	k.mu.Lock()
-	if k.running {
-		k.mu.Unlock()
-		return fmt.Errorf("keychain already running")
+	if err := k.lc.Start(k.run); err != nil {
+		return fmt.Errorf("keychain: %w", err)
 	}
-	cfg := k.settings()
-	if !cfg.Active() {
-		k.mu.Unlock()
-		return nil
-	}
-	if cfg.Session == nil {
-		k.mu.Unlock()
-		return fmt.Errorf("input session is required")
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	k.cancel = cancel
-	k.running = true
-	k.done = make(chan struct{})
-	k.mu.Unlock()
-
-	go func() {
-		defer close(k.done)
-		defer func() {
-			k.mu.Lock()
-			k.running = false
-			k.cancel = nil
-			k.mu.Unlock()
-		}()
-		k.run(ctx)
-	}()
-
 	return nil
 }
 
-func (k *KeyChainRunner) Stop() {
-	k.mu.Lock()
-	cancel := k.cancel
-	k.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-}
+func (k *KeyChainRunner) Stop() { k.lc.Stop() }
 
-func (k *KeyChainRunner) Wait() {
-	k.mu.Lock()
-	done := k.done
-	k.mu.Unlock()
-	if done != nil {
-		<-done
-	}
-}
+func (k *KeyChainRunner) Wait() { k.lc.Wait() }
 
-func (k *KeyChainRunner) log(msg string) {
-	k.cfg.Log(msg)
-}
-
-func (k *KeyChainRunner) run(ctx context.Context) {
-	session := k.cfg.Session
-
+func (k *KeyChainRunner) run(ctx context.Context, cfg KeyChainConfig) {
+	session := cfg.Session
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 		if session.Paused() {
-			sleep(ctx, PollInterval)
+			timing.Sleep(ctx, timing.PollInterval)
 			continue
 		}
 
-		cfg := k.settings()
-		if !cfg.Active() {
-			sleep(ctx, PollInterval)
+		current := k.settings()
+		if !current.Active() {
+			timing.Sleep(ctx, timing.PollInterval)
 			continue
 		}
+		trigger := current.Keys[0]
 
-		trigger := cfg.Keys[0]
 		if !windows.PhysicalKeyDown(trigger) {
-			sleep(ctx, PollInterval)
+			timing.Sleep(ctx, timing.PollInterval)
 			continue
 		}
 
@@ -150,43 +107,35 @@ func (k *KeyChainRunner) run(ctx context.Context) {
 			if session.Paused() {
 				break
 			}
-			cfg = k.settings()
-			if !cfg.Active() {
+			current = k.settings()
+			if !current.Active() {
 				break
 			}
-			if err := k.executeChain(ctx, session, cfg); err != nil {
+			if err := k.executeChain(ctx, current); err != nil {
 				if ctx.Err() != nil {
 					return
 				}
-				k.log(fmt.Sprintf("KeyChain failed: %v", err))
+				current.Log(fmt.Sprintf("KeyChain failed: %v", err))
 				return
 			}
 		}
 	}
 }
 
-func (k *KeyChainRunner) executeChain(ctx context.Context, session *ViiperSession, cfg KeyChainConfig) error {
+func (k *KeyChainRunner) executeChain(ctx context.Context, cfg KeyChainConfig) error {
+	sess := cfg.Session
 	for i := 0; i < KeyChainSlotCount; i++ {
 		if cfg.Keys[i] == 0 {
 			continue
 		}
-		if err := session.TapKey(cfg.Keys[i], KeyTapHold); err != nil {
+		if err := sess.TapKey(cfg.Keys[i], timing.KeyTapHold); err != nil {
 			return err
 		}
-		if err := sleepDelay(ctx, cfg.DelaysMs[i]); err != nil {
-			return err
+		delay := time.Duration(cfg.DelaysMs[i]) * time.Millisecond
+		timing.Sleep(ctx, delay)
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
-	}
-	return nil
-}
-
-func sleepDelay(ctx context.Context, ms int) error {
-	if ms <= 0 {
-		return nil
-	}
-	sleep(ctx, time.Duration(ms)*time.Millisecond)
-	if ctx.Err() != nil {
-		return ctx.Err()
 	}
 	return nil
 }

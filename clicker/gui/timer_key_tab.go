@@ -263,39 +263,23 @@ func (a *guiApp) setTimerKeyConfigEnabled(enabled bool) {
 }
 
 func (a *guiApp) startTimerKeyRunner(cfg runner.TimerKeyConfig) {
-	if !cfg.AnyActive() {
-		return
-	}
-	a.mu.Lock()
-	if a.timerKeyRunner != nil && a.timerKeyRunner.Running() {
-		a.mu.Unlock()
-		return
-	}
-	old := a.timerKeyRunner
-	a.timerKeyRunner = nil
-	a.mu.Unlock()
-
-	if old != nil {
-		old.Stop()
-		old.Wait()
-	}
-
-	cfg.Log = a.appendLog
-	a.mu.Lock()
-	cfg.Session = a.inputSession
-	a.mu.Unlock()
-	if cfg.Session == nil {
-		return
-	}
-	tk := runner.NewTimerKey(cfg)
-	if err := tk.Start(); err != nil {
-		a.appendLog(fmt.Sprintf("Timer keys start failed: %v", err))
-		return
-	}
-	a.mu.Lock()
-	a.timerKeyRunner = tk
-	a.mu.Unlock()
-	a.appendLog("Timer keys started")
+	take, store := makeLifecycleSlot[*runner.TimerKeyRunner](&a.mu, &a.timerKeyRunner)
+	startLifecycle(
+		take, store,
+		"Timer keys",
+		a.appendLog,
+		func() runner.InputSession {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			return a.inputSession
+		},
+		func() bool { return cfg.AnyActive() },
+		func(sess runner.InputSession) *runner.TimerKeyRunner {
+			cfg.Session = sess
+			cfg.Log = a.appendLog
+			return runner.NewTimerKey(cfg)
+		},
+	)
 }
 
 func (a *guiApp) clearTimerKey(index int) {
@@ -309,38 +293,22 @@ func (a *guiApp) clearTimerKey(index int) {
 }
 
 func (a *guiApp) bindTimerKey(index int) {
-	if !a.isStarted() || a.timerBindingSlot >= 0 {
-		return
-	}
-	if index < 0 || index >= a.timerVisibleCount {
-		return
-	}
-
-	a.timerBindingSlot = index
-	a.appendLog(fmt.Sprintf("Press a key for timer %d (5s timeout)...", index+1))
-
-	go func() {
-		defer func() {
-			a.timerBindingSlot = -1
-			a.mainWindow.Synchronize(func() {
-				a.setTimerKeyConfigEnabled(a.isStarted())
-			})
-		}()
-
-		vk, ok := runner.WaitForKeyPress(runner.KeyBindTimeout)
-		a.mainWindow.Synchronize(func() {
-			if !ok {
-				a.appendLog("Key bind timed out")
-				return
+	a.bindKeyFlow(
+		func() bool {
+			if !a.isStarted() || a.timerBindingSlot >= 0 || index < 0 || index >= a.timerVisibleCount {
+				return false
 			}
-			if _, hidOK := runner.VKToHID(vk); !hidOK {
-				a.appendLog(fmt.Sprintf("Key %s is not supported", runner.KeyName(vk)))
-				return
-			}
+			a.timerBindingSlot = index
+			return true
+		},
+		fmt.Sprintf("Press a key for timer %d (%s timeout)...", index+1, runner.KeyBindTimeout),
+		func() { a.timerBindingSlot = -1 },
+		func() { a.setTimerKeyConfigEnabled(a.isStarted()) },
+		func(vk int32) {
 			a.timerKeyVKs[index] = vk
 			a.timerSlots[index].keyLabel.SetText(runner.KeyName(vk))
 			a.appendLog(fmt.Sprintf("Timer %d key: %s", index+1, runner.KeyName(vk)))
 			a.syncTimerKeySettings()
-		})
-	}()
+		},
+	)
 }

@@ -2,15 +2,8 @@ package statusui
 
 import "time"
 
-// ResourceValue represents a single resource (HP or SP) parsed from the status panel.
-type ResourceValue struct {
-	Current    int
-	Max        int
-	Percent    float64
-	Found      bool
-	UpdatedAt  time.Time
-	Confidence float64
-}
+// ResourceValue is an alias for NumericResourceRead so call sites can use either name.
+type ResourceValue = NumericResourceRead
 
 // StatusValues represents a complete status snapshot from the UI.
 type StatusValues struct {

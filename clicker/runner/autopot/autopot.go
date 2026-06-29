@@ -1,17 +1,27 @@
+// Package autopot is the HP/SP auto-potion runner.
+//
+// Lifecycle bookkeeping (Start/Stop/Wait/Running/UpdateSettings) lives in
+// internal/lifecycle; timing constants in internal/timing; the
+// InputSession interface in internal/session. autopot does not import the
+// parent runner package (to keep the import graph cycle-free) so it
+// composes Lifecycle, session.InputSession, and timing.* from internal/.
 package autopot
 
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
-	"experimental-clicker/runner"
 	win "experimental-clicker/runner/platform/windows"
+
+	"experimental-clicker/runner/internal/lifecycle"
+	"experimental-clicker/runner/internal/session"
+	"experimental-clicker/runner/internal/timing"
 )
 
+// AutoPotConfig is what gui/main.go passes to NewAutoPot.
 type AutoPotConfig struct {
-	Session     *runner.ViiperSession
+	Session     session.InputSession
 	HPThreshold int
 	SPThreshold int
 	HPKeyVK     int32
@@ -21,151 +31,110 @@ type AutoPotConfig struct {
 	Log         func(string)
 }
 
+// AutoPotRunner heals HP/SP based on bar-fill reading. Embeds a Lifecycle so
+// the goroutine bookkeeping isn't reimplemented.
 type AutoPotRunner struct {
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	done    chan struct{}
-	running bool
-
-	liveMu sync.RWMutex
-	live   AutoPotConfig
+	lc *lifecycle.Lifecycle[AutoPotConfig]
 
 	hpStabilizer     *BarStabilizer
 	spStabilizer     *BarStabilizer
 	numericValidator *NumericSafetyValidator
 }
 
+// NewAutoPot constructs an AutoPotRunner with the given initial config.
 func NewAutoPot(cfg AutoPotConfig) *AutoPotRunner {
 	return &AutoPotRunner{
-		live:             cfg,
+		lc: lifecycle.New(
+			cfg,
+			func(c AutoPotConfig) error {
+				if c.Session == nil {
+					return fmt.Errorf("input session is required")
+				}
+				if c.Log == nil {
+					return fmt.Errorf("log callback is required")
+				}
+				if c.HPEnabled && c.HPKeyVK == 0 {
+					return fmt.Errorf("HP potion key is not set")
+				}
+				if c.SPEnabled && c.SPKeyVK == 0 {
+					return fmt.Errorf("SP potion key is not set")
+				}
+				return nil
+			},
+			func(c AutoPotConfig) {
+				// On stop, reset stabilizers so a future Start begins clean.
+				_ = c // stabilizer.Reset is on the runner; called in Stop hook below
+			},
+		),
 		hpStabilizer:     NewBarStabilizer(true, cfg.HPThreshold),
 		spStabilizer:     NewBarStabilizer(false, cfg.SPThreshold),
 		numericValidator: NewNumericSafetyValidator(),
 	}
 }
 
-func (a *AutoPotRunner) Running() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.running
-}
+// Running reports whether the heal loop is currently active.
+func (a *AutoPotRunner) Running() bool { return a.lc.Running() }
 
+// UpdateSettings propagates new settings to the stabilizers and validator.
+// Settings applied after Start() take effect on the next poll.
 func (a *AutoPotRunner) UpdateSettings(cfg AutoPotConfig) {
-	a.liveMu.Lock()
-	a.live = cfg
-	a.liveMu.Unlock()
+	a.lc.UpdateSettings(cfg)
 	a.hpStabilizer.SetThreshold(cfg.HPThreshold)
 	a.spStabilizer.SetThreshold(cfg.SPThreshold)
-	// Update validator thresholds for next publish cycle
 	a.numericValidator.SetThresholds(cfg.HPThreshold, cfg.SPThreshold)
 }
 
-func (a *AutoPotRunner) settings() AutoPotConfig {
-	a.liveMu.RLock()
-	defer a.liveMu.RUnlock()
-	return a.live
+// Start launches the healer. Returns an error if validation fails or the
+// runner is already active.
+func (a *AutoPotRunner) Start() error {
+	if err := a.lc.Start(a.run); err != nil {
+		return fmt.Errorf("autopot: %w", err)
+	}
+	return nil
 }
 
+// Stop signals the healer to exit.
+func (a *AutoPotRunner) Stop() { a.lc.Stop() }
+
+// Wait blocks until the healer goroutine has exited.
+func (a *AutoPotRunner) Wait() { a.lc.Wait() }
+
+// settings returns a snapshot of the live config.
+func (a *AutoPotRunner) settings() AutoPotConfig { return a.lc.Settings() }
+
+// resetStabilizers is called after a Stop completes (or on Start).
 func (a *AutoPotRunner) resetStabilizers() {
 	a.hpStabilizer.Reset()
 	a.spStabilizer.Reset()
 }
 
-func (a *AutoPotRunner) Start() error {
-	a.mu.Lock()
-	if a.running {
-		a.mu.Unlock()
-		return fmt.Errorf("autopot already running")
-	}
+func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
+	defer a.resetStabilizers()
 
-	cfg := a.settings()
-	if cfg.HPEnabled && cfg.HPKeyVK == 0 {
-		a.mu.Unlock()
-		return fmt.Errorf("HP potion key is not set")
-	}
-	if cfg.SPEnabled && cfg.SPKeyVK == 0 {
-		a.mu.Unlock()
-		return fmt.Errorf("SP potion key is not set")
-	}
-	if cfg.Session == nil {
-		a.mu.Unlock()
-		return fmt.Errorf("input session is required")
-	}
-	if cfg.Log == nil {
-		a.mu.Unlock()
-		return fmt.Errorf("log callback is required")
-	}
-
-	a.resetStabilizers()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	a.cancel = cancel
-	a.running = true
-	a.done = make(chan struct{})
-
-	// Initialize numeric validator with thresholds
 	a.numericValidator.SetLogFunc(cfg.Log)
 	a.numericValidator.SetThresholds(cfg.HPThreshold, cfg.SPThreshold)
 	a.numericValidator.Start(ctx)
 
-	a.mu.Unlock()
-
-	go func() {
-		defer close(a.done)
-		defer func() {
-			a.mu.Lock()
-			a.running = false
-			a.cancel = nil
-			a.mu.Unlock()
-			a.resetStabilizers()
-		}()
-		a.run(ctx)
-	}()
-
-	return nil
-}
-
-func (a *AutoPotRunner) Stop() {
-	a.mu.Lock()
-	cancel := a.cancel
-	a.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-}
-
-func (a *AutoPotRunner) Wait() {
-	a.mu.Lock()
-	done := a.done
-	a.mu.Unlock()
-	if done != nil {
-		<-done
-	}
-}
-
-func (a *AutoPotRunner) run(ctx context.Context) {
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 		cfg := a.settings()
 		session := cfg.Session
-		if session == nil {
-			return
-		}
-
-		if ctx.Err() != nil {
-			return
-		}
-		if session.Paused() {
-			runner.Sleep(ctx, runner.PollInterval)
+		if session == nil || session.Paused() {
+			timing.Sleep(ctx, timing.PollInterval)
 			continue
 		}
 
 		img, _, err := win.CapturePlayerBarSearch()
 		if err != nil {
-			runner.Sleep(ctx, runner.CaptureRetryDelay)
+			timing.Sleep(ctx, timing.CaptureRetryDelay)
 			continue
 		}
 
-		mapped, pairOK := refreshStableBarPair(img)
+		mapped, pairOK := RefreshStableBarPair(img)
 
 		hp := a.hpStabilizer.UpdatePair(img, true, mapped, pairOK)
 		if cfg.HPEnabled && hp.Status == BarStatusLow {
@@ -179,11 +148,11 @@ func (a *AutoPotRunner) run(ctx context.Context) {
 			continue
 		}
 
-		runner.Sleep(ctx, runner.KeyTapHold)
+		timing.Sleep(ctx, timing.KeyTapHold)
 	}
 }
 
-func (a *AutoPotRunner) healUntil(ctx context.Context, session *runner.ViiperSession, hpBar bool) {
+func (a *AutoPotRunner) healUntil(ctx context.Context, session session.InputSession, hpBar bool) {
 	stabilizer := a.spStabilizer
 	if hpBar {
 		stabilizer = a.hpStabilizer
@@ -194,7 +163,7 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *runner.ViiperSes
 			return
 		}
 		if session.Paused() {
-			runner.Sleep(ctx, runner.PollInterval)
+			timing.Sleep(ctx, timing.PollInterval)
 			continue
 		}
 		cfg := a.settings()
@@ -205,37 +174,34 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *runner.ViiperSes
 
 		img, _, err := win.CapturePlayerBarSearch()
 		if err != nil {
-			runner.Sleep(ctx, runner.PollInterval)
+			timing.Sleep(ctx, timing.PollInterval)
 			continue
 		}
-		mapped, pairOK := refreshStableBarPair(img)
+		mapped, pairOK := RefreshStableBarPair(img)
 		read := stabilizer.UpdatePair(img, hpBar, mapped, pairOK)
 		if read.Status != BarStatusLow {
 			return
 		}
 		before := read.Percent
 
-		// Check numeric safety flags before potting (push-based safety monitor)
-		// GetCachedSafety reads from atomic cache, non-blocking, O(1)
+		// Numeric safety (fail-open): skip potting if independent safety
+		// monitor says HP/SP is safe, regardless of bar read.
 		safety := a.numericValidator.GetCachedSafety()
 		if safety.IsFresh(2 * time.Second) {
-			// Safety snapshot is fresh, check DoNotPot flags
 			if hpBar && safety.HPDoNotPot {
-				// HP is safe, skip HP potion
 				cfg.Log(fmt.Sprintf("numeric_push_block kind=hp percent=%.1f threshold=%d confidence=%.2f age_ms=%d",
 					safety.HPPercent, safety.HPThreshold, safety.HPConfidence, safety.Age()))
 				return
 			}
 			if !hpBar && safety.SPDoNotPot {
-				// SP is safe, skip SP potion
 				cfg.Log(fmt.Sprintf("numeric_push_block kind=sp percent=%.1f threshold=%d confidence=%.2f age_ms=%d",
 					safety.SPPercent, safety.SPThreshold, safety.SPConfidence, safety.Age()))
 				return
 			}
 		}
 
-		if err := session.TapKey(vk, runner.KeyTapHold); err != nil {
-			cfg.Log(fmt.Sprintf("Key %s failed: %v", runner.KeyName(vk), err))
+		if err := session.TapKey(vk, timing.KeyTapHold); err != nil {
+			cfg.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", vk, err))
 			return
 		}
 		for {
@@ -243,7 +209,7 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *runner.ViiperSes
 				return
 			}
 			if session.Paused() {
-				runner.Sleep(ctx, runner.PollInterval)
+				timing.Sleep(ctx, timing.PollInterval)
 				continue
 			}
 			cfg = a.settings()
@@ -254,7 +220,7 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *runner.ViiperSes
 			if err != nil {
 				continue
 			}
-			mapped, pairOK := refreshStableBarPair(img)
+			mapped, pairOK := RefreshStableBarPair(img)
 			read := stabilizer.UpdatePair(img, hpBar, mapped, pairOK)
 			if read.Status != BarStatusLow {
 				return

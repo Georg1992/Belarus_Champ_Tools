@@ -6,7 +6,73 @@ import (
 	"image/color"
 	"regexp"
 	"strconv"
+	"time"
+
+	glyph "experimental-clicker/runner/statusui/glyph"
 )
+
+// NumericResourceRead represents a parsed numeric resource (cur/max + percent).
+type NumericResourceRead struct {
+	Found      bool
+	Current    int
+	Max        int
+	Percent    float64
+	Confidence float64
+	UpdatedAt  time.Time
+}
+
+// IsStale reports whether the read is older than maxAge.
+func (r NumericResourceRead) IsStale(maxAge time.Duration) bool {
+	return time.Since(r.UpdatedAt) > maxAge
+}
+
+// NumericRead bundles HP/SP reads into one snapshot.
+type NumericRead struct {
+	HP NumericResourceRead
+	SP NumericResourceRead
+}
+
+// ParseNumericResources is the entry point used by autopot and status monitors.
+// It captures the status window and parses HP/SP line text into numeric reads.
+// Returns an empty NumericRead if the window cannot be read.
+func ParseNumericResources(img image.Image) (NumericRead, error) {
+	if img == nil {
+		return NumericRead{}, errors.New("nil image")
+	}
+	binary := PreprocessImage(ExtractROI(img, CaptureStatusWindowROI(img)))
+	hpText := parseLineV2(binary, lineROIForLine(binary, 0))
+	spText := parseLineV2(binary, lineROIForLine(binary, 1))
+	hp, sp, ok := ParseHPSPFromFullLine(hpText + "|" + spText)
+	if !ok {
+		return NumericRead{
+			HP: NumericResourceRead{Found: false, UpdatedAt: time.Now()},
+			SP: NumericResourceRead{Found: false, UpdatedAt: time.Now()},
+		}, nil
+	}
+	hp.UpdatedAt = time.Now()
+	sp.UpdatedAt = time.Now()
+	hp.Confidence = 1
+	sp.Confidence = 1
+	return NumericRead{HP: hp, SP: sp}, nil
+}
+
+// lineROIForLine splits the captured status window ROI in two stacked lines
+// (HP line on top, SP line below). Returns an empty Rect if binary is empty.
+func lineROIForLine(binary [][]bool, line int) image.Rectangle {
+	if len(binary) == 0 {
+		return image.Rectangle{}
+	}
+	rowCount := len(binary) / 2
+	if rowCount < 1 {
+		rowCount = 1
+	}
+	y0 := line * rowCount
+	y1 := y0 + rowCount
+	if y1 > len(binary) {
+		y1 = len(binary)
+	}
+	return image.Rect(0, y0, len(binary[0]), y1)
+}
 
 // parseLineV2 parses a single HP or SP line using column-based segmentation.
 // Returns recognized text like "751/1290" or "102/201".

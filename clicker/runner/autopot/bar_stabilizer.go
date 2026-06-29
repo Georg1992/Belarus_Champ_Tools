@@ -90,7 +90,7 @@ func (s *BarStabilizer) UpdatePair(img image.Image, hpBar bool, mapped MappedBar
 	if s.fullLatched {
 		rectStable := s.lastValidRect.W < 1 || !rectDrifted(s.lastValidRect, rect, BarPositionMaxDrift)
 
-		if barLooksFull(img, rect, s.hpBar) || read.Percent >= 99.9 {
+		if BarLooksFull(img, rect, s.hpBar) || read.Percent >= 99.9 {
 			s.lastValidRect = rect
 			s.notFullStreak = 0
 			s.lowStreak = 0
@@ -144,7 +144,7 @@ func (s *BarStabilizer) fullReadLocked(rect Rect) StableBarRead {
 }
 
 func (s *BarStabilizer) applyTrustedReadLocked(img image.Image, rect Rect, read BarRead) StableBarRead {
-	if barLooksFull(img, rect, s.hpBar) || read.Percent >= 99.9 {
+	if BarLooksFull(img, rect, s.hpBar) || read.Percent >= 99.9 {
 		s.fullLatched = true
 		s.notFullStreak = 0
 		s.lowStreak = 0
