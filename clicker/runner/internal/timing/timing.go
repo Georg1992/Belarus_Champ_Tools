@@ -24,7 +24,9 @@ const (
 const PauseVK int32 = 0x23
 
 // DefaultAPIAddr is the default address of the embedded VIIPER API server.
-const DefaultAPIAddr = "tcp://127.0.0.1:3240"
+// Port 3242 is the API server (ping, bus, device management).
+// Port 3240 is the USB-IP server (raw USB device forwarding) — not used here.
+const DefaultAPIAddr = "tcp://127.0.0.1:3242"
 
 // Sleep sleeps for d, returning early if ctx is canceled.
 func Sleep(ctx context.Context, d time.Duration) {
