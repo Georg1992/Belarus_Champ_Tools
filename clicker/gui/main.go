@@ -128,9 +128,8 @@ func (a *guiApp) shutdown() {
 		}
 		if session != nil {
 			session.Close()
+			stopViiperServerIfStarted()
 		}
-
-		stopViiperServerIfStarted()
 
 		if a.overlay != nil {
 			a.overlay.Destroy()
@@ -481,10 +480,14 @@ func (a *guiApp) startInBackground() {
 	a.inputSession = session
 	a.mu.Unlock()
 	// Cancel-detected after publishing the session but before wiring
-	// the clicker runner: bail. onStop has cleared a.starting and
-	// snapshotted our session for its own cleanup goroutine, so
-	// nothing leaks — we just step aside.
+	// the clicker runner: clean up our side. onStop may have already
+	// snapshotted (nil) session — it will skip server teardown.
 	if !isStillStarting() {
+		session.Close()
+		a.mu.Lock()
+		a.inputSession = nil
+		a.mu.Unlock()
+		stopViiperServerIfStarted()
 		return
 	}
 
@@ -514,9 +517,18 @@ func (a *guiApp) startInBackground() {
 	a.mu.Lock()
 	a.runner = r
 	a.mu.Unlock()
-	// Same cancel-check after the clicker runner publish. onStop
-	// has already snapshotted r and will Stop+Wait it.
+	// Cancel-detected after the clicker runner publish. Stop the
+	// runner, close the session, tear down the server. onStop
+	// already nil-ed its snapshot — this cleanup is ours.
 	if !isStillStarting() {
+		r.Stop()
+		r.Wait()
+		session.Close()
+		a.mu.Lock()
+		a.runner = nil
+		a.inputSession = nil
+		a.mu.Unlock()
+		stopViiperServerIfStarted()
 		return
 	}
 
@@ -600,8 +612,8 @@ func (a *guiApp) onStop() {
 		}
 		if session != nil {
 			session.Close()
+			stopViiperServerIfStarted()
 		}
-		stopViiperServerIfStarted()
 		a.mainWindow.Synchronize(func() {
 			a.appendLog("Clicker stopped — click Start before launching the game")
 		})
