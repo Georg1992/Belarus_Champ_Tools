@@ -16,6 +16,9 @@ const (
 var (
 	user32               = windows.NewLazySystemDLL("user32.dll")
 	procGetAsyncKeyState = user32.NewProc("GetAsyncKeyState")
+	procGetDC            = user32.NewProc("GetDC")
+	procReleaseDC        = user32.NewProc("ReleaseDC")
+	procGetSystemMetrics = user32.NewProc("GetSystemMetrics")
 )
 
 const escapeVK = 0x1B

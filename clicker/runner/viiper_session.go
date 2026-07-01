@@ -34,9 +34,16 @@ type ViiperSession struct {
 	closeOnce sync.Once
 }
 
-func OpenViiperSession(ctx context.Context, apiAddr string) (*ViiperSession, error) {
+// OpenViiperSession creates a VIIPER session with keyboard and mouse
+// virtual devices. The log callback receives device-ready messages
+// from the calling goroutine — marshalling to the GUI thread is the
+// caller's responsibility.
+func OpenViiperSession(ctx context.Context, apiAddr string, log func(string)) (*ViiperSession, error) {
 	if apiAddr == "" {
 		apiAddr = DefaultAPIAddr
+	}
+	if log == nil {
+		log = noopLog
 	}
 
 	api := viiperclient.New(apiAddr)
@@ -56,6 +63,7 @@ func OpenViiperSession(ctx context.Context, apiAddr string) (*ViiperSession, err
 		}
 		return nil, fmt.Errorf("keyboard: %w", err)
 	}
+	log("Virtual keyboard ready")
 
 	mouseStream, _, err := api.AddDeviceAndConnect(ctx, busID, "mouse", nil)
 	if err != nil {
@@ -66,6 +74,7 @@ func OpenViiperSession(ctx context.Context, apiAddr string) (*ViiperSession, err
 		}
 		return nil, fmt.Errorf("mouse: %w", err)
 	}
+	log("Virtual mouse ready")
 
 	return &ViiperSession{
 		api:         api,

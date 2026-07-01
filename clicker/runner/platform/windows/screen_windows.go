@@ -11,17 +11,14 @@ import (
 )
 
 var (
-	gdi32                = windows.NewLazySystemDLL("gdi32.dll")
-	procGetDC            = user32.NewProc("GetDC")
-	procReleaseDC        = user32.NewProc("ReleaseDC")
-	procCreateCompatDC   = gdi32.NewProc("CreateCompatibleDC")
-	procCreateCompatBmp  = gdi32.NewProc("CreateCompatibleBitmap")
-	procSelectObject     = gdi32.NewProc("SelectObject")
-	procBitBlt           = gdi32.NewProc("BitBlt")
-	procDeleteDC         = gdi32.NewProc("DeleteDC")
-	procDeleteObject     = gdi32.NewProc("DeleteObject")
-	procGetDIBits        = gdi32.NewProc("GetDIBits")
-	procGetSystemMetrics = user32.NewProc("GetSystemMetrics")
+	gdi32               = windows.NewLazySystemDLL("gdi32.dll")
+	procCreateCompatDC  = gdi32.NewProc("CreateCompatibleDC")
+	procCreateCompatBmp = gdi32.NewProc("CreateCompatibleBitmap")
+	procSelectObject    = gdi32.NewProc("SelectObject")
+	procBitBlt          = gdi32.NewProc("BitBlt")
+	procDeleteDC        = gdi32.NewProc("DeleteDC")
+	procDeleteObject    = gdi32.NewProc("DeleteObject")
+	procGetDIBits       = gdi32.NewProc("GetDIBits")
 )
 
 const gdiSrcCopy = 0x00CC0020

@@ -1,8 +1,8 @@
 package autopot
 
 import (
-	_ "image/png"
 	"image"
+	_ "image/png"
 	"math"
 	"os"
 	"path/filepath"
@@ -167,4 +167,11 @@ func testdataDir(t *testing.T) string {
 		t.Fatal("runtime.Caller failed")
 	}
 	return filepath.Join(filepath.Dir(file), "testdata")
+}
+
+// newTestStabilizers creates a pair of BarStabilizer instances for testing.
+func newTestStabilizers(threshold int) (*BarStabilizer, *BarStabilizer) {
+	hpStab := NewBarStabilizer(true, threshold)
+	spStab := NewBarStabilizer(false, threshold)
+	return hpStab, spStab
 }
