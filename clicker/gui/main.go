@@ -465,9 +465,12 @@ func (a *guiApp) startInBackground() {
 		return
 	}
 	if started {
-		logFn("Ready")
+		logFn("VIIPER server started")
+	} else {
+		logFn("VIIPER server already running")
 	}
 
+	logFn("Opening VIIPER session...")
 	session, err := runner.OpenViiperSession(context.Background(), runner.DefaultAPIAddr, logFn)
 	if err != nil {
 		logFn(fmt.Sprintf("Start failed: %v", err))
