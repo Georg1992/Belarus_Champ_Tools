@@ -202,9 +202,9 @@ func ComputePanelFeatures(panel image.Image) (PanelFeatures, error) {
 		edgeFrac = float64(edges) / float64(strains)
 	}
 	return PanelFeatures{
-		BlueFraction:          frac(blue),
+		BlueFraction:           frac(blue),
 		TopRightCornerContrast: contrast,
-		EdgeFraction:          edgeFrac,
+		EdgeFraction:           edgeFrac,
 	}, nil
 }
 
@@ -341,17 +341,15 @@ func PreprocessImage(img image.Image) [][]bool {
 // otherwise. Cheap enough to run on every successful locate — the
 // caller should drop the rect from cache on error rather than retry.
 //
-// Pre-flight: VerifyPanel requires its input to be exactly 218×58 —
-// the calibrated dimensions of the embedded StatusPanel.png template.
-// Anywhere else (1440p scaled UI, a stray crop rectangle, an
-// extracted sub-region) the corner patch positions the stddev check
-// in the wrong place and the calibration is silently wrong. Better to
-// fail loud than to silently let a wrong-sized input through.
-//
-// Reasons for failure (returned as distinct error strings so callers
-// can log them) include "wrong dimensions", "insufficient blue
-// accents", "uniform top-right corner (no emblem)", and "no
-// digit/anti-aliased content".
+// Pre-flight: VerifyPanel requires the panel width to be exactly 218
+// (panelVerifyWidth). Height may be between panelVerifyHeight -
+// panelBoundaryOverflowPx and panelVerifyHeight inclusive: the lower
+// bound accommodates panels that are partially clipped above the screen
+// top boundary (a real scenario when the game window sits flush with
+// the top of the display). All three signal thresholds were calibrated
+// on full 218×58 panels; clipped panels lose only the top background
+// rows so the blue-fraction, edge-fraction, and corner-contrast
+// signals remain valid.
 func VerifyPanel(panel image.Image) error {
 	return VerifyPanelWith(panel, DefaultPanelVerifyOptions())
 }
@@ -359,17 +357,16 @@ func VerifyPanel(panel image.Image) error {
 // VerifyPanelWith is VerifyPanel with explicit thresholds. Empty
 // option fields (zero) are substituted from DefaultPanelVerifyOptions
 // — callers can override any subset of the three signals without
-// touching the rest. The 218×58 dimension check is enforced
-// regardless of options, since the corner-patch positioning only
-// makes sense at that size.
+// touching the rest.
 func VerifyPanelWith(panel image.Image, opts PanelVerifyOptions) error {
 	if panel == nil {
 		return errors.New("verify: nil panel image")
 	}
 	b := panel.Bounds()
-	if b.Dx() != panelVerifyWidth || b.Dy() != panelVerifyHeight {
-		return fmt.Errorf("verify: panel dimensions %dx%d, want %dx%d (corner-patch stddev is calibrated for the embedded StatusPanel.png size)",
-			b.Dx(), b.Dy(), panelVerifyWidth, panelVerifyHeight)
+	minH := panelVerifyHeight - panelBoundaryOverflowPx
+	if b.Dx() != panelVerifyWidth || b.Dy() < minH || b.Dy() > panelVerifyHeight {
+		return fmt.Errorf("verify: panel dimensions %dx%d, want %dx[%d..%d] (width must be exactly %d; height may be smaller than %d only when the panel is clipped at the screen top edge)",
+			b.Dx(), b.Dy(), panelVerifyWidth, minH, panelVerifyHeight, panelVerifyWidth, panelVerifyHeight)
 	}
 	feats, err := ComputePanelFeatures(panel)
 	if err != nil {

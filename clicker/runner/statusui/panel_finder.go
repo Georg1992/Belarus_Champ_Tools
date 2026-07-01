@@ -100,14 +100,25 @@ func FindStatusPanel(img, template image.Image, opts FindStatusPanelOptions) (im
 	return findPanelInRegion(img, template, img.Bounds(), maxScore)
 }
 
+// panelBoundaryOverflowPx is the maximum number of pixels the template may
+// extend beyond the top or left image boundary during the panel search.
+// This allows panels partially clipped at the screen top-left corner to be
+// found at the correct position. The value is kept small (20 px) to prevent
+// false-positive matches from tiny visible slivers far outside the image.
+const panelBoundaryOverflowPx = 20
+
+// panelMinVisibleFraction is the minimum fraction of the template area that
+// must be inside the image for a candidate position to be evaluated.
+const panelMinVisibleFraction = 0.75
+
 // findPanelInRegion scans the given region of img at full pixel
 // accuracy (stride=1) against the template and returns the
 // lowest-SAD match below maxScore, or ok=false if no match qualifies.
 //
-// One scan algorithm — no strided pre-filter, no refinement window,
-// no branch on stride. The same loop is reused for both the
-// top-left pass (default 400×200) and the full-screen continuation
-// pass (img.Bounds()).
+// The search min boundary is extended by panelBoundaryOverflowPx so a panel
+// partially clipped at the screen top-left is found at its real position.
+// Only the visible intersection is compared; the SAD is normalized by that
+// area so a partly-clipped match competes fairly with fully-visible candidates.
 func findPanelInRegion(img, template image.Image, region image.Rectangle, maxScore float64) (image.Rectangle, float64, bool) {
 	ib := img.Bounds()
 	tb := template.Bounds()
@@ -117,31 +128,81 @@ func findPanelInRegion(img, template image.Image, region image.Rectangle, maxSco
 	}
 
 	region = region.Intersect(ib)
+	// Extend the search start upward by up to panelBoundaryOverflowPx so a
+	// panel partially clipped above the screen top is found at its real
+	// position. minX is NOT extended: allowing the template to start before
+	// the image left edge creates false positives where a small sliver of
+	// the left screen content happens to match the template well enough to
+	// beat a genuine right-side panel. The typical clipped-panel case
+	// (window flush with display top) only needs a top overflow.
+	minX := region.Min.X
+	minY := region.Min.Y - panelBoundaryOverflowPx
+	if minY < region.Min.Y-(th-1) {
+		minY = region.Min.Y - (th - 1)
+	}
 	maxX := region.Max.X - tw
 	maxY := region.Max.Y - th
-	if maxX < region.Min.X || maxY < region.Min.Y {
+	if maxX < minX || maxY < minY {
 		return image.Rectangle{}, 0, false
 	}
+	// Minimum visible pixels: 75% of the full template. Positions with less
+	// visible area are skipped — tiny slivers can't produce reliable scores.
+	minVisPx := int(float64(tw*th) * 0.75)
 
 	tplGray := precomputeGrayscale(template, tb)
-	maxPossible := float64(tw*th) * 255.0
 
-	// Fast path: precompute the entire image's grayscale once.
-	// Falls back to per-pixel At() for non-RGBA formats.
 	imgGray, fastOK := precomputeImageGrayscale(img, ib)
-	sad := func(x0, y0 int, earlyExit float64) float64 {
-		if fastOK {
-			return sadOnGrayscale(imgGray, tplGray, x0, y0, tw, th, earlyExit)
+
+	// sadPartial computes the SAD over only the rows and columns where the
+	// template overlaps the image. Normalizes by the pixel count of that
+	// visible intersection so scores remain in the same 0..1 range as a
+	// full-template match.
+	sadPartial := func(x0, y0 int, earlyExit float64) float64 {
+		// Visible template rows: rows where img row (y0+dy) is in ib.
+		dyStart := ib.Min.Y - y0
+		if dyStart < 0 {
+			dyStart = 0
 		}
-		return sadWithEarlyExit(img, tplGray, x0, y0, tw, th, earlyExit)
+		dyEnd := ib.Max.Y - y0
+		if dyEnd > th {
+			dyEnd = th
+		}
+		// Visible template cols: cols where img col (x0+dx) is in ib.
+		dxStart := ib.Min.X - x0
+		if dxStart < 0 {
+			dxStart = 0
+		}
+		dxEnd := ib.Max.X - x0
+		if dxEnd > tw {
+			dxEnd = tw
+		}
+		visH := dyEnd - dyStart
+		visW := dxEnd - dxStart
+		if visH <= 0 || visW <= 0 || visH*visW < minVisPx {
+			return earlyExit + 1 // skip: not enough visible pixels
+		}
+		visPixels := float64(visH * visW)
+		// Scale earlyExit down to the visible-area budget so the inner-loop
+		// early-exit comparison remains valid.
+		scaledExit := earlyExit * (visPixels / float64(tw*th))
+
+		var rawSum float64
+		if fastOK {
+			rawSum = sadOnGrayscalePartial(imgGray, tplGray, x0, y0, dxStart, dyStart, dxEnd, dyEnd, scaledExit)
+		} else {
+			rawSum = sadWithEarlyExitPartial(img, tplGray, x0, y0, dxStart, dyStart, dxEnd, dyEnd, scaledExit)
+		}
+		// Normalize rawSum to full-template scale so maxScore applies uniformly.
+		return rawSum / visPixels * float64(tw*th)
 	}
 
+	maxPossible := float64(tw*th) * 255.0
 	bestScore := maxPossible + 1
-	bestX, bestY := region.Min.X, region.Min.Y
+	bestX, bestY := minX, minY
 scan:
-	for y := region.Min.Y; y <= maxY; y++ {
-		for x := region.Min.X; x <= maxX; x++ {
-			score := sad(x, y, bestScore)
+	for y := minY; y <= maxY; y++ {
+		for x := minX; x <= maxX; x++ {
+			score := sadPartial(x, y, bestScore)
 			if score < bestScore {
 				bestScore = score
 				bestX, bestY = x, y
@@ -211,15 +272,14 @@ func precomputeImageGrayscale(img image.Image, b image.Rectangle) ([][]uint8, bo
 	return out, true
 }
 
-// sadOnGrayscale computes the SAD between tpl and the tw×th region
-// of imgGray at (x0, y0) using the precomputed grayscale slices.
-// Stops as soon as the running sum reaches earlyExit.
-func sadOnGrayscale(imgGray, tpl [][]uint8, x0, y0, tw, th int, earlyExit float64) float64 {
+// sadOnGrayscalePartial computes the SAD over only the visible sub-rectangle
+// [dxStart,dxEnd) × [dyStart,dyEnd) of the template against the grayscale image.
+func sadOnGrayscalePartial(imgGray, tpl [][]uint8, x0, y0, dxStart, dyStart, dxEnd, dyEnd int, earlyExit float64) float64 {
 	sum := 0.0
-	for dy := 0; dy < th; dy++ {
+	for dy := dyStart; dy < dyEnd; dy++ {
 		irow := imgGray[y0+dy]
 		trow := tpl[dy]
-		for dx := 0; dx < tw; dx++ {
+		for dx := dxStart; dx < dxEnd; dx++ {
 			diff := float64(trow[dx]) - float64(irow[x0+dx])
 			if diff < 0 {
 				diff = -diff
@@ -233,16 +293,14 @@ func sadOnGrayscale(imgGray, tpl [][]uint8, x0, y0, tw, th int, earlyExit float6
 	return sum
 }
 
-// sadWithEarlyExit computes the grayscale SAD between tpl and the
-// tw×th region of img at (x0, y0). Stops as soon as the running
-// sum reaches earlyExit — the caller uses this to skip positions
-// that can't beat the current best.
-func sadWithEarlyExit(img image.Image, tpl [][]uint8, x0, y0, tw, th int, earlyExit float64) float64 {
+// sadWithEarlyExitPartial is the At()-based fallback for non-RGBA images,
+// matching only the visible sub-rectangle of the template.
+func sadWithEarlyExitPartial(img image.Image, tpl [][]uint8, x0, y0, dxStart, dyStart, dxEnd, dyEnd int, earlyExit float64) float64 {
 	sum := 0.0
-	for dy := 0; dy < th; dy++ {
+	for dy := dyStart; dy < dyEnd; dy++ {
 		row := tpl[dy]
 		yy := y0 + dy
-		for dx := 0; dx < tw; dx++ {
+		for dx := dxStart; dx < dxEnd; dx++ {
 			diff := float64(row[dx]) - float64(luma8(img.At(x0+dx, yy)))
 			if diff < 0 {
 				diff = -diff

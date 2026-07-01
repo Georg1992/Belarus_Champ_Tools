@@ -2,10 +2,6 @@ package statusui
 
 import (
 	"image"
-	"image/png"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -138,13 +134,13 @@ func TestStatusLineLocator_SingleRectNotSplit(t *testing.T) {
 // TestStatusLineLocator_TextIntersectsForeground is the
 // fail-loud ground-truth check for the Y offsets. For each
 // calibration fixture it:
-//   1. locates the panel via FindStatusPanel,
-//   2. computes the line rect via the default locator,
-//   3. crops the line rect out of the panel,
-//   4. runs PreprocessImage on the line crop,
-//   5. counts what fraction of the line's columns contain at
-//      least one foreground pixel,
-//   6. asserts that fraction is >= 30%.
+//  1. locates the panel via FindStatusPanel,
+//  2. computes the line rect via the default locator,
+//  3. crops the line rect out of the panel,
+//  4. runs PreprocessImage on the line crop,
+//  5. counts what fraction of the line's columns contain at
+//     least one foreground pixel,
+//  6. asserts that fraction is >= 30%.
 //
 // Without this guard, the previous bug (line rect drawn BELOW the
 // HP/SP text in the empty/bottom UI area, y=[46,55] in panel-local
@@ -217,7 +213,6 @@ func TestStatusLineLocator_TextIntersectsForeground(t *testing.T) {
 	}
 }
 
-
 // loadRawFixture loads a screen-capture PNG from the autopot
 // testdata directory (the same fixture set the recognition tests
 // iterate) and returns it as an image.Image. Used by the
@@ -231,193 +226,4 @@ func TestStatusLineLocator_TextIntersectsForeground(t *testing.T) {
 func loadRawFixture(t *testing.T, name string) image.Image {
 	t.Helper()
 	return loadPNG(t, testdataPath(t, name))
-}
-
-// TestExportStatusLineLocator_DebugImages runs FindStatusPanel on
-// each calibration fixture, runs the default StatusLineLocator on
-// the detected panel rect, and exports a debug PNG to
-// clicker/runner/statusui/debug/status_line_locator/<fixture>_line_locator.png
-// showing the full screen with:
-//   - green outline: detected StatusPanelRect
-//   - red outline:   StatusTextLineRect
-//
-// Use for visual confirmation of the rect positioning on the four
-// calibration fixtures and to spot-check the 2-px vertical padding
-// above and below the dense HP/SP text band at panel-local y=[35, 42].
-func TestExportStatusLineLocator_DebugImages(t *testing.T) {
-	fixtures := []string{
-		"aa.png",
-		"gg.png",
-		"status_bar_drift1.png",
-		"drift1.png",
-	}
-	debugDir := filepath.Join("debug", "status_line_locator")
-	if err := os.RemoveAll(debugDir); err != nil {
-		t.Fatalf("clean %s: %v", debugDir, err)
-	}
-	if err := os.MkdirAll(debugDir, 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", debugDir, err)
-	}
-
-	tpl := DefaultStatusPanelTemplate()
-	if tpl == nil {
-		t.Fatal("missing embedded template")
-	}
-
-	loc := DefaultStatusLineLocator()
-	for _, name := range fixtures {
-		screen := loadRawFixture(t, name)
-		panelRect, score, ok := FindStatusPanel(screen, tpl, FindStatusPanelOptions{})
-		if !ok {
-			t.Fatalf("FindStatusPanel on %s: not found (score=%.4f)", name, score)
-		}
-		lineRect := loc.LocateStatusTextLine(panelRect)
-		annotated := loc.RenderDebug(screen, panelRect, lineRect)
-
-		baseName := strings.TrimSuffix(name, ".png")
-		out := filepath.Join(debugDir, baseName+"_line_locator.png")
-		f, err := os.Create(out)
-		if err != nil {
-			t.Fatalf("create %s: %v", out, err)
-		}
-		if err := png.Encode(f, annotated); err != nil {
-			f.Close()
-			t.Fatalf("encode %s: %v", out, err)
-		}
-		f.Close()
-		t.Logf("wrote %s — panel=%v line=%v score=%.4f", out, panelRect, lineRect, score)
-	}
-
-	t.Logf("wrote %d status-line-locator debug PNGs to %s — compare red outline with the dense HP/SP text band",
-		len(fixtures), debugDir)
-}
-
-// TestExportStripDebugImages generates the HP/SP text-strip crops
-// from EVERY screenshot in runner/autopot/testdata so they can be
-// visually validated. For each fixture it runs:
-//   FindStatusPanel → VerifyPanel → ExtractStatusLineStrip,
-// and writes two PNGs to runner/statusui/debug/strip_export/:
-//   - <name>_strip.png     — the bare 200×11 HP/SP text row crop;
-//                            visually inspectable on its own to
-//                            confirm "HP. cur/max | SP. cur/max"
-//                            glyphs are clean and complete.
-//   - <name>_annotated.png — full screen with the green panel
-//                            outline and red strip outline from
-//                            StatusLineLocator.RenderDebug, so
-//                            you can confirm the strip rect is
-//                            well-placed relative to the panel
-//                            on every capture.
-//
-// Fixture list is auto-discovered via filepath.Glob so dropping a
-// new PNG into runner/autopot/testdata automatically picks it up
-// on the next run — no test update required. Glob returns
-// alphabetically sorted names, so the log is deterministic.
-//
-// Fixtures where FindStatusPanel or VerifyPanel fail are logged
-// as SKIP and contribute no PNGs — this is intentional: the SKIP
-// log line itself becomes a diagnostic that surfaces which
-// captures the locator currently can't handle (e.g. non-status-bar
-// captures like the skill-tree or zoomed UI never expected to
-// match).
-//
-// Note: this test does not assert a strict pass/fail rate — it
-// always exits cleanly so the runs-with-skipped-fixtures case
-// still produces a partial output set the user can validate.
-// Add a future regression test (e.g. asserting >=80% fixtures
-// produce a strip) once the locate pipeline is stable enough
-// for a hard floor.
-func TestExportStripDebugImages(t *testing.T) {
-	// Auto-discover every PNG in the autopot testdata dir so
-	// adding a new screenshot doesn't silently miss export. The
-	// glob result is sorted alphabetically (filepath.Glob
-	// guarantee), giving deterministic log ordering.
-	fixturePaths, err := filepath.Glob(testdataPath(t, "*.png"))
-	if err != nil {
-		t.Fatalf("glob testdata/*.png: %v", err)
-	}
-	if len(fixturePaths) == 0 {
-		t.Fatal("no PNG fixtures found in runner/autopot/testdata — check testdataPath() anchor")
-	}
-	fixtures := make([]string, 0, len(fixturePaths))
-	for _, p := range fixturePaths {
-		fixtures = append(fixtures, filepath.Base(p))
-	}
-	t.Logf("auto-discovered %d fixtures via filepath.Glob", len(fixtures))
-
-	debugDir := filepath.Join("debug", "strip_export")
-	if err := os.RemoveAll(debugDir); err != nil {
-		t.Fatalf("clean %s: %v", debugDir, err)
-	}
-	if err := os.MkdirAll(debugDir, 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", debugDir, err)
-	}
-
-	tpl := DefaultStatusPanelTemplate()
-	if tpl == nil {
-		t.Fatal("missing embedded template")
-	}
-	loc := DefaultStatusLineLocator()
-
-	var succeeded, skipped int
-	for _, name := range fixtures {
-		screen := loadRawFixture(t, name)
-		panelRect, score, ok := FindStatusPanel(screen, tpl, FindStatusPanelOptions{})
-		if !ok {
-			t.Logf("SKIP %s: FindStatusPanel failed (score=%.4f)", name, score)
-			skipped++
-			continue
-		}
-		panelImg := ExtractROI(screen, panelRect)
-		if panelImg == nil {
-			t.Logf("SKIP %s: ExtractROI(%v) returned nil", name, panelRect)
-			skipped++
-			continue
-		}
-		if err := VerifyPanel(panelImg); err != nil {
-			t.Logf("SKIP %s: VerifyPanel: %v", name, err)
-			skipped++
-			continue
-		}
-		strip, lineRect := ExtractStatusLineStrip(screen, panelRect)
-		if strip == nil {
-			t.Logf("SKIP %s: ExtractStatusLineStrip returned nil (lineRect=%v)", name, lineRect)
-			skipped++
-			continue
-		}
-
-		baseName := strings.TrimSuffix(name, ".png")
-
-		// 1) Bare strip crop — the primary validation artefact.
-		stripPath := filepath.Join(debugDir, baseName+"_strip.png")
-		sf, err := os.Create(stripPath)
-		if err != nil {
-			t.Fatalf("create %s: %v", stripPath, err)
-		}
-		if err := png.Encode(sf, strip); err != nil {
-			sf.Close()
-			t.Fatalf("encode %s: %v", stripPath, err)
-		}
-		sf.Close()
-
-		// 2) Annotated screen overlay — shows the strip rect
-		// positioning on the full capture so you can spot drift.
-		annotated := loc.RenderDebug(screen, panelRect, lineRect)
-		annotatedPath := filepath.Join(debugDir, baseName+"_annotated.png")
-		af, err := os.Create(annotatedPath)
-		if err != nil {
-			t.Fatalf("create %s: %v", annotatedPath, err)
-		}
-		if err := png.Encode(af, annotated); err != nil {
-			af.Close()
-			t.Fatalf("encode %s: %v", annotatedPath, err)
-		}
-		af.Close()
-
-		t.Logf("OK   %s: panel=%v line=%v score=%.4f → %s + %s",
-			name, panelRect, lineRect, score, stripPath, annotatedPath)
-		succeeded++
-	}
-
-	t.Logf("strip export: %d succeeded, %d skipped → %s (compare <name>_strip.png with the dense HP/SP text band, and check <name>_annotated.png to confirm the red rect sits on the panel second-line row)",
-		succeeded, skipped, debugDir)
 }

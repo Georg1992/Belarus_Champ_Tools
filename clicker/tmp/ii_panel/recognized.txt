@@ -1,5 +1,0 @@
-input=runner/autopot/testdata/ii.png
-rect=(0,0)-(218,58)
-score=0.2502
-ok=true
-verify=<nil>

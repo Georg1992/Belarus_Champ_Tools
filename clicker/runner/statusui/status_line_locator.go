@@ -96,34 +96,6 @@ func (l StatusLineLocator) LocateStatusTextLine(panel image.Rectangle) image.Rec
 	)
 }
 
-// LocateHPAndSPRects splits a screen-space HP/SP line rect (typically
-// the output of LocateStatusTextLine) into the per-resource column
-// rectangles ready to hand to NumericParser. Returns the two rects in
-// the same coordinate space as lineRect.
-//
-// The default 200-px-wide line rect has the "|" pipe at line-local
-// x=100 (panel-local x=110 in the default template), so:
-//
-//	HP rect  = (lineRect.Min.X + 0,  lineRect.Min.Y) → (lineRect.Min.X + 95, lineRect.Max.Y)
-//	SP rect  = (lineRect.Min.X + 105, lineRect.Min.Y) → (lineRect.Max.X,        lineRect.Max.Y)
-//
-// The 10 px centred on the pipe is intentionally excluded from both
-// rects so neither column's OCR can pick up the "|" separator as a
-// "1" or "I" digit and so the natural whitespace between HP's slash
-// and SP's opening digit stays inside neither rect.
-//
-// Both rects share the line-rect Y range, matching the locator's
-// calibration target: a tight band around the dense HP/SP text with
-// 2 px of anti-alias breathing room above and below.
-func (l StatusLineLocator) LocateHPAndSPRects(lineRect image.Rectangle) (hpRect, spRect image.Rectangle) {
-	x0 := lineRect.Min.X
-	y0 := lineRect.Min.Y
-	y1 := lineRect.Max.Y
-	hpRect = image.Rect(x0, y0, x0+95, y1)
-	spRect = image.Rect(x0+105, y0, lineRect.Max.X, y1)
-	return
-}
-
 // RenderDebug composites the given screen image with two outlined
 // rectangles so an operator can visually verify the locator:
 //
