@@ -73,6 +73,7 @@ type guiApp struct {
 	// goroutine also re-checks this flag after every slot publish so
 	// a Stop click during startup cancels any not-yet-published work.
 	starting       bool
+	startupCancel  context.CancelFunc // cancels in-flight startInBackground on Stop
 	runner         *runner.Runner
 	autopotRunner  *runner.AutoPotRunner
 	timerKeyRunner *runner.TimerKeyRunner
@@ -108,6 +109,10 @@ func (a *guiApp) shutdown() {
 		a.timerKeyRunner = nil
 		a.keyChainRunner = nil
 		a.inputSession = nil
+		if a.startupCancel != nil {
+			a.startupCancel()
+			a.startupCancel = nil
+		}
 		a.mu.Unlock()
 
 		if r != nil {
@@ -390,6 +395,15 @@ func (a *guiApp) onStart() {
 		walk.MsgBox(a.mainWindow, "Setup required", msg, walk.MsgBoxIconWarning)
 		return
 	}
+	// Cancel any previous startup goroutine that is still running
+	// (e.g. stuck in waitForServer). This ensures the stale goroutine
+	// releases serverMu and doesn't write back stale state.
+	if a.startupCancel != nil {
+		a.startupCancel()
+		a.startupCancel = nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.startupCancel = cancel
 	a.starting = true
 	a.mu.Unlock()
 
@@ -399,7 +413,7 @@ func (a *guiApp) onStart() {
 	a.setStarted(true)
 	a.appendLog("Starting...")
 
-	go a.startInBackground()
+	go a.startInBackground(ctx)
 }
 
 // startInBackground runs the long-running startup work off the GUI
@@ -408,7 +422,7 @@ func (a *guiApp) onStart() {
 // / SetOnPauseChanged wiring uses the same closure pattern so log
 // calls and badge updates from off-thread goroutines don't punch walk
 // API directly.
-func (a *guiApp) startInBackground() {
+func (a *guiApp) startInBackground(ctx context.Context) {
 	// logFn: ship a string from off-thread to a.appendLog on the GUI
 	// thread (via mainWindow.Synchronize).
 	logFn := func(s string) {
@@ -434,22 +448,30 @@ func (a *guiApp) startInBackground() {
 		})
 	}
 	// isStillStarting reports whether the startup goroutine should
-	// keep publishing slots. It re-samples a.starting under mu. The
-	// goroutine checks this after every slot write so an onStop
-	// click during startup cancels any not-yet-published work. Slots
-	// already published are not retracted here — onStop has already
-	// snapshotted them and its cleanup goroutine is responsible for
-	// tearing them down.
+	// keep publishing slots. It checks the context (canceled by
+	// onStop) and the starting flag. The goroutine checks this after
+	// every slot write so an onStop click during startup cancels any
+	// not-yet-published work. Slots already published are not
+	// retracted here — onStop has already snapshotted them and its
+	// cleanup goroutine is responsible for tearing them down.
 	isStillStarting := func() bool {
+		if ctx.Err() != nil {
+			return false
+		}
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		return a.starting
 	}
 	// finishFailure: restores the UI to "stopped" and clears the
 	// starting flag so isStarted() falls back to false on the next
-	// call. viper cleanup is the caller's responsibility because the
-	// viper server may or may not have been started.
+	// call. Only touches state when this goroutine's context is still
+	// alive (a newer Start has not canceled us). viper cleanup is the
+	// caller's responsibility because the viper server may or may not
+	// have been started.
 	finishFailure := func() {
+		if ctx.Err() != nil {
+			return // superseded by a newer startup
+		}
 		a.mu.Lock()
 		if a.starting {
 			a.starting = false
@@ -459,8 +481,11 @@ func (a *guiApp) startInBackground() {
 	}
 
 	logFn("Checking VIIPER server...")
-	started, err := ensureViiperServer()
+	started, err := ensureViiperServer(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			return // Stop clicked; onStop already handled UI
+		}
 		logFn(fmt.Sprintf("Start failed: %v", err))
 		finishFailure()
 		return
@@ -472,7 +497,7 @@ func (a *guiApp) startInBackground() {
 	}
 
 	logFn("Opening VIIPER session...")
-	session, err := runner.OpenViiperSession(context.Background(), runner.DefaultAPIAddr, logFn)
+	session, err := runner.OpenViiperSession(ctx, runner.DefaultAPIAddr, logFn)
 	if err != nil {
 		logFn(fmt.Sprintf("Start failed: %v", err))
 		stopViiperServerIfStarted()
@@ -496,7 +521,7 @@ func (a *guiApp) startInBackground() {
 	}
 
 	session.SetOnPauseChanged(pauseFn)
-	session.StartPauseWatcher(context.Background(), logFn)
+	session.StartPauseWatcher(ctx, logFn)
 
 	cfg := a.clickerConfig()
 	cfg.Session = session
@@ -592,6 +617,12 @@ func (a *guiApp) onStop() {
 	// isStarted() falls back to false immediately, even if the
 	// startup goroutine hasn't reached its own clear-yet.
 	a.starting = false
+	// Cancel the startup context so ensureViiperServer / waitForServer
+	// bail out of their polling loops and release serverMu promptly.
+	if a.startupCancel != nil {
+		a.startupCancel()
+		a.startupCancel = nil
+	}
 	a.mu.Unlock()
 
 	a.setStarted(false)

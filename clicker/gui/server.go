@@ -39,12 +39,16 @@ var (
 	viiperTempDir string
 )
 
-func ensureViiperServer() (started bool, err error) {
+func ensureViiperServer(ctx context.Context) (started bool, err error) {
 	serverMu.Lock()
 	defer serverMu.Unlock()
 
+	// Quick ping with a short timeout — don't hold serverMu while a
+	// stale listener forces TCP to retransmit for minutes.
+	pingCtx, pingCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer pingCancel()
 	api := viiperclient.New(runner.DefaultAPIAddr)
-	if _, err := api.PingCtx(context.Background()); err == nil {
+	if _, err := api.PingCtx(pingCtx); err == nil {
 		return false, nil
 	}
 
@@ -74,7 +78,7 @@ func ensureViiperServer() (started bool, err error) {
 	go discardViiperOutput(stdout)
 	go discardViiperOutput(stderr)
 
-	if err := waitForServer(runner.DefaultAPIAddr, serverWaitTime); err != nil {
+	if err := waitForServer(ctx, runner.DefaultAPIAddr, serverWaitTime); err != nil {
 		killProcessTree(serverPID)
 		_, _ = cmd.Process.Wait()
 		serverPID = 0
@@ -148,14 +152,24 @@ func extractViiper() (string, string, error) {
 	return path, dir, nil
 }
 
-func waitForServer(addr string, timeout time.Duration) error {
+func waitForServer(ctx context.Context, addr string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	api := viiperclient.New(addr)
 
 	for time.Now().Before(deadline) {
-		if _, err := api.PingCtx(context.Background()); err == nil {
+		// Honour cancellation so onStop can release serverMu promptly.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		pingCtx, pingCancel := context.WithTimeout(ctx, 1*time.Second)
+		_, err := api.PingCtx(pingCtx)
+		pingCancel()
+
+		if err == nil {
 			return nil
 		}
+
 		time.Sleep(serverPollPeriod)
 	}
 	return fmt.Errorf("server ping timed out after %s", timeout)
