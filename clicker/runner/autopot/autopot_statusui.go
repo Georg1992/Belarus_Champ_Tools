@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	win "experimental-clicker/runner/platform/windows"
 	"experimental-clicker/runner/internal/timing"
+	win "experimental-clicker/runner/platform/windows"
 	"experimental-clicker/runner/statusui"
 )
 
@@ -43,13 +43,7 @@ func (a *AutoPotRunner) runStatusUI(ctx context.Context, startCfg AutoPotConfig)
 		}
 
 		if poller.NeedsValidation() {
-			screen, capErr := win.CaptureFullScreen()
-			if capErr != nil {
-				timing.Sleep(ctx, timing.CaptureRetryDelay)
-				continue
-			}
-			if valErr := poller.Validate(screen); valErr != nil {
-				cfg.Log(fmt.Sprintf("autopot statusui: panel not found: %v", valErr))
+			if err := a.validateWithLog(poller, cfg.Log); err != nil {
 				timing.Sleep(ctx, timing.CaptureRetryDelay)
 				continue
 			}
@@ -95,7 +89,13 @@ func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.
 			return
 		}
 
-		status, err := revalidateAndParse(ctx, poller)
+		if poller.NeedsValidation() {
+			if err := a.validateWithLog(poller, cfg.Log); err != nil {
+				timing.Sleep(ctx, statusUIPollInterval)
+				continue
+			}
+		}
+		status, err := captureAndParse(poller)
 		if err != nil {
 			timing.Sleep(ctx, statusUIPollInterval)
 			continue
@@ -121,7 +121,10 @@ func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.
 			if _, ok := healTarget(cfg, hpBar); !ok {
 				return
 			}
-			status, err = revalidateAndParse(ctx, poller)
+			if poller.NeedsValidation() {
+				_ = a.validateWithLog(poller, cfg.Log)
+			}
+			status, err = captureAndParse(poller)
 			if err != nil {
 				continue
 			}
@@ -136,20 +139,22 @@ func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.
 	}
 }
 
-// revalidateAndParse runs a full screen re-acquisition if the poller needs
-// it, then captures the strip and parses it.
-func revalidateAndParse(ctx context.Context, poller *statusui.StripPoller) (statusui.ParsedStatus, error) {
-	if poller.NeedsValidation() {
-		screen, err := win.CaptureFullScreen()
-		if err != nil {
-			return statusui.ParsedStatus{}, err
-		}
-		if err := poller.Validate(screen); err != nil {
-			return statusui.ParsedStatus{}, err
-		}
-		_ = ctx // keep signature consistent with callers that may add ctx use later
+// validateWithLog captures a full screenshot, runs panel validation, and
+// logs either a detection success or failure message via log.
+func (a *AutoPotRunner) validateWithLog(poller *statusui.StripPoller, log func(string)) error {
+	screen, err := win.CaptureFullScreen()
+	if err != nil {
+		log(fmt.Sprintf("autopot statusui: screen capture failed: %v", err))
+		return err
 	}
-	return captureAndParse(poller)
+	if err := poller.Validate(screen); err != nil {
+		log(fmt.Sprintf("autopot statusui: failed to detect status panel: %v", err))
+		return err
+	}
+	r := poller.StripRect()
+	log(fmt.Sprintf("autopot statusui: status panel detected, strip at (%d,%d)-(%d,%d)",
+		r.Min.X, r.Min.Y, r.Max.X, r.Max.Y))
+	return nil
 }
 
 // captureAndParse captures the cached strip region and parses HP/SP values.
