@@ -54,6 +54,7 @@ func (a *AutoPotRunner) runStatusUI(ctx context.Context, startCfg AutoPotConfig)
 			timing.Sleep(ctx, statusUIPollInterval)
 			continue
 		}
+		notifyStatus(cfg, poller, status)
 
 		if cfg.HPEnabled && status.HPMax > 0 && status.HP*100/status.HPMax < cfg.HPThreshold {
 			a.healUntilStatusUI(ctx, poller, true)
@@ -128,6 +129,7 @@ func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.
 			if err != nil {
 				continue
 			}
+			notifyStatus(cfg, poller, status)
 			pct, threshold = statPercent(status, cfg, hpBar)
 			if pct >= threshold {
 				return
@@ -187,4 +189,14 @@ func currentVal(s statusui.ParsedStatus, hpBar bool) int {
 		return s.HP
 	}
 	return s.SP
+}
+
+// notifyStatus fires cfg.OnStatusParsed if set, passing parsed values and
+// the strip's screen-space rectangle so the caller can position an overlay.
+func notifyStatus(cfg AutoPotConfig, poller *statusui.StripPoller, s statusui.ParsedStatus) {
+	if cfg.OnStatusParsed == nil {
+		return
+	}
+	r := poller.StripRect()
+	cfg.OnStatusParsed(s.HP, s.HPMax, s.SP, s.SPMax, r.Min.X, r.Min.Y, r.Dx(), r.Dy())
 }

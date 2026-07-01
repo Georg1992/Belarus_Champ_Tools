@@ -201,14 +201,26 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 
 func (a *guiApp) autopotConfig() runner.AutoPotConfig {
 	return runner.AutoPotConfig{
-		HPThreshold: a.hpThreshold,
-		SPThreshold: a.spThreshold,
-		HPKeyVK:     a.hpKeyVK,
-		SPKeyVK:     a.spKeyVK,
-		HPEnabled:   a.hpEnabledCB.Checked(),
-		SPEnabled:   a.spEnabledCB.Checked(),
-		Log:         a.appendLog,
+		HPThreshold:    a.hpThreshold,
+		SPThreshold:    a.spThreshold,
+		HPKeyVK:        a.hpKeyVK,
+		SPKeyVK:        a.spKeyVK,
+		HPEnabled:      a.hpEnabledCB.Checked(),
+		SPEnabled:      a.spEnabledCB.Checked(),
+		Log:            a.appendLog,
+		OnStatusParsed: a.onStatusParsed,
 	}
+}
+
+// onStatusParsed is called from the autopot goroutine whenever new HP/SP
+// values are parsed. It forwards the values to the overlay window via the
+// walk message queue (Synchronize is thread-safe).
+func (a *guiApp) onStatusParsed(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int) {
+	if a.overlay == nil {
+		return
+	}
+	ovl := a.overlay
+	ovl.Update(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH)
 }
 
 func (a *guiApp) commitHPThresholdEdit() {

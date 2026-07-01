@@ -74,6 +74,7 @@ type guiApp struct {
 	hpThreshold    int
 	spThreshold    int
 	autopotBinding bool
+	overlay        *statusOverlay
 }
 
 func main() {
@@ -121,6 +122,11 @@ func (a *guiApp) shutdown() {
 		}
 
 		stopViiperServerIfStarted()
+
+		if a.overlay != nil {
+			a.overlay.Destroy()
+			a.overlay = nil
+		}
 	})
 }
 
@@ -130,6 +136,11 @@ func (a *guiApp) createWindow() error {
 		return err
 	}
 	a.mainWindow = mw
+
+	// Create the HP/SP overlay window (hidden until autopot produces values).
+	if ovl, ovlErr := newStatusOverlay(); ovlErr == nil {
+		a.overlay = ovl
+	}
 
 	if err := mw.SetTitle("BELARUS CHAMP CLICKER"); err != nil {
 		return err

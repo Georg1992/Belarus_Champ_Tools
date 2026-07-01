@@ -28,6 +28,10 @@ type AutoPotConfig struct {
 	HPEnabled   bool
 	SPEnabled   bool
 	Log         func(string)
+	// OnStatusParsed is called from the statusui loop after each successful
+	// HP/SP parse. stripX/Y/W/H are the screen-space coordinates of the text
+	// strip used to read the values. May be nil.
+	OnStatusParsed func(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int)
 }
 
 // AutoPotRunner heals HP/SP based on bar-fill reading. Embeds a Lifecycle so
