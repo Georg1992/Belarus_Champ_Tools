@@ -30,6 +30,10 @@ release/*
 # Local testdata duplicates (the canonical one is in clicker/runner/autopot/testdata/)
 clicker/runner/testdata/
 
+# Debug screenshots written by statusui.PanelRecognizer.SetDebugDir
+clicker/runner/statusui/debug
+clicker/runner/statusui/debug_six_named
+
 # OS / editor
 .DS_Store
 Thumbs.db

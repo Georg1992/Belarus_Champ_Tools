@@ -10,7 +10,6 @@ package autopot
 import (
 	"context"
 	"fmt"
-	"time"
 
 	win "experimental-clicker/runner/platform/windows"
 
@@ -36,9 +35,8 @@ type AutoPotConfig struct {
 type AutoPotRunner struct {
 	lc *lifecycle.Lifecycle[AutoPotConfig]
 
-	hpStabilizer     *BarStabilizer
-	spStabilizer     *BarStabilizer
-	numericValidator *NumericSafetyValidator
+	hpStabilizer *BarStabilizer
+	spStabilizer *BarStabilizer
 }
 
 // NewAutoPot constructs an AutoPotRunner with the given initial config.
@@ -66,22 +64,20 @@ func NewAutoPot(cfg AutoPotConfig) *AutoPotRunner {
 				_ = c // stabilizer.Reset is on the runner; called in Stop hook below
 			},
 		),
-		hpStabilizer:     NewBarStabilizer(true, cfg.HPThreshold),
-		spStabilizer:     NewBarStabilizer(false, cfg.SPThreshold),
-		numericValidator: NewNumericSafetyValidator(),
+		hpStabilizer: NewBarStabilizer(true, cfg.HPThreshold),
+		spStabilizer: NewBarStabilizer(false, cfg.SPThreshold),
 	}
 }
 
 // Running reports whether the heal loop is currently active.
 func (a *AutoPotRunner) Running() bool { return a.lc.Running() }
 
-// UpdateSettings propagates new settings to the stabilizers and validator.
+// UpdateSettings propagates new settings to the stabilizers.
 // Settings applied after Start() take effect on the next poll.
 func (a *AutoPotRunner) UpdateSettings(cfg AutoPotConfig) {
 	a.lc.UpdateSettings(cfg)
 	a.hpStabilizer.SetThreshold(cfg.HPThreshold)
 	a.spStabilizer.SetThreshold(cfg.SPThreshold)
-	a.numericValidator.SetThresholds(cfg.HPThreshold, cfg.SPThreshold)
 }
 
 // Start launches the healer. Returns an error if validation fails or the
@@ -110,9 +106,6 @@ func (a *AutoPotRunner) resetStabilizers() {
 
 func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 	defer a.resetStabilizers()
-
-	a.numericValidator.SetThresholds(cfg.HPThreshold, cfg.SPThreshold)
-	a.numericValidator.Start(ctx)
 
 	for {
 		select {
@@ -182,22 +175,6 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session session.InputSess
 			return
 		}
 		before := read.Percent
-
-		// Numeric safety (fail-open): skip potting if independent safety
-		// monitor says HP/SP is safe, regardless of bar read.
-		safety := a.numericValidator.GetCachedSafety()
-		if safety.IsFresh(2 * time.Second) {
-			if hpBar && safety.HPDoNotPot {
-				cfg.Log(fmt.Sprintf("numeric_push_block kind=hp percent=%.1f threshold=%d confidence=%.2f age_ms=%d",
-					safety.HPPercent, safety.HPThreshold, safety.HPConfidence, safety.Age()))
-				return
-			}
-			if !hpBar && safety.SPDoNotPot {
-				cfg.Log(fmt.Sprintf("numeric_push_block kind=sp percent=%.1f threshold=%d confidence=%.2f age_ms=%d",
-					safety.SPPercent, safety.SPThreshold, safety.SPConfidence, safety.Age()))
-				return
-			}
-		}
 
 		if err := session.TapKey(vk, timing.KeyTapHold); err != nil {
 			cfg.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", vk, err))

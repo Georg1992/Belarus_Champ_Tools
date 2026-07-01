@@ -101,6 +101,22 @@ func CapturePlayerBarSearch() (img *image.RGBA, roi ScreenROI, err error) {
 	return img, roi, err
 }
 
+// CaptureFullScreen grabs the entire primary monitor area into an RGBA
+// image. Used by the status-panel recognition path: FindStatusPanel needs
+// the whole screen so it can locate the panel via template matching even
+// when the in-game UI has drifted off its default top-left position.
+//
+// Returns an error if the screen size can't be queried or the BitBlt copy
+// fails. Callers should treat failures as transient and retry on the next
+// tick — the capture loop is upstream, not this helper.
+func CaptureFullScreen() (*image.RGBA, error) {
+	sw, sh := ScreenSize()
+	if sw <= 0 || sh <= 0 {
+		return nil, fmt.Errorf("invalid screen size %dx%d", sw, sh)
+	}
+	return CaptureScreenRegion(ScreenROI{X: 0, Y: 0, W: sw, H: sh})
+}
+
 // ScreenROI defines a rectangular region for screen capture.
 type ScreenROI struct {
 	X, Y, W, H int

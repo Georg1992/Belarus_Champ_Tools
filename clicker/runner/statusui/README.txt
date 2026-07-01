@@ -1,0 +1,1 @@
+Ragnarok HP/SP pixel-font templates extracted from provided strips. Use glyphs/*.png for canonical masks. variants/* include observed variants. Threshold: any RGB channel < 240 = ink. Canvas height is 9 px, preserving y offset from strip rows 2..10.
