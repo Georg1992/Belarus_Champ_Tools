@@ -538,19 +538,16 @@ func (a *guiApp) startInBackground() {
 	a.startKeyChainRunner(keyChainCfg)
 
 	a.mu.Lock()
-	// A Stop click that landed between "everything wired" and here
-	// would have already cleared a.starting. Only flip our own flag
-	// to false if it's still ours to flip, otherwise leave it
-	// (onStop's clear wins).
+	// If onStop cleared starting before we reached this point,
+	// it has already snapshotted the runners/session for its
+	// cleanup goroutine — nothing more for us to do.
+	canceled := !a.starting
 	if a.starting {
 		a.starting = false
 	}
 	a.mu.Unlock()
 
-	// Post the final UI state flip (badge RUNNING, Stop enabled,
-	// Start disabled, configs locked) through Synchronize so the
-	// walk-API-heavy path runs on the GUI thread.
-	if !isStillStarting() {
+	if canceled {
 		return
 	}
 	a.mainWindow.Synchronize(func() { a.setStarted(true) })
