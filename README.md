@@ -1,14 +1,14 @@
-# BELARUS CHAMP CLICKER
+# BELARUS CHAMP TOOLS
 
 Windows clicker with a Walk GUI. Hold a trigger key to repeat virtual key presses and left mouse clicks through embedded [VIIPER](https://github.com/Alia5/VIIPER) virtual HID devices.
 
 ## Project layout
 
 ```
-Experimental_Clicker/
-  clicker.exe                    ← dev build output
-  clicker/
-    build.ps1                    ← build clicker.exe
+Belarus_Champ_Tools/
+  app.exe                       ← dev build output
+  app/
+    build.ps1                    ← build app.exe
     package.ps1                  ← build user ZIP
     gui/                         ← Walk UI + embedded VIIPER server
     runner/                      ← click loop, key mappings, pause
@@ -16,12 +16,12 @@ Experimental_Clicker/
     README.txt / README.ru.txt
     Install.cmd / Uninstall.cmd
   release/                           ← build output only (folder + zip)
-    BelarusChampClicker-Windows-x64/
-    BelarusChampClicker-Windows-x64.zip
+    BelarusChampTools-Windows-x64/
+    BelarusChampTools-Windows-x64.zip
   VIIPER/                        ← git submodule
 ```
 
-Open **`Experimental_Clicker`** in your editor — not the `VIIPER/` folder alone.
+Open **`Belarus_Champ_Tools`** in your editor — not the `VIIPER/` folder alone.
 
 ## Prerequisites
 
@@ -35,20 +35,20 @@ The packaged `Install.cmd` installs the driver automatically.
 
 ```powershell
 git submodule update --init --recursive
-cd clicker
+cd app
 .\build.ps1
 ```
 
-Output: `..\clicker.exe`
+Output: `..\app.exe`
 
 ## Release package
 
 ```powershell
-cd clicker
+cd app
 .\package.ps1
 ```
 
-Output: `release/BelarusChampClicker-Windows-x64/` and `release/BelarusChampClicker-Windows-x64.zip`
+Output: `release/BelarusChampTools-Windows-x64/` and `release/BelarusChampTools-Windows-x64.zip`
 
 Users extract the ZIP and run `Install.cmd`. See `packaging/README.txt`.
 
@@ -95,13 +95,13 @@ Default delay: **50 ms**. If a game misses clicks, try **50–100 ms**.
 
 | Path | Purpose |
 |------|---------|
-| `clicker/gui/main.go` | Main window, Start/Stop, status badge |
-| `clicker/gui/status_badge.go` | ON / OFF / PAUSE indicator |
-| `clicker/gui/server.go` | Embedded VIIPER lifecycle |
-| `clicker/runner/runner.go` | Click loop, End-key pause |
-| `clicker/runner/player_bars.go` | HP/SP bar detection under character (center crop) |
-| `clicker/runner/autopot.go` | AutoPot healing loop |
-| `clicker/runner/screen_windows.go` | Center screen region capture |
+| `app/gui/main.go` | Main window, Start/Stop, status badge |
+| `app/gui/status_badge.go` | ON / OFF / PAUSE indicator |
+| `app/gui/server.go` | Embedded VIIPER lifecycle |
+| `app/runner/runner.go` | Click loop, End-key pause |
+| `app/runner/player_bars.go` | HP/SP bar detection under character (center crop) |
+| `app/runner/autopot.go` | AutoPot healing loop |
+| `app/runner/screen_windows.go` | Center screen region capture |
 | `packaging/` | Install/Uninstall scripts and user READMEs |
 | `release/` | Generated folder + ZIP (`package.ps1`) |
-| `VIIPER/` | Upstream VIIPER (`replace` in `clicker/go.mod`) |
+| `VIIPER/` | Upstream VIIPER (`replace` in `app/go.mod`) |

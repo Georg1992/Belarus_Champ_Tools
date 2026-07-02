@@ -1,21 +1,21 @@
 @echo off
 setlocal
-title Belarus Champ Clicker Uninstall
+title Belarus Champ Tools Uninstall
 cd /d "%~dp0"
 
-set "BCC_INSTALL_DIR=%~dp0"
-set "BCC_CMD_PATH=%~f0"
-set "BCC_TMPPS1=%TEMP%\belarus-champ-clicker-uninstall-%RANDOM%.ps1"
-set "BCC_SKIP=0"
-for /f "tokens=1 delims=:" %%A in ('findstr /n /b ":PS1" "%~f0"') do set "BCC_SKIP=%%A"
+set "BCT_INSTALL_DIR=%~dp0"
+set "BCT_CMD_PATH=%~f0"
+set "BCT_TMPPS1=%TEMP%\belarus-champ-tools-uninstall-%RANDOM%.ps1"
+set "BCT_SKIP=0"
+for /f "tokens=1 delims=:" %%A in ('findstr /n /b ":PS1" "%~f0"') do set "BCT_SKIP=%%A"
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$skip = [int]$env:BCC_SKIP; $lines = [IO.File]::ReadAllLines($env:BCC_CMD_PATH); $body = ($lines | Select-Object -Skip $skip) -join [Environment]::NewLine; [IO.File]::WriteAllText($env:BCC_TMPPS1, $body, [Text.UTF8Encoding]::new($false))"
+  "$skip = [int]$env:BCT_SKIP; $lines = [IO.File]::ReadAllLines($env:BCT_CMD_PATH); $body = ($lines | Select-Object -Skip $skip) -join [Environment]::NewLine; [IO.File]::WriteAllText($env:BCT_TMPPS1, $body, [Text.UTF8Encoding]::new($false))"
 if errorlevel 1 goto fail
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%BCC_TMPPS1%"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%BCT_TMPPS1%"
 set ERR=%ERRORLEVEL%
-del "%BCC_TMPPS1%" 2>nul
+del "%BCT_TMPPS1%" 2>nul
 if %ERR% neq 0 goto fail
 goto done
 
@@ -32,14 +32,15 @@ exit /b %ERR%
 :PS1
 $ErrorActionPreference = "Continue"
 
-$AppDisplayName = "Belarus Champ Clicker"
+$AppDisplayName = "Belarus Champ Tools"
 
 Write-Host ""
 Write-Host "  $AppDisplayName - Uninstall" -ForegroundColor Cyan
 Write-Host ""
 
 Write-Host "Stopping clicker..." -ForegroundColor Cyan
-Stop-Process -Name "Belarus Champ Clicker" -Force -ErrorAction SilentlyContinue
+Stop-Process -Name "Belarus Champ Tools" -Force -ErrorAction SilentlyContinue
+Stop-Process -Name "app" -Force -ErrorAction SilentlyContinue
 Stop-Process -Name "clicker" -Force -ErrorAction SilentlyContinue
 Stop-Process -Name "viiper" -Force -ErrorAction SilentlyContinue
 Stop-Process -Name "wusbip" -Force -ErrorAction SilentlyContinue
@@ -50,7 +51,7 @@ Write-Host "  Done." -ForegroundColor Green
 Write-Host ""
 Write-Host "Removing shortcuts and app data (if any)..." -ForegroundColor Cyan
 
-$legacyDir = Join-Path $env:LOCALAPPDATA "BelarusChampClicker"
+$legacyDir = Join-Path $env:LOCALAPPDATA "BelarusChampTools"
 if (Test-Path $legacyDir) {
     Remove-Item $legacyDir -Recurse -Force
     Write-Host "  Removed $legacyDir" -ForegroundColor Green
@@ -58,7 +59,7 @@ if (Test-Path $legacyDir) {
 
 $shortcutNames = @(
     "$AppDisplayName.lnk",
-    "BelarusChampClicker.lnk",
+    "BelarusChampTools.lnk",
     "clicker.lnk",
     "USBip.lnk",
     "Uninstall USBip.lnk"
@@ -101,7 +102,7 @@ foreach ($dir in $shortcutDirs) {
         } catch {
             return
         }
-        if ($target -like "*Belarus Champ Clicker.exe" -or $target -like "*\BelarusChampClicker\*" -or $target -like "*\USBip\*") {
+        if ($target -like "*Belarus Champ Tools.exe" -or $target -like "*\BelarusChampTools\*" -or $target -like "*\USBip\*") {
             Remove-Item $_.FullName -Force
             Write-Host "  Removed $($_.FullName)" -ForegroundColor Green
         }
@@ -119,7 +120,7 @@ foreach ($startMenuRoot in @(
         } catch {
             return
         }
-        if ($target -like "*Belarus Champ Clicker.exe" -or $target -like "*\BelarusChampClicker\*" -or $target -like "*\USBip\*") {
+        if ($target -like "*Belarus Champ Tools.exe" -or $target -like "*\BelarusChampTools\*" -or $target -like "*\USBip\*") {
             Remove-Item $_.FullName -Force
             Write-Host "  Removed $($_.FullName)" -ForegroundColor Green
         }
@@ -138,12 +139,12 @@ if (-not $UsbipInstalled) {
 } else {
     Write-Host "  Click Yes on the Windows security prompt." -ForegroundColor Yellow
 
-    $driverScript = Join-Path $env:TEMP "bcc-usbip-driver-uninstall.ps1"
-    $driverLog = Join-Path $env:TEMP "bcc-usbip-driver-uninstall.log"
+    $driverScript = Join-Path $env:TEMP "bct-usbip-driver-uninstall.ps1"
+    $driverLog = Join-Path $env:TEMP "bct-usbip-driver-uninstall.log"
     Remove-Item $driverLog -Force -ErrorAction SilentlyContinue
 
     $driverBody = @'
-$LogFile = Join-Path $env:TEMP "bcc-usbip-driver-uninstall.log"
+$LogFile = Join-Path $env:TEMP "bct-usbip-driver-uninstall.log"
 function Write-Log([string]$Message) {
     Add-Content -Path $LogFile -Value $Message -Encoding UTF8
 }
@@ -250,7 +251,7 @@ Write-Host ""
 Write-Host "Uninstall complete." -ForegroundColor Green
 Write-Host ""
 Write-Host "Delete this folder to remove the app:" -ForegroundColor Cyan
-$folder = $env:BCC_INSTALL_DIR.TrimEnd('\')
+$folder = $env:BCT_INSTALL_DIR.TrimEnd('\')
 Write-Host "  $folder" -ForegroundColor Gray
 Write-Host ""
 Write-Host "See README.txt for details." -ForegroundColor Gray

@@ -1,4 +1,4 @@
-BELARUS CHAMP CLICKER
+BELARUS CHAMP TOOLS
 =====================
 
 Install
@@ -12,7 +12,7 @@ Extract this ZIP, then:
 2. Restart your PC if the installer asks you to
    (only needed the first time)
 
-3. Double-click Belarus Champ Clicker.exe in this folder
+3. Double-click Belarus Champ Tools.exe in this folder
    Click Start, add your trigger key, then open your game.
    Hold the trigger key to click. Press End to pause.
 
