@@ -48,7 +48,7 @@ import it from the GUI. The internal packages can move freely
 
 ## Why this matters
 
-1. **Decoupling.** A color threshold tune in `autopot/player_bars.go`
+1. **Decoupling.** A color threshold tune in the `autopot` package
    (e.g. `hpFillMinGreen` 35 → 40) must require zero changes here. If
    the GUI re-implements detection, every tweak becomes a cross-package
    edit.
@@ -85,7 +85,7 @@ import it from the GUI. The internal packages can move freely
    to the user): add the field to the relevant config struct in
    `runner/*` and re-export through `runner` if it isn't already.
 3. **Needs a new detection primitive** (e.g. a new color threshold
-   the GUI should display): add it to `autopot/player_bars.go`,
+   the GUI should display): add it to the `autopot` package,
    re-export from `runner`, then consume the re-export here.
 4. **Never** copy a detection threshold into a `app/gui` file as
    a literal. Always go through the constant.
