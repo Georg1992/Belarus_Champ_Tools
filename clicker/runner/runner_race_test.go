@@ -142,7 +142,7 @@ func TestKeyChainRunnerStress(t *testing.T) {
 	sess := &mockSession{}
 	r := NewKeyChain(KeyChainConfig{
 		Session: sess,
-		Keys: [KeyChainSlotCount]int32{'A', 'B', 0, 0, 0, 0, 0},
+		Keys:    [KeyChainSlotCount]int32{'A', 'B', 0, 0, 0, 0, 0},
 		DelaysMs: [KeyChainSlotCount]int{
 			1, 1, 0, 0, 0, 0, 0,
 		},

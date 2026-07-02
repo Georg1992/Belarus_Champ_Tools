@@ -95,8 +95,6 @@ func (r *Runner) Stop() { r.lc.Stop() }
 func (r *Runner) Wait() { r.lc.Wait() }
 
 func (r *Runner) run(ctx context.Context, cfg Config) {
-	log := cfg.Log
-	_ = log
 	for {
 		if ctx.Err() != nil {
 			return
@@ -106,32 +104,28 @@ func (r *Runner) run(ctx context.Context, cfg Config) {
 			continue
 		}
 
-		current := r.settings()
-		activeCount := 0
-		for _, slot := range current.Slots {
+		anySlot := false
+		for _, slot := range r.settings().Slots {
 			if len(slot.TriggerVKs) == 0 {
 				continue
 			}
-			activeCount++
-			if r.runSlot(ctx, current.Session, slot) {
+			anySlot = true
+			if r.runSlot(ctx, cfg.Session, slot) {
 				return
 			}
 			timing.Sleep(ctx, timing.PollInterval)
 		}
-		if activeCount == 0 {
+		if !anySlot {
 			timing.Sleep(ctx, timing.CaptureRetryDelay)
 		}
 	}
 }
 
-// runSlot watches one slot: while any of its trigger keys is physically
-// down, emit clicks (or just key taps) every DelayMs. Returns true when
-// the outer loop should bail out (context canceled).
+// runSlot: while any trigger key is physically held, loop:
+//
+//	key press → [mouse click] → sleep DelayMs
 func (r *Runner) runSlot(ctx context.Context, sess session.InputSession, slot ClickerSlot) bool {
 	if len(slot.TriggerVKs) == 0 {
-		return false
-	}
-	if !anyKeyDown(slot.TriggerVKs) {
 		return false
 	}
 	if slot.DelayMs <= 0 {
@@ -139,16 +133,25 @@ func (r *Runner) runSlot(ctx context.Context, sess session.InputSession, slot Cl
 	}
 	delay := time.Duration(slot.DelayMs) * time.Millisecond
 
-	for {
+	for anyKeyDown(slot.TriggerVKs) {
 		if ctx.Err() != nil {
 			return true
 		}
 		if sess.Paused() {
 			return false
 		}
-		if !anyKeyDown(slot.TriggerVKs) {
-			return false
+
+		// 1. Key press
+		for _, vk := range slot.TriggerVKs {
+			if vk == 0 {
+				continue
+			}
+			if err := sess.TapKey(vk, timing.KeyTapHold); err != nil {
+				return false
+			}
 		}
+
+		// 2. Mouse click (only slot 0)
 		if slot.MouseClick {
 			if err := sess.MouseDown(); err != nil {
 				r.settings().Log(fmt.Sprintf("clicker mouse down failed: %v", err))
@@ -156,18 +159,12 @@ func (r *Runner) runSlot(ctx context.Context, sess session.InputSession, slot Cl
 			}
 			time.Sleep(delay)
 			_ = sess.MouseUp()
-		} else {
-			for _, vk := range slot.TriggerVKs {
-				if vk == 0 {
-					continue
-				}
-				if err := sess.TapKey(vk, timing.KeyTapHold); err != nil {
-					return false
-				}
-			}
 		}
+
+		// 3. Delay before next iteration
 		timing.Sleep(ctx, delay)
 	}
+	return false
 }
 
 func anyKeyDown(vks []int32) bool {

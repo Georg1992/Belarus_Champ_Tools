@@ -3,14 +3,7 @@
 package runner
 
 import (
-	"time"
-
 	"golang.org/x/sys/windows"
-)
-
-const (
-	KeyReleaseSettle = 500 * time.Millisecond
-	PollInterval     = 10 * time.Millisecond
 )
 
 var (
@@ -47,44 +40,4 @@ func ActiveTrigger(vks []int32) (int32, bool) {
 func TriggerHeld(triggerVKs []int32) bool {
 	_, held := ActiveTrigger(triggerVKs)
 	return held
-}
-
-// WaitForKeyPress waits for keys to be released, then returns the next key pressed.
-func WaitForKeyPress(timeout time.Duration) (int32, bool) {
-	deadline := time.Now().Add(timeout)
-	releaseBy := time.Now().Add(KeyReleaseSettle)
-	for time.Now().Before(releaseBy) {
-		if !anyPhysicalKeyDown() {
-			break
-		}
-		time.Sleep(PollInterval)
-	}
-
-	for time.Now().Before(deadline) {
-		for vk := int32(0x08); vk <= 0xFE; vk++ {
-			if vk == escapeVK {
-				continue
-			}
-			if PhysicalKeyDown(vk) {
-				for PhysicalKeyDown(vk) && time.Now().Before(deadline) {
-					time.Sleep(PollInterval)
-				}
-				return vk, true
-			}
-		}
-		time.Sleep(PollInterval)
-	}
-	return 0, false
-}
-
-func anyPhysicalKeyDown() bool {
-	for vk := int32(0x08); vk <= 0xFE; vk++ {
-		if vk == escapeVK {
-			continue
-		}
-		if PhysicalKeyDown(vk) {
-			return true
-		}
-	}
-	return false
 }

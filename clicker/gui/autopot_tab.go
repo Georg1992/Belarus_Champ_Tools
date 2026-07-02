@@ -388,4 +388,3 @@ func (a *guiApp) bindAutoPotKey(hp bool) {
 		},
 	)
 }
-

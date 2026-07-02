@@ -185,9 +185,9 @@ func startLifecycle[R lifecycleRunner](
 //     (runner.KeyBindTimeout).
 //  4. The result is dispatched back to the UI thread via
 //     mainWindow.Synchronize, where:
-//       * timeout → "Key bind timed out"
-//       * unsupported VK (VKToHID fails) → "Key <name> is not supported"
-//       * otherwise onPress(vk) runs.
+//     * timeout → "Key bind timed out"
+//     * unsupported VK (VKToHID fails) → "Key <name> is not supported"
+//     * otherwise onPress(vk) runs.
 //  5. cleanup runs (off-UI) once the goroutine exits, regardless of
 //     outcome — use it to un-register binding state.
 //  6. reenable runs on the UI thread after cleanup, refreshing bind

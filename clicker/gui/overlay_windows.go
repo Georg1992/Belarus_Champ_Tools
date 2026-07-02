@@ -187,9 +187,17 @@ func (o *statusOverlay) onPaint(hwnd win.HWND) {
 
 // Update stores the latest HP/SP values and repositions the window just below
 // the status strip. Safe to call from any goroutine.
+//
+// Sentinel: when hp < 0 or sp < 0 the overlay shows an error message
+// (pixel-bar fallback is active, no OCR data available).
+//
+// Otherwise, hpMax > 0 means OCR absolute values (HP/nnn); hpMax == 0
+// is a bare fallback with no max known.
 func (o *statusOverlay) Update(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int) {
 	var text string
-	if hpMax > 0 && spMax > 0 {
+	if hp < 0 || sp < 0 {
+		text = "error: Pixelsearch is used"
+	} else if hpMax > 0 && spMax > 0 {
 		text = fmt.Sprintf("HP %d/%d  SP %d/%d", hp, hpMax, sp, spMax)
 	} else if hpMax > 0 {
 		text = fmt.Sprintf("HP %d/%d", hp, hpMax)
@@ -201,13 +209,16 @@ func (o *statusOverlay) Update(hp, hpMax, sp, spMax, stripX, stripY, stripW, str
 	o.text = text
 	o.mu.Unlock()
 
-	// Reposition to just below the strip; keep on top and show.
-	win.SetWindowPos(
-		o.hwnd, win.HWND_TOPMOST,
-		int32(stripX), int32(stripY+stripH+3),
-		int32(stripW+40), 18,
-		ovlSwpNoActivate|ovlSwpShowWindow,
-	)
+	// Reposition only when we have valid strip coordinates (OCR reader).
+	// Pixel-bar reader passes zeros — skip repositioning, just repaint.
+	if stripW > 0 && stripH > 0 {
+		win.SetWindowPos(
+			o.hwnd, win.HWND_TOPMOST,
+			int32(stripX), int32(stripY+stripH+3),
+			int32(stripW+40), 18,
+			ovlSwpNoActivate|ovlSwpShowWindow,
+		)
+	}
 	win.InvalidateRect(o.hwnd, nil, true)
 }
 

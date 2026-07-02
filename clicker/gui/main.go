@@ -64,9 +64,9 @@ type guiApp struct {
 	keyChainClearBtn    *walk.PushButton
 	keyChainBindingSlot int
 
-	mu             sync.Mutex
-	shutdownOnce   sync.Once
-	logFile        *os.File
+	mu           sync.Mutex
+	shutdownOnce sync.Once
+	logFile      *os.File
 	// starting is true while onStart's background goroutine is wiring
 	// up the viper server + session + runners. It is set on the GUI
 	// thread inside onStart and cleared by either the goroutine on

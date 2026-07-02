@@ -69,9 +69,6 @@ func (s *BarStabilizer) UpdatePair(img image.Image, hpBar bool, mapped MappedBar
 	}
 
 	hp, sp := ReadMappedBars(img, mapped)
-	if !hp.Found || !sp.Found {
-		return s.readUnknown()
-	}
 
 	var read BarRead
 	var rect Rect
@@ -80,6 +77,10 @@ func (s *BarStabilizer) UpdatePair(img image.Image, hpBar bool, mapped MappedBar
 	} else {
 		read, rect = sp, mapped.SP
 	}
+	// Each stabiliser checks only its OWN bar. The old code required
+	// BOTH bars to be found (!hp.Found || !sp.Found) which meant a
+	// missing SP bar would reset the HP stabiliser's lowStreak too —
+	// making pixel search autopot silently never heal.
 	if !read.Found || !barReadConsistent(img, rect, s.hpBar, read) {
 		return s.readUnknown()
 	}

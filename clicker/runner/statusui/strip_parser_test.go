@@ -322,11 +322,11 @@ func TestResizeMaskNearest_PreservesCornerPixels(t *testing.T) {
 
 func TestParseText_Valid(t *testing.T) {
 	cases := []struct {
-		text   string
-		hp     int
-		hpMax  int
-		sp     int
-		spMax  int
+		text  string
+		hp    int
+		hpMax int
+		sp    int
+		spMax int
 	}{
 		{"HP.1045/1290|SP.66/201", 1045, 1290, 66, 201},
 		{"HP.987/4294|SP.948/948", 987, 4294, 948, 948},
@@ -348,10 +348,10 @@ func TestParseText_Valid(t *testing.T) {
 
 func TestParseText_Invalid(t *testing.T) {
 	for _, text := range []string{
-		"HP.1045/1290XX.66/201",  // wrong label
-		"HP.66/201",                // sp missing
-		"hello world",              // not numbers at all
-		"",                         // empty
+		"HP.1045/1290XX.66/201", // wrong label
+		"HP.66/201",             // sp missing
+		"hello world",           // not numbers at all
+		"",                      // empty
 	} {
 		if _, _, _, _, err := parseText(text); err == nil {
 			t.Errorf("parseText(%q): want error, got nil", text)
@@ -442,10 +442,10 @@ func TestReader_IntegrationSynthetic(t *testing.T) {
 		t.Fatalf("NewReader: %v", err)
 	}
 	cases := []struct {
-		text           string
-		hp, hpMax      int
-		sp, spMax      int
-		minConf        float64 // minimum acceptable Result.Confidence
+		text      string
+		hp, hpMax int
+		sp, spMax int
+		minConf   float64 // minimum acceptable Result.Confidence
 	}{
 		{"HP.1045/1290|SP.66/201", 1045, 1290, 66, 201, 0.95},
 		{"HP.987/4294|SP.948/948", 987, 4294, 948, 948, 0.95},
@@ -501,4 +501,3 @@ func TestReader_DebugArtifactsWritten(t *testing.T) {
 		}
 	}
 }
-

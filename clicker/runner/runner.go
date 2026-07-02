@@ -15,9 +15,9 @@
 package runner
 
 import (
+	"experimental-clicker/runner/autopot"
 	"experimental-clicker/runner/internal/lifecycle"
 	"experimental-clicker/runner/internal/session"
-	"experimental-clicker/runner/autopot"
 )
 
 // InputSession is the canonical input-device interface any runner uses.

@@ -7,29 +7,24 @@ import (
 	"experimental-clicker/runner/statusui"
 )
 
-// TestRunStatusUIReturnsNilOnCancel verifies that runStatusUI returns nil
-// when the context is cancelled immediately — signalling a normal Stop
-// rather than triggering a fallback. The ctx.Err() check at the top
-// ensures Stop works even during initialisation.
-func TestRunStatusUIReturnsNilOnCancel(t *testing.T) {
-	a := NewAutoPot(AutoPotConfig{
-		HPEnabled: true,
-		HPKeyVK:   'W',
-		Log:       func(string) {},
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	// Build a poller from a default pipeline so the function can be called.
+// TestStatusUIReaderCancel verifies that ReadBars returns an error
+// (context.Canceled) when called with an already-cancelled context.
+func TestStatusUIReaderCancel(t *testing.T) {
 	pipeline, err := statusui.NewDefaultPipeline()
 	if err != nil {
 		t.Skipf("skipping: cannot create pipeline in test env: %v", err)
 	}
-	poller := statusui.NewStripPoller(pipeline)
 
-	err = a.runStatusUI(ctx, poller)
-	if err != nil {
-		t.Fatalf("runStatusUI with cancelled ctx: want nil, got %v", err)
+	reader := &statusUIReader{
+		poller: statusui.NewStripPoller(pipeline),
+		log:    func(string) {},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result := reader.ReadBars(ctx)
+	if result.Err == nil {
+		t.Fatal("ReadBars with cancelled ctx: want error, got nil")
 	}
 }
