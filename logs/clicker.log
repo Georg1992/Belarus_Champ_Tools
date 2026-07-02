@@ -460,3 +460,120 @@
 [20:25:21] Stopping...
 [20:25:21] [viiper] 2026-07-02T20:25:21.813778+03:00 ERROR api stream handler error path=bus/1/1 error=read header: read tcp 127.0.0.1:3242->127.0.0.1:54297: wsarecv: An existing connection was forcibly closed by the remote host.
 [20:25:22] Clicker stopped — click Start before launching the game
+[21:29:18] Log file: C:\Users\georg\Desktop\Experimental_Clicker\logs\clicker.log
+[21:29:21] Starting...
+[21:29:21] Checking VIIPER server...
+[21:29:21] Waiting for VIIPER (up to 30s)...
+[21:29:21] VIIPER server started
+[21:29:21] VIIPER API ready on port 3242
+[21:29:21] Opening VIIPER session...
+[21:29:21] Virtual keyboard ready
+[21:29:21] Virtual mouse ready
+[21:29:21] Started
+[21:29:49] Press a potion hotkey to assign (5s timeout)...
+[21:29:50] HP potion key: F9
+[21:29:50] AutoPot started
+[21:29:50] autopot statusui: status panel found
+[21:30:02] Press a key to add for With mouse click (5s timeout)...
+[21:30:02] With mouse click added key E
+[21:32:03] autopot statusui: status panel lost, searching...
+[21:32:03] autopot: statusui issue, switching to pixel-bar: statusui: parse strip failed: low_glyph_score
+[21:32:03] pixel: HP=62% rect(24,29 60x3) status=2 SP=58% rect(24,33 60x3) status=2 mapped block(24,29 60x7) score=1449 img=110x60 roi 905,525 110x60
+[21:32:05] pixel: HP=62% rect(24,29 60x3) status=2 SP=58% rect(24,33 60x3) status=2 mapped block(24,29 60x7) score=1449 img=110x60 roi 905,525 110x60
+[21:32:07] pixel: HP=62% rect(17,35 60x3) status=2 SP=58% rect(17,39 60x3) status=2 mapped block(17,35 60x7) score=1448 img=110x60 roi 905,525 110x60
+[21:32:08] autopot statusui: status panel found
+[21:32:08] autopot: statusui recovered, switching back
+[21:32:12] autopot: statusui issue, switching to pixel-bar: statusui: parse strip failed: low_glyph_score
+[21:32:12] pixel: HP=62% rect(24,29 60x3) status=2 SP=53% rect(24,33 60x3) status=2 mapped block(24,29 60x7) score=1449 img=110x60 roi 905,525 110x60
+[21:32:14] pixel: HP=62% rect(25,29 60x3) status=2 SP=53% rect(25,33 60x3) status=2 mapped block(25,29 60x7) score=1452 img=110x60 roi 905,525 110x60
+[21:32:16] pixel: HP=60% rect(25,29 60x3) status=2 SP=55% rect(25,33 60x3) status=2 mapped block(25,29 60x7) score=1448 img=110x60 roi 905,525 110x60
+[21:32:18] autopot statusui: status panel lost, searching...
+[21:32:18] pixel: HP=52% rect(25,29 60x3) status=2 SP=55% rect(25,33 60x3) status=2 mapped block(25,29 60x7) score=1425 img=110x60 roi 905,525 110x60
+[21:32:20] pixel: HP=55% rect(25,29 60x3) status=2 SP=55% rect(25,33 60x3) status=2 mapped block(25,29 60x7) score=1433 img=110x60 roi 905,525 110x60
+[21:32:39] pixel: HP=45% rect(24,28 60x3) status=2 SP=55% rect(24,32 60x3) status=2 mapped block(24,28 60x7) score=1399 img=110x60 roi 905,525 110x60
+[21:32:39] autopot statusui: status panel found
+[21:32:39] autopot: statusui recovered, switching back
+[21:33:55] autopot statusui: status panel lost, searching...
+[21:33:56] autopot: statusui issue, switching to pixel-bar: statusui: panel not found
+[21:33:56] pixel: HP=57% rect(24,29 61x3) status=2 SP=58% rect(24,33 61x3) status=2 mapped block(24,29 61x7) score=1441 img=110x60 roi 905,525 110x60
+[21:33:58] pixel: HP=57% rect(24,29 61x3) status=2 SP=58% rect(24,33 61x3) status=2 mapped block(24,29 61x7) score=1441 img=110x60 roi 905,525 110x60
+[21:34:00] pixel: HP=57% rect(24,29 61x3) status=2 SP=60% rect(24,33 61x3) status=2 mapped block(24,29 61x7) score=1441 img=110x60 roi 905,525 110x60
+[21:34:01] autopot statusui: status panel found
+[21:34:01] autopot: statusui recovered, switching back
+[21:34:58] autopot statusui: status panel lost, searching...
+[21:34:58] autopot: statusui issue, switching to pixel-bar: verify: top-right corner uniform (got 21.7, want >= 50.0 stddev) — region lacks the decorative emblem the status panel has
+[21:34:58] pixel: HP=60% rect(24,29 61x3) status=2 SP=78% rect(24,33 61x3) status=2 mapped block(24,29 61x7) score=1449 img=110x60 roi 905,525 110x60
+[21:35:00] pixel: HP=60% rect(24,29 61x3) status=2 SP=78% rect(24,33 61x3) status=2 mapped block(24,29 61x7) score=1449 img=110x60 roi 905,525 110x60
+[21:35:02] pixel: HP=60% rect(24,29 61x3) status=2 SP=78% rect(24,33 61x3) status=2 mapped block(24,29 61x7) score=1449 img=110x60 roi 905,525 110x60
+[21:35:04] pixel: HP=60% rect(24,29 61x3) status=2 SP=82% rect(24,33 61x3) status=2 mapped block(24,29 61x7) score=1449 img=110x60 roi 905,525 110x60
+[21:35:06] pixel: HP=60% rect(24,29 61x3) status=2 SP=82% rect(24,33 61x3) status=2 mapped block(24,29 61x7) score=1449 img=110x60 roi 905,525 110x60
+[21:35:09] pixel: HP=62% rect(24,29 61x3) status=2 SP=82% rect(24,33 61x3) status=2 mapped block(24,29 61x7) score=1456 img=110x60 roi 905,525 110x60
+[21:35:11] pixel: HP=62% rect(24,29 61x3) status=2 SP=82% rect(24,33 61x3) status=2 mapped block(24,29 61x7) score=1456 img=110x60 roi 905,525 110x60
+[21:35:13] pixel: HP=62% rect(24,29 61x3) status=2 SP=85% rect(24,33 61x3) status=2 mapped block(24,29 61x7) score=1456 img=110x60 roi 905,525 110x60
+[21:35:14] autopot statusui: status panel found
+[21:35:14] autopot: statusui recovered, switching back
+[21:35:19] autopot statusui: status panel lost, searching...
+[21:35:19] autopot: statusui issue, switching to pixel-bar: verify: top-right corner uniform (got 21.7, want >= 50.0 stddev) — region lacks the decorative emblem the status panel has
+[21:35:19] pixel: HP=62% rect(24,29 61x3) status=2 SP=87% rect(24,33 61x3) status=2 mapped block(24,29 61x7) score=1456 img=110x60 roi 905,525 110x60
+[21:35:21] pixel: HP=62% rect(24,29 61x3) status=2 SP=87% rect(24,33 61x3) status=2 mapped block(24,29 61x7) score=1456 img=110x60 roi 905,525 110x60
+[21:35:23] pixel: HP=62% rect(24,29 61x3) status=2 SP=87% rect(24,33 61x3) status=2 mapped block(24,29 61x7) score=1456 img=110x60 roi 905,525 110x60
+[21:35:36] pixel: HP=64% rect(51,25 59x3) status=2 SP=88% rect(51,29 59x3) status=2 mapped block(51,25 59x7) score=1398 img=110x60 roi 905,525 110x60
+[21:35:44] autopot statusui: status panel found
+[21:35:44] autopot: statusui recovered, switching back
+[21:36:04] autopot statusui: status panel lost, searching...
+[21:36:04] autopot: statusui issue, switching to pixel-bar: verify: top-right corner uniform (got 25.1, want >= 50.0 stddev) — region lacks the decorative emblem the status panel has
+[21:36:04] pixel: HP=43% rect(24,29 60x3) status=2 SP=45% rect(24,33 60x3) status=2 mapped block(24,29 60x7) score=1426 img=110x60 roi 905,525 110x60
+[21:36:06] pixel: HP=69% rect(24,29 33x3) status=2 SP=70% rect(24,33 33x3) status=2 mapped block(24,29 33x7) score=1154 img=110x60 roi 905,525 110x60
+[21:36:08] pixel: HP=71% rect(24,29 32x3) status=2 SP=74% rect(24,33 32x3) status=2 mapped block(24,29 32x7) score=1150 img=110x60 roi 905,525 110x60
+[21:36:09] autopot statusui: status panel found
+[21:36:09] autopot: statusui recovered, switching back
+[21:36:19] autopot statusui: status panel lost, searching...
+[21:36:19] autopot: statusui issue, switching to pixel-bar: statusui: parse strip failed: low_glyph_score
+[21:36:19] pixel: HP=100% rect(24,29 60x3) status=1 SP=68% rect(24,33 60x3) status=2 mapped block(24,29 60x7) score=1559 img=110x60 roi 905,525 110x60
+[21:36:21] pixel: HP=100% rect(24,29 60x3) status=1 SP=68% rect(24,33 60x3) status=2 mapped block(24,29 60x7) score=1559 img=110x60 roi 905,525 110x60
+[21:36:23] pixel: HP=100% rect(24,29 60x3) status=1 SP=68% rect(24,33 60x3) status=2 mapped block(24,29 60x7) score=1559 img=110x60 roi 905,525 110x60
+[21:36:24] autopot statusui: status panel found
+[21:36:24] autopot: statusui recovered, switching back
+[21:37:44] autopot statusui: status panel lost, searching...
+[21:37:44] autopot: statusui issue, switching to pixel-bar: statusui: panel not found
+[21:37:44] pixel: HP=93% rect(25,29 60x3) status=2 SP=77% rect(25,33 60x3) status=2 mapped block(25,29 60x7) score=1539 img=110x60 roi 905,525 110x60
+[21:37:46] pixel: HP=93% rect(25,29 60x3) status=2 SP=78% rect(25,33 60x3) status=2 mapped block(25,29 60x7) score=1539 img=110x60 roi 905,525 110x60
+[21:37:48] pixel: HP=93% rect(25,29 60x3) status=2 SP=77% rect(25,33 60x3) status=2 mapped block(25,29 60x7) score=1539 img=110x60 roi 905,525 110x60
+[21:37:49] autopot statusui: status panel found
+[21:37:49] autopot: statusui recovered, switching back
+[21:51:41] autopot statusui: status panel lost, searching...
+[21:51:41] autopot statusui: status panel found
+[21:55:00] autopot statusui: status panel lost, searching...
+[21:55:00] autopot: statusui issue, switching to pixel-bar: verify: top-right corner uniform (got 21.7, want >= 50.0 stddev) — region lacks the decorative emblem the status panel has
+[21:55:00] pixel: HP=67% rect(24,30 60x3) status=2 SP=100% rect(24,34 60x3) status=1 mapped block(24,30 60x7) score=1472 img=110x60 roi 905,525 110x60
+[21:55:02] pixel: HP=67% rect(24,30 60x3) status=2 SP=100% rect(24,34 60x3) status=1 mapped block(24,30 60x7) score=1472 img=110x60 roi 905,525 110x60
+[21:55:04] pixel: HP=67% rect(24,30 60x3) status=2 SP=100% rect(24,34 60x3) status=1 mapped block(24,30 60x7) score=1472 img=110x60 roi 905,525 110x60
+[21:55:06] pixel: HP=67% rect(38,41 60x3) status=2 SP=100% rect(38,45 60x3) status=1 mapped block(38,41 60x7) score=1460 img=110x60 roi 905,525 110x60
+[21:55:08] pixel: HP=0% rect(50,15 60x3) status=0 SP=100% rect(50,19 60x3) status=1 mapped block(50,15 60x7) score=1376 img=110x60 roi 905,525 110x60
+[21:55:10] pixel: HP=0% rect(25,23 60x3) status=0 SP=100% rect(25,27 60x3) status=1 mapped block(25,23 60x7) score=1477 img=110x60 roi 905,525 110x60
+[21:55:10] autopot statusui: status panel found
+[21:55:10] autopot: statusui recovered, switching back
+[21:56:49] autopot statusui: status panel lost, searching...
+[21:56:49] autopot: statusui issue, switching to pixel-bar: verify: top-right corner uniform (got 21.5, want >= 50.0 stddev) — region lacks the decorative emblem the status panel has
+[21:56:49] pixel: HP=0% rect(24,28 60x3) status=0 SP=100% rect(24,32 60x3) status=1 mapped block(24,28 60x7) score=1506 img=110x60 roi 905,525 110x60
+[21:56:51] pixel: HP=0% rect(24,28 60x3) status=0 SP=100% rect(24,32 60x3) status=1 mapped block(24,28 60x7) score=1506 img=110x60 roi 905,525 110x60
+[21:56:53] pixel: HP=0% rect(24,28 60x3) status=0 SP=100% rect(24,32 60x3) status=1 mapped block(24,28 60x7) score=1506 img=110x60 roi 905,525 110x60
+[21:56:54] autopot statusui: status panel found
+[21:56:54] autopot: statusui recovered, switching back
+[21:58:02] autopot statusui: status panel lost, searching...
+[21:58:02] autopot: statusui issue, switching to pixel-bar: verify: top-right corner uniform (got 21.6, want >= 50.0 stddev) — region lacks the decorative emblem the status panel has
+[21:58:02] pixel: HP=0% rect(24,34 60x3) status=0 SP=100% rect(24,38 60x3) status=1 mapped block(24,34 60x7) score=1545 img=110x60 roi 905,525 110x60
+[21:58:04] pixel: HP=0% rect(24,34 60x3) status=0 SP=100% rect(24,38 60x3) status=1 mapped block(24,34 60x7) score=1545 img=110x60 roi 905,525 110x60
+[21:58:05] autopot: pixel read failed: pixel bars not found (ROI 905,525 110x60)
+[21:58:06] pixel: HP=100% rect(27,32 4x3) status=1 SP=0% rect(27,36 4x3) status=0 mapped block(27,32 4x7) score=943 img=110x60 roi 905,525 110x60
+[21:58:08] autopot statusui: status panel found
+[21:58:08] autopot: statusui recovered, switching back
+[22:00:00] autopot statusui: status panel lost, searching...
+[22:00:00] autopot: statusui issue, switching to pixel-bar: statusui: parse strip failed: parse_failed
+[22:00:00] pixel: HP=0% rect(24,29 60x3) status=0 SP=100% rect(24,33 60x3) status=1 mapped block(24,29 60x7) score=1536 img=110x60 roi 905,525 110x60
+[22:00:02] pixel: HP=0% rect(0,39 110x3) status=0 SP=100% rect(0,43 110x3) status=1 mapped block(0,39 110x7) score=1618 img=110x60 roi 905,525 110x60
+[22:00:04] pixel: HP=0% rect(0,34 44x3) status=0 SP=0% rect(0,38 44x3) status=0 mapped block(0,34 44x7) score=954 img=110x60 roi 905,525 110x60
+[22:00:05] autopot: pixel read failed: pixel bars not found (ROI 905,525 110x60)
+[22:00:06] Stopping...
+[22:00:24] [viiper] 2026-07-02T22:00:24.637091+03:00 ERROR api stream handler error path=bus/1/1 error=read header: read tcp 127.0.0.1:3242->127.0.0.1:54541: wsarecv: An existing connection was forcibly closed by the remote host.
+[22:00:25] Clicker stopped — click Start before launching the game

@@ -1050,6 +1050,13 @@ func colorNear(r, g, b, refR, refG, refB uint8, tol int) bool {
 }
 
 func pixelAt(img image.Image, x, y int) (r, g, b uint8) {
+	// Fast path: *image.RGBA (produced by CaptureScreenRegion).
+	// Reads Pix directly instead of going through image.At() interface
+	// dispatch + color conversion, which is ~10× faster.
+	if rgba, ok := img.(*image.RGBA); ok {
+		off := rgba.PixOffset(x, y)
+		return rgba.Pix[off], rgba.Pix[off+1], rgba.Pix[off+2]
+	}
 	c := img.At(x, y)
 	rgba := color.RGBAModel.Convert(c).(color.RGBA)
 	return rgba.R, rgba.G, rgba.B

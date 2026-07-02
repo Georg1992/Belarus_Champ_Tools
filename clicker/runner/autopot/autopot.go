@@ -115,9 +115,13 @@ func (a *AutoPotRunner) resetStabilizers() {
 	a.spStabilizer.Reset()
 }
 
-// statusUIRetryInterval is how often the pixel-bar loop probes whether
-// the status UI has recovered.
-const statusUIRetryInterval = 5 * time.Second
+// pixelModeSentinel is passed to OnStatusParsed when switching from OCR
+// to pixel mode. The -1 values signal "no OCR data available" to the
+// overlay, which displays an appropriate fallback indicator.
+const (
+	pixelModeSentinel  = -1
+	statusUIRetryInterval = 5 * time.Second
+)
 
 // run is the main autopot loop.
 //
@@ -127,7 +131,7 @@ const statusUIRetryInterval = 5 * time.Second
 //     below its threshold, call healUntil to press the potion key and
 //     wait for the value to rise.
 //  3. If the OCR reader fails (panel lost, parse error), switch
-//     immediately to pixel-bar. Every 30 s, probe the OCR reader and
+//     immediately to pixel-bar. Every 5 s, probe the OCR reader and
 //     switch back if it recovers.
 func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 	defer a.resetStabilizers()
@@ -159,7 +163,7 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 		reader = pixel
 		// Mode label hidden — the sentinel text already shows the error.
 		if cfg.OnStatusParsed != nil {
-			cfg.OnStatusParsed(-1, 0, -1, 0, 0, 0, 0, 0)
+			cfg.OnStatusParsed(pixelModeSentinel, 0, pixelModeSentinel, 0, 0, 0, 0, 0)
 		}
 	}
 
@@ -180,13 +184,30 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 		}
 
 		result := reader.ReadBars(ctx)
+
+		// SINGLE OCR recovery probe — runs every iteration when pixel is
+		// active. Eliminates duplication of this logic across the pixel-success
+		// and pixel-failure branches. When OCR recovers, switches the active
+		// reader and uses the OCR probe's result (higher precision).
+		if reader == pixel && ocr != nil && time.Now().After(nextOCRRetry) {
+			nextOCRRetry = time.Now().Add(statusUIRetryInterval)
+			probe := ocr.ReadBars(ctx)
+			if probe.Err == nil {
+				cfg.Log("autopot: statusui recovered, switching back")
+				reader = ocr
+				setMode(cfg.OnStatusUIMode, "OCR")
+				loggedPixelFail = false
+				result = probe
+			}
+		}
+
 		if result.Err != nil {
 			if reader == ocr {
 				cfg.Log(fmt.Sprintf("autopot: statusui issue, switching to pixel-bar: %v", result.Err))
 				reader = pixel
-				// -1 sentinel → overlay shows "error: Pixelsearch is used".
+				// pixelModeSentinel → overlay shows "error: Pixelsearch is used".
 				if cfg.OnStatusParsed != nil {
-					cfg.OnStatusParsed(-1, 0, -1, 0, 0, 0, 0, 0)
+					cfg.OnStatusParsed(pixelModeSentinel, 0, pixelModeSentinel, 0, 0, 0, 0, 0)
 				}
 				nextOCRRetry = time.Now().Add(statusUIRetryInterval)
 				continue
@@ -197,35 +218,11 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 				cfg.Log(fmt.Sprintf("autopot: pixel read failed: %v", result.Err))
 				loggedPixelFail = true
 			}
-			// Even when pixel is failing, keep probing OCR recovery every 5s.
-			if reader == pixel && hasOCR && time.Now().After(nextOCRRetry) {
-				nextOCRRetry = time.Now().Add(statusUIRetryInterval)
-				probe := ocr.ReadBars(ctx)
-				if probe.Err == nil {
-					cfg.Log("autopot: statusui recovered, switching back")
-					reader = ocr
-					setMode(cfg.OnStatusUIMode, "OCR")
-					loggedPixelFail = false
-					continue
-				}
-			}
 			timing.Sleep(ctx, timing.CaptureRetryDelay)
 			continue
 		}
 
 		loggedPixelFail = false
-
-		// Periodic OCR recovery probe when on pixel reader.
-		if reader == pixel && hasOCR && time.Now().After(nextOCRRetry) {
-			nextOCRRetry = time.Now().Add(statusUIRetryInterval)
-			probe := ocr.ReadBars(ctx)
-			if probe.Err == nil {
-				cfg.Log("autopot: statusui recovered, switching back")
-				reader = ocr
-				setMode(cfg.OnStatusUIMode, "OCR")
-				result = probe
-			}
-		}
 
 		if cfg.HPEnabled && result.HPLow {
 			a.healUntil(ctx, reader, true)
