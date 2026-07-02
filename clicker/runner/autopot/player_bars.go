@@ -17,14 +17,14 @@ const (
 	barRowHeight   = 3
 	expectedBarGap = 4
 	maxBarPairGap  = 12
-	minRunWidth    = 2
+	minRunWidth    = 1
 	runGapMerge    = 2
 
 	minBarWidth = 20
 	maxBarWidth = 120
 
 	minPairOverlap = 4
-	minPairRunW    = 3
+	minPairRunW    = 2
 	barExtentGap   = 2
 
 	barBgR, barBgG, barBgB = 10, 10, 14
@@ -51,9 +51,9 @@ const (
 	// Bar pair scoring weights
 	centerDistXWeight = 3
 	centerDistYWeight = 4
-	gapPenaltyWeight  = 8
+	gapPenaltyWeight  = 4
 	barRunDistYWeight = 2
-	barRunWidthWeight = 3
+	barRunWidthWeight = 4
 
 	// Bar run scoring
 	barRunDistXWeight = 3
@@ -81,7 +81,7 @@ const (
 	hpGreenBrightMin   = 80
 
 	// HP red detection thresholds
-	hpRedMinRed    = 130
+	hpRedMinRed    = 90
 	hpRedGreenDiff = 25
 
 	// HP yellow detection thresholds
@@ -152,10 +152,6 @@ type Bar struct {
 	Found       bool
 }
 
-type BarROI struct {
-	X, Y, W, H int
-}
-
 // RefreshBarPair locates the player HP/SP colored-run pair near screen center.
 // This is a periodic pair refresh, not a full-screen rectangle search.
 func RefreshBarPair(img image.Image) (MappedBars, error) {
@@ -196,12 +192,19 @@ func driftROI(bounds image.Rectangle) Rect {
 	})
 }
 
-// PlayerBarSearchROI returns the region where the application should search for player HP/SP bars.
-// This accounts for screen size and expected bar position below center.
-func PlayerBarSearchROI(screenW, screenH int) BarROI {
-	cx := screenW / 2
-	cy := screenH/2 + mapROICenterYOffset
-	return BarROI{
+// PlayerBarSearchROI returns the screen-space region to search for the
+// player HP/SP colour-run pair. The region is centred at screen centre
+// plus mapROICenterYOffset and sized to cover typical horizontal camera
+// drift (mapROIHalfW×2 × mapROIHalfH×2).
+//
+// This is the public counterpart to driftROI: driftROI derives a
+// clamped ROI from an already-captured image bounds, while
+// PlayerBarSearchROI computes the same ROI directly from screen
+// dimensions so the caller can issue a capture.
+func PlayerBarSearchROI(sw, sh int) Rect {
+	cx := sw / 2
+	cy := sh/2 + mapROICenterYOffset
+	return Rect{
 		X: cx - mapROIHalfW,
 		Y: cy - mapROIHalfH,
 		W: mapROIHalfW * 2,
@@ -274,8 +277,18 @@ func isHPFillRead(r, g, b uint8) bool {
 	if isHPTrack(r, g, b) {
 		return false
 	}
-	ri, gi, _ := int(r), int(g), int(b)
-	return gi >= hpFillMinGreen && ri >= hpFillMinRed && absInt(ri-gi) < hpFillRedGreenDiff
+	ri, gi, bi := int(r), int(g), int(b)
+	// Mixed green-red pixels at the fill/unfilled boundary
+	if gi >= hpFillMinGreen && ri >= hpFillMinRed && absInt(ri-gi) < hpFillRedGreenDiff {
+		return true
+	}
+	// Red-dominant pixels: part of the HP bar fill that is red but below
+	// the isHPRed brightness threshold (e.g. anti-aliased edges at low HP).
+	// Must clearly be more red than green and blue to avoid false positives.
+	if ri >= hpRedMinRed && ri > gi+hpRedGreenDiff && ri > bi+hpRedGreenDiff {
+		return true
+	}
+	return false
 }
 
 // ReadSPFill reads the fill percentage of an SP bar from the image.
@@ -654,17 +667,12 @@ func runOverlap(a, b ColorRun) int {
 // scoreBarPair computes a quality score for an HP/SP pair.
 // Favors pairs centered near (cx,cy), with correct bar gap, proper alignment, and good width.
 // Higher scores indicate better quality matches.
-// Penalties: distance from center, gap deviation, horizontal misalignment, bars above center.
+// Penalties: distance from center, gap deviation, horizontal misalignment.
 // Bonus: bar width (especially wider SP bars).
 func scoreBarPair(hp, sp ColorRun, cx, cy int) int {
 	midX := (hp.X1 + hp.X2 + sp.X1 + sp.X2) / 4
 	midY := (hp.Y + sp.Y) / 2
 	centerDist := absInt(midX-cx)*centerDistXWeight + absInt(midY-cy)*centerDistYWeight
-
-	abovePenalty := 0
-	if midY < cy {
-		abovePenalty = (cy - midY) * centerDistYWeight
-	}
 
 	gapPenalty := absInt((sp.Y-hp.Y)-expectedBarGap) * gapPenaltyWeight
 	leftPenalty := absInt(hp.X1-sp.X1) * centerDistXWeight
@@ -674,7 +682,7 @@ func scoreBarPair(hp, sp ColorRun, cx, cy int) int {
 		qualityBonus += sp.Width * 2 // Extra bonus for wider SP bar
 	}
 
-	return 1000 - centerDist - gapPenalty - leftPenalty - abovePenalty + qualityBonus
+	return 1000 - centerDist - gapPenalty - leftPenalty + qualityBonus
 }
 
 func nearestBarRun(runs []ColorRun, roi Rect, cx, cy int) ColorRun {

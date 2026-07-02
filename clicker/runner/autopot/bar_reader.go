@@ -3,6 +3,7 @@ package autopot
 import (
 	"context"
 	"fmt"
+	"time"
 
 	win "experimental-clicker/runner/platform/windows"
 	"experimental-clicker/runner/statusui"
@@ -37,8 +38,10 @@ type BarReader interface {
 // pixel-based HP/SP reading. It is stateless — the stabilisers carry
 // their own tracking state (fullLatched, lowStreak).
 type pixelBarReader struct {
-	hpStab *BarStabilizer
-	spStab *BarStabilizer
+	hpStab  *BarStabilizer
+	spStab  *BarStabilizer
+	log     func(string)
+	lastLog time.Time
 }
 
 func (r *pixelBarReader) Name() string { return "Pixel" }
@@ -47,10 +50,15 @@ func (r *pixelBarReader) ReadBars(ctx context.Context) BarReadResult {
 	if ctx.Err() != nil {
 		return BarReadResult{Err: ctx.Err()}
 	}
-	img, roi, err := win.CapturePlayerBarSearch()
+	sw, sh := win.ScreenSize()
+	rct := PlayerBarSearchROI(sw, sh)
+	roi := win.ScreenROI{X: rct.X, Y: rct.Y, W: rct.W, H: rct.H}
+	img, err := win.CaptureScreenRegion(roi)
 	if err != nil {
+		r.debugf("pixel: capture failed, roi %d,%d %dx%d: %v", roi.X, roi.Y, roi.W, roi.H, err)
 		return BarReadResult{Err: err}
 	}
+	bounds := img.Bounds()
 	mapped, pairOK := RefreshStableBarPair(img)
 	if !pairOK {
 		// Pair detection failed — return an error so the orchestrator
@@ -61,16 +69,35 @@ func (r *pixelBarReader) ReadBars(ctx context.Context) BarReadResult {
 		// (fullLatched, lowStreak) survives transient failures.
 		// Include ROI bounds so the user can verify the search region
 		// matches their screen / game UI layout.
+		r.debugf("pixel: bars not found img=%dx%d roi %d,%d %dx%d", bounds.Dx(), bounds.Dy(), roi.X, roi.Y, roi.W, roi.H)
 		return BarReadResult{Err: fmt.Errorf("pixel bars not found (ROI %d,%d %dx%d)", roi.X, roi.Y, roi.W, roi.H)}
 	}
 	hp := r.hpStab.UpdatePair(img, true, mapped, pairOK)
 	sp := r.spStab.UpdatePair(img, false, mapped, pairOK)
+	r.debugf("pixel: HP=%.0f%% rect(%d,%d %dx%d) status=%d SP=%.0f%% rect(%d,%d %dx%d) status=%d mapped block(%d,%d %dx%d) score=%d img=%dx%d roi %d,%d %dx%d",
+		hp.Percent, mapped.HP.X, mapped.HP.Y, mapped.HP.W, mapped.HP.H, hp.Status,
+		sp.Percent, mapped.SP.X, mapped.SP.Y, mapped.SP.W, mapped.SP.H, sp.Status,
+		mapped.Block.X, mapped.Block.Y, mapped.Block.W, mapped.Block.H, mapped.MapScore,
+		bounds.Dx(), bounds.Dy(), roi.X, roi.Y, roi.W, roi.H)
 	return BarReadResult{
 		HP:    hp.Percent,
 		SP:    sp.Percent,
 		HPLow: hp.Status == BarStatusLow,
 		SPLow: sp.Status == BarStatusLow,
 	}
+}
+
+// debugf logs at most once per 2 seconds to avoid GUI log spam.
+func (r *pixelBarReader) debugf(format string, args ...interface{}) {
+	if r.log == nil {
+		return
+	}
+	now := time.Now()
+	if now.Sub(r.lastLog) < 2*time.Second {
+		return
+	}
+	r.lastLog = now
+	r.log(fmt.Sprintf(format, args...))
 }
 
 // statusUIReader wraps the StripPoller for OCR-based HP/SP reading.

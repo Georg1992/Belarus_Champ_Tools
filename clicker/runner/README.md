@@ -71,33 +71,13 @@ their symbols directly — no `type ( ... )` block there.
 | `InputSession` (alias) | `internal/session` |
 | `Lifecycle[C]` (alias) | `internal/lifecycle` |
 | `AutoPotConfig`, `AutoPotRunner`, `NewAutoPot` | `autopot` |
-| `BarROI` (alias) | `autopot` ← **see "BarROI ownership" below** |
 
-## BarROI ownership
+## Rectangle types
 
-**`autopot` owns the name `BarROI`.** It is re-exported as
-`runner.BarROI`.
+Two rectangle types exist, each scoped to its own layer:
 
-`platform/windows` previously defined its own `BarROI` for screen
-capture. That type is now renamed `ScreenROI` and is **not** re-exported
-through this facade — it is a private implementation detail of the
-screen-capture layer and nothing outside `platform/windows` needs it.
-
-### Why this split
-
-- `autopot.BarROI` is the **bar-detection ROI**: the region searched
-  for the player HP/SP bar pair. It is part of the detection API and
-  needs to be reachable from consumers that draw overlays or call
-  `PlayerBarSearchROI(screenW, screenH)`.
-- `platform/windows.BarROI` was a **screen-capture ROI**: the rectangle
-  passed to `CaptureScreenRegion`. It is a GDI plumbing detail, not a
-  detection concept. The name was misleading; it is now `ScreenROI` to
-  match its actual role.
-
-### Rule for the future
-
-If a new subpackage needs a rectangle type, pick a name that describes
-**what it is for**, not its shape. Don't reuse `BarROI`, `Rect`, or
-`ROI` for unrelated concepts. If two subpackages genuinely need the
-same concept, factor the type into one of them and re-export through
-this facade — don't duplicate the struct definition.
+- **`autopot.Rect`** — bar-detection ROI used by `PlayerBarSearchROI()`
+  and the colour-run scanner. Lives in the detection layer.
+- **`runner.ScreenROI`** (`platform/windows`) — screen-capture ROI passed
+  to `CaptureScreenRegion`. A GDI plumbing detail, not re-exported
+  through this facade.

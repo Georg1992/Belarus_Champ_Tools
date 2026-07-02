@@ -46,15 +46,4 @@ func TestCaptureScreenRegion(t *testing.T) {
 	t.Logf("Screen region capture: %v", img.Bounds())
 }
 
-func TestPlayerBarSearchROI(t *testing.T) {
-	sw, sh := 1920, 1080 // Typical screen size
-	roi := PlayerBarSearchROI(sw, sh)
-	if roi.W <= 0 || roi.H <= 0 {
-		t.Errorf("PlayerBarSearchROI() returned invalid dimensions: %v", roi)
-	}
-	// Check that the region is in the lower half of the screen
-	if roi.Y < sh/2 {
-		t.Errorf("PlayerBarSearchROI() Y coordinate (%d) should be in lower half of screen (%d)", roi.Y, sh)
-	}
-	t.Logf("Player bar search ROI: %v", roi)
-}
+

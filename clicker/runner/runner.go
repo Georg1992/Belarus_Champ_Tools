@@ -37,7 +37,3 @@ var (
 	NewAutoPot = autopot.NewAutoPot
 )
 
-// BarROI is the bar-detection ROI re-exported from autopot. See
-// README.md for the naming rationale (autopot owns the name;
-// platform/windows uses ScreenROI internally).
-type BarROI = autopot.BarROI

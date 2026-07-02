@@ -90,14 +90,6 @@ func CaptureScreenRegion(roi ScreenROI) (*image.RGBA, error) {
 	return out, nil
 }
 
-// CapturePlayerBarSearch grabs the center region below the character.
-func CapturePlayerBarSearch() (img *image.RGBA, roi ScreenROI, err error) {
-	sw, sh := ScreenSize()
-	roi = PlayerBarSearchROI(sw, sh)
-	img, err = CaptureScreenRegion(roi)
-	return img, roi, err
-}
-
 // CaptureFullScreen grabs the entire primary monitor area into an RGBA
 // image. Used by the status-panel recognition path: FindStatusPanel needs
 // the whole screen so it can locate the panel via template matching even
@@ -117,14 +109,6 @@ func CaptureFullScreen() (*image.RGBA, error) {
 // ScreenROI defines a rectangular region for screen capture.
 type ScreenROI struct {
 	X, Y, W, H int
-}
-
-// PlayerBarSearchROI returns the region below the player’s status bar area.
-func PlayerBarSearchROI(sw, sh int) ScreenROI {
-	width, height := 200, 40
-	x := (sw - width) / 2
-	y := sh/2 + 200
-	return ScreenROI{X: x, Y: y, W: width, H: height}
 }
 
 type bitmapInfoHeader struct {

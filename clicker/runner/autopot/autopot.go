@@ -135,6 +135,7 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 	pixel := &pixelBarReader{
 		hpStab: a.hpStabilizer,
 		spStab: a.spStabilizer,
+		log:    cfg.Log,
 	}
 
 	pipeline, err := statusui.NewDefaultPipeline()
