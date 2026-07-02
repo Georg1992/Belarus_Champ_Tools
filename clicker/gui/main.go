@@ -94,11 +94,13 @@ func main() {
 	app := &guiApp{timerBindingSlot: -1, keyChainBindingSlot: -1, clickerBindingSlot: -1}
 	defer app.shutdown()
 
-	// Open a persistent log file next to the executable so diagnostics
-	// survive GUI close. Best-effort — if the file can't be created,
-	// logging still works in-memory via the GUI list box.
+	// Open a persistent log file in a logs/ directory next to the
+	// executable so diagnostics survive GUI close. Best-effort — if
+	// the file can't be created, logging still works in-memory.
 	if exe, err := os.Executable(); err == nil {
-		logPath := filepath.Join(filepath.Dir(exe), "clicker.log")
+		logDir := filepath.Join(filepath.Dir(exe), "logs")
+		_ = os.MkdirAll(logDir, 0o755)
+		logPath := filepath.Join(logDir, "clicker.log")
 		if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
 			app.logFile = f
 			// Stamp the first entry so the user knows where to look.
