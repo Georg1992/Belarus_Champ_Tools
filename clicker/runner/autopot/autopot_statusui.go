@@ -158,7 +158,8 @@ func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.
 }
 
 // validateWithLog captures a full screenshot, runs panel validation, and
-// logs either a detection success or failure message via log.
+// logs failures via log. Successful detections are silent (the panel
+// position is relayed through OnStatusParsed).
 func (a *AutoPotRunner) validateWithLog(poller *statusui.StripPoller, log func(string)) error {
 	screen, err := win.CaptureFullScreen()
 	if err != nil {
@@ -169,9 +170,6 @@ func (a *AutoPotRunner) validateWithLog(poller *statusui.StripPoller, log func(s
 		log(fmt.Sprintf("autopot statusui: failed to detect status panel: %v", err))
 		return err
 	}
-	r := poller.StripRect()
-	log(fmt.Sprintf("autopot statusui: status panel detected, strip at (%d,%d)-(%d,%d)",
-		r.Min.X, r.Min.Y, r.Max.X, r.Max.Y))
 	return nil
 }
 
