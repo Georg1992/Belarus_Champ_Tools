@@ -210,6 +210,7 @@ func (a *AutoPotRunner) validateWithLog(poller *statusui.StripPoller, log func(s
 		if a.wasPanelFound {
 			log("autopot statusui: status panel lost, searching...")
 			a.wasPanelFound = false
+			a.setMode("Searching...")
 		}
 		return err
 	}
@@ -218,6 +219,7 @@ func (a *AutoPotRunner) validateWithLog(poller *statusui.StripPoller, log func(s
 	if !a.wasPanelFound {
 		log("autopot statusui: status panel found")
 		a.wasPanelFound = true
+		a.setMode("OCR")
 	}
 	return nil
 }

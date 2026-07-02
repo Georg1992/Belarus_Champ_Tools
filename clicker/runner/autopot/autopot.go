@@ -53,6 +53,11 @@ type AutoPotRunner struct {
 	// messages: failures are only logged on a state transition
 	// (found→lost, lost→found), not on every retry.
 	wasPanelFound bool
+
+	// onStatusUIMode is set once in run() from the initial config.
+	// runStatusUI and run() use it to update the overlay mode label
+	// ("Searching...", "OCR", "Pixel-bar").
+	onStatusUIMode func(string)
 }
 
 // NewAutoPot constructs an AutoPotRunner with the given initial config.
@@ -141,6 +146,9 @@ const statusUIRetryInterval = 30 * time.Second
 func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 	defer a.resetStabilizers()
 
+	// Store the mode callback so runStatusUI can use it directly.
+	a.onStatusUIMode = cfg.OnStatusUIMode
+
 	// Build the statusui pipeline once; reuse across switches.
 	pipeline, err := statusui.NewDefaultPipeline()
 	hasPipeline := err == nil
@@ -151,9 +159,9 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 
 	useStatusUI := hasPipeline
 	if useStatusUI {
-		a.setMode("OCR", cfg)
+		a.setMode("Searching...")
 	} else {
-		a.setMode("Pixel-bar", cfg)
+		a.setMode("Pixel-bar")
 	}
 
 	for {
@@ -162,7 +170,7 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 			if err := a.runStatusUI(ctx, poller); err != nil {
 				cfg.Log(fmt.Sprintf("autopot: statusui issue, switching to pixel-bar: %v", err))
 				useStatusUI = false
-				a.setMode("Pixel-bar", cfg)
+				a.setMode("Pixel-bar")
 				// fall through to pixel-bar below
 			} else {
 				return // normal Stop via ctx cancel
@@ -192,7 +200,7 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 				if a.tryStatusUIOnce(poller) == nil {
 					cfg.Log("autopot: statusui recovered, switching back")
 					useStatusUI = true
-					a.setMode("OCR", cfg)
+					a.setMode("OCR")
 					break // exit pixel-bar loop, back to status UI
 				}
 			}
@@ -241,10 +249,10 @@ func (a *AutoPotRunner) tryStatusUIOnce(poller *statusui.StripPoller) error {
 	return err
 }
 
-// setMode fires cfg.OnStatusUIMode if set.
-func (a *AutoPotRunner) setMode(mode string, cfg AutoPotConfig) {
-	if cfg.OnStatusUIMode != nil {
-		cfg.OnStatusUIMode(mode)
+// setMode fires the stored OnStatusUIMode callback if set.
+func (a *AutoPotRunner) setMode(mode string) {
+	if a.onStatusUIMode != nil {
+		a.onStatusUIMode(mode)
 	}
 }
 
