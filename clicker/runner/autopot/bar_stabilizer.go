@@ -7,7 +7,7 @@ import (
 
 const (
 	PotConfirmReads = 3
-	PotUnlatchReads = 3
+	PotUnlatchReads = 1 // single read to unlatch from full — faster reaction
 )
 
 type BarStatus int
