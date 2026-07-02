@@ -22,21 +22,14 @@ const statusUIPollInterval = 50 * time.Millisecond
 const maxConsecutiveFails = 1
 
 // runStatusUI is the statusui OCR-based heal loop. It returns nil when
-// ctx is cancelled (normal Stop). It returns a non-nil error when the
-// pipeline cannot be initialised, or when OCR fails too many times in a
-// row at runtime — the caller should fall back to the pixel-bar reader.
-func (a *AutoPotRunner) runStatusUI(ctx context.Context, _ AutoPotConfig) error {
-	// Respect cancellation immediately so a Stop click during pipeline
-	// init returns nil (normal Stop) rather than a fallback error.
+// ctx is cancelled (normal Stop). It returns a non-nil error when
+// OCR fails — the caller should fall back to the pixel-bar reader.
+// The poller must be pre-built by the caller (pipeline + StripPoller)
+// so it can be reused across fallback/switch-back cycles.
+func (a *AutoPotRunner) runStatusUI(ctx context.Context, poller *statusui.StripPoller) error {
 	if ctx.Err() != nil {
 		return nil
 	}
-
-	pipeline, err := statusui.NewDefaultPipeline()
-	if err != nil {
-		return fmt.Errorf("cannot init pipeline: %v", err)
-	}
-	poller := statusui.NewStripPoller(pipeline)
 
 	consecutiveFails := 0
 

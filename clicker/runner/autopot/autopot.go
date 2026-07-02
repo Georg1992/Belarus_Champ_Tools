@@ -10,8 +10,10 @@ package autopot
 import (
 	"context"
 	"fmt"
+	"time"
 
 	win "experimental-clicker/runner/platform/windows"
+	"experimental-clicker/runner/statusui"
 
 	"experimental-clicker/runner/internal/lifecycle"
 	"experimental-clicker/runner/internal/session"
@@ -32,6 +34,10 @@ type AutoPotConfig struct {
 	// HP/SP parse. stripX/Y/W/H are the screen-space coordinates of the text
 	// strip used to read the values. May be nil.
 	OnStatusParsed func(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int)
+	// OnStatusUIMode is called when the autopot switches between the statusui
+	// OCR reader and the pixel-bar fallback so the overlay can display the
+	// current mode. May be nil.
+	OnStatusUIMode func(mode string)
 }
 
 // AutoPotRunner heals HP/SP based on bar-fill reading. Embeds a Lifecycle so
@@ -85,6 +91,14 @@ func (a *AutoPotRunner) Running() bool { return a.lc.Running() }
 // UpdateSettings propagates new settings to the stabilizers.
 // Settings applied after Start() take effect on the next poll.
 func (a *AutoPotRunner) UpdateSettings(cfg AutoPotConfig) {
+	// Preserve OnStatusUIMode from the existing config if the incoming
+	// config doesn't set it (e.g. settings sync from the GUI).
+	if cfg.OnStatusUIMode == nil {
+		cfg.OnStatusUIMode = a.settings().OnStatusUIMode
+	}
+	if cfg.OnStatusParsed == nil {
+		cfg.OnStatusParsed = a.settings().OnStatusParsed
+	}
 	a.lc.UpdateSettings(cfg)
 	a.hpStabilizer.SetThreshold(cfg.HPThreshold)
 	a.spStabilizer.SetThreshold(cfg.SPThreshold)
@@ -115,53 +129,122 @@ func (a *AutoPotRunner) resetStabilizers() {
 	a.wasPanelFound = false
 }
 
+// statusUIRetryInterval is how often the pixel-bar loop attempts to
+// switch back to the status UI after falling back.
+const statusUIRetryInterval = 30 * time.Second
+
+// run is the main autopot loop. It alternates between the statusui OCR
+// reader (primary) and the pixel-bar reader (fallback). When the status
+// UI encounters any issue (panel not found, parse error, pipeline failure),
+// it falls back to pixel-bar immediately. Every 30 s the pixel-bar loop
+// probes whether the status UI has recovered and switches back if so.
 func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 	defer a.resetStabilizers()
 
-	// Try the statusui OCR-based reader first. If the pipeline fails to
-	// initialise (e.g. missing glyphs, screen resolution issues), fall
-	// back to the pixel-bar reader transparently.
-	if err := a.runStatusUI(ctx, cfg); err != nil {
-		cfg.Log(fmt.Sprintf("autopot: statusui unavailable, falling back to pixel-bar: %v", err))
-	} else {
-		return // normal Stop via ctx cancel
+	// Build the statusui pipeline once; reuse across switches.
+	pipeline, err := statusui.NewDefaultPipeline()
+	hasPipeline := err == nil
+	var poller *statusui.StripPoller
+	if hasPipeline {
+		poller = statusui.NewStripPoller(pipeline)
 	}
 
-	// Pixel-bar fallback path.
+	useStatusUI := hasPipeline
+	if useStatusUI {
+		a.setMode("OCR", cfg)
+	} else {
+		a.setMode("Pixel-bar", cfg)
+	}
+
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		cfg := a.settings()
-		session := cfg.Session
-		if session == nil || session.Paused() {
-			timing.Sleep(ctx, timing.PollInterval)
-			continue
-		}
-
-		img, _, err := win.CapturePlayerBarSearch()
-		if err != nil {
-			timing.Sleep(ctx, timing.CaptureRetryDelay)
-			continue
+		// === Status UI (OCR) mode ===================================
+		if useStatusUI {
+			if err := a.runStatusUI(ctx, poller); err != nil {
+				cfg.Log(fmt.Sprintf("autopot: statusui issue, switching to pixel-bar: %v", err))
+				useStatusUI = false
+				a.setMode("Pixel-bar", cfg)
+				// fall through to pixel-bar below
+			} else {
+				return // normal Stop via ctx cancel
+			}
 		}
 
-		mapped, pairOK := RefreshStableBarPair(img)
+		// === Pixel-bar fallback ======================================
+		nextStatusUIRetry := time.Now().Add(statusUIRetryInterval)
 
-		hp := a.hpStabilizer.UpdatePair(img, true, mapped, pairOK)
-		if cfg.HPEnabled && hp.Status == BarStatusLow {
-			a.healUntil(ctx, session, true)
-			continue
+		for !useStatusUI {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			cfg = a.settings()
+			session := cfg.Session
+			if session == nil || session.Paused() {
+				timing.Sleep(ctx, timing.PollInterval)
+				continue
+			}
+
+			// Periodic probe: can we switch back to status UI?
+			if hasPipeline && time.Now().After(nextStatusUIRetry) {
+				nextStatusUIRetry = time.Now().Add(statusUIRetryInterval)
+				if a.tryStatusUIOnce(poller) == nil {
+					cfg.Log("autopot: statusui recovered, switching back")
+					useStatusUI = true
+					a.setMode("OCR", cfg)
+					break // exit pixel-bar loop, back to status UI
+				}
+			}
+
+			// Normal pixel-bar tick.
+			img, _, err := win.CapturePlayerBarSearch()
+			if err != nil {
+				timing.Sleep(ctx, timing.CaptureRetryDelay)
+				continue
+			}
+
+			mapped, pairOK := RefreshStableBarPair(img)
+
+			hp := a.hpStabilizer.UpdatePair(img, true, mapped, pairOK)
+			if cfg.HPEnabled && hp.Status == BarStatusLow {
+				a.healUntil(ctx, session, true)
+				continue
+			}
+
+			sp := a.spStabilizer.UpdatePair(img, false, mapped, pairOK)
+			if cfg.SPEnabled && sp.Status == BarStatusLow {
+				a.healUntil(ctx, session, false)
+				continue
+			}
+
+			timing.Sleep(ctx, timing.KeyTapHold)
 		}
+	}
+}
 
-		sp := a.spStabilizer.UpdatePair(img, false, mapped, pairOK)
-		if cfg.SPEnabled && sp.Status == BarStatusLow {
-			a.healUntil(ctx, session, false)
-			continue
-		}
+// tryStatusUIOnce performs a single validate+parse cycle to check whether
+// the status UI is currently viable. It primes the poller with a fresh
+// strip rect on success so the next runStatusUI call can skip validation.
+// Returns nil only if both panel detection and OCR parsing succeed.
+func (a *AutoPotRunner) tryStatusUIOnce(poller *statusui.StripPoller) error {
+	screen, err := win.CaptureFullScreen()
+	if err != nil {
+		return err
+	}
+	if err := poller.Validate(screen); err != nil {
+		return err
+	}
+	// Validate succeeded — poller now has a fresh strip rect and
+	// lastValidate timestamp, so runStatusUI can skip to parsing.
+	_, err = captureAndParse(poller)
+	return err
+}
 
-		timing.Sleep(ctx, timing.KeyTapHold)
+// setMode fires cfg.OnStatusUIMode if set.
+func (a *AutoPotRunner) setMode(mode string, cfg AutoPotConfig) {
+	if cfg.OnStatusUIMode != nil {
+		cfg.OnStatusUIMode(mode)
 	}
 }
 

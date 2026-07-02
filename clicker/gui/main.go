@@ -588,6 +588,13 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 	autopotCfg.Session = session
 	autopotCfg.Log = logFn
 	autopotCfg.OnStatusParsed = statusFn
+	autopotCfg.OnStatusUIMode = func(mode string) {
+		a.mainWindow.Synchronize(func() {
+			if a.overlay != nil {
+				a.overlay.SetMode(mode)
+			}
+		})
+	}
 
 	timerCfg := a.timerKeyWanted()
 	timerCfg.Session = session

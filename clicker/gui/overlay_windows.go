@@ -26,14 +26,12 @@ var (
 
 // Supplementary Win32 constants.
 const (
-	ovlTransparent = 1   // SetBkMode TRANSPARENT
-	ovlFwBold      = 700 // LOGFONT lfWeight FW_BOLD
-	ovlLwaAlpha    = 0x00000002
+	ovlTransparent   = 1   // SetBkMode TRANSPARENT
+	ovlFwBold        = 700 // LOGFONT lfWeight FW_BOLD
+	ovlLwaAlpha      = 0x00000002
 	ovlSwpNoActivate = 0x0010
 	ovlSwpShowWindow = 0x0040
 	ovlSwpHideWindow = 0x0080
-	ovlSwpNoSize     = 0x0001
-	ovlSwpNoMove     = 0x0002
 	ovlSwShowNA      = 8 // SW_SHOWNA — show without activating
 )
 
@@ -50,13 +48,14 @@ var ovlWndProcFn uintptr
 var ovlRegisterOnce sync.Once
 
 // statusOverlay is a small semi-transparent click-through window that floats
-// above the game and displays the last parsed HP/SP values.
+// above the game and displays the last parsed HP/SP values and current mode.
 type statusOverlay struct {
 	hwnd win.HWND
 	font win.HFONT
 
 	mu   sync.Mutex
 	text string
+	mode string // "OCR", "Pixel-bar", or ""
 }
 
 // newStatusOverlay creates and returns a hidden overlay window.
@@ -107,7 +106,7 @@ func newStatusOverlay() (*statusOverlay, error) {
 	hwnd := win.CreateWindowEx(
 		exStyle, clsName, title,
 		win.WS_POPUP,
-		5, 60, 260, 24, // default position; updated on first status parse
+		5, 60, 220, 18, // shorter and thinner
 		0, 0,
 		win.HINSTANCE(hInst),
 		nil,
@@ -116,14 +115,14 @@ func newStatusOverlay() (*statusOverlay, error) {
 		return nil, fmt.Errorf("CreateWindowEx failed")
 	}
 
-	// 85 % opacity overall.
+	// 85% opacity overall.
 	procSetLayeredWindowAttribs.Call(uintptr(hwnd), 0, 217, ovlLwaAlpha)
 
 	o.hwnd = hwnd
 	overlayInstances.Store(hwnd, o)
 
-	// Bold Consolas 12pt.
-	lf := win.LOGFONT{LfHeight: -13, LfWeight: ovlFwBold}
+	// Bold Consolas 10pt — smaller, less obtrusive.
+	lf := win.LOGFONT{LfHeight: -11, LfWeight: ovlFwBold}
 	faceUTF16 := windows.StringToUTF16("Consolas")
 	copy(lf.LfFaceName[:], faceUTF16)
 	o.font = win.CreateFontIndirect(&lf)
@@ -135,6 +134,7 @@ func newStatusOverlay() (*statusOverlay, error) {
 func (o *statusOverlay) onPaint(hwnd win.HWND) {
 	o.mu.Lock()
 	text := o.text
+	mode := o.mode
 	o.mu.Unlock()
 
 	var ps win.PAINTSTRUCT
@@ -152,18 +152,35 @@ func (o *statusOverlay) onPaint(hwnd win.HWND) {
 	procFillRect.Call(uintptr(hdc), uintptr(unsafe.Pointer(&rc)), bgBrush)
 	win.DeleteObject(win.HGDIOBJ(bgBrush))
 
+	if text == "" && mode == "" {
+		return
+	}
+
+	// Mode label: dim grey, drawn on the right side.
+	if mode != "" {
+		modeText := "[" + mode + "]"
+		modeUTF16, _ := syscall.UTF16PtrFromString(modeText)
+		modeLen := int32(len([]rune(modeText)))
+		win.SetTextColor(hdc, win.RGB(120, 120, 130))
+		win.SetBkMode(hdc, ovlTransparent)
+		oldFont := win.SelectObject(hdc, win.HGDIOBJ(o.font))
+		// Right-align the mode label.
+		win.TextOut(hdc, int32(rc.Right)-modeLen*6-4, 2, modeUTF16, modeLen)
+		win.SelectObject(hdc, oldFont)
+	}
+
 	if text == "" {
 		return
 	}
 
-	// Draw text: white, transparent background.
+	// HP/SP text: white, transparent background.
 	oldFont := win.SelectObject(hdc, win.HGDIOBJ(o.font))
 	win.SetTextColor(hdc, win.RGB(240, 240, 240))
 	win.SetBkMode(hdc, ovlTransparent)
 
 	textUTF16, _ := syscall.UTF16PtrFromString(text)
 	textLen := int32(len([]rune(text)))
-	win.TextOut(hdc, 6, 5, textUTF16, textLen)
+	win.TextOut(hdc, 4, 2, textUTF16, textLen)
 
 	win.SelectObject(hdc, oldFont)
 }
@@ -173,11 +190,11 @@ func (o *statusOverlay) onPaint(hwnd win.HWND) {
 func (o *statusOverlay) Update(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int) {
 	var text string
 	if hpMax > 0 && spMax > 0 {
-		text = fmt.Sprintf("HP %d/%d   SP %d/%d", hp, hpMax, sp, spMax)
+		text = fmt.Sprintf("HP %d/%d  SP %d/%d", hp, hpMax, sp, spMax)
 	} else if hpMax > 0 {
 		text = fmt.Sprintf("HP %d/%d", hp, hpMax)
 	} else {
-		text = fmt.Sprintf("HP %d   SP %d", hp, sp)
+		text = fmt.Sprintf("HP %d  SP %d", hp, sp)
 	}
 
 	o.mu.Lock()
@@ -188,9 +205,18 @@ func (o *statusOverlay) Update(hp, hpMax, sp, spMax, stripX, stripY, stripW, str
 	win.SetWindowPos(
 		o.hwnd, win.HWND_TOPMOST,
 		int32(stripX), int32(stripY+stripH+3),
-		int32(stripW+60), 24,
+		int32(stripW+40), 18,
 		ovlSwpNoActivate|ovlSwpShowWindow,
 	)
+	win.InvalidateRect(o.hwnd, nil, true)
+}
+
+// SetMode updates the mode label shown in the overlay (e.g. "OCR" or
+// "Pixel-bar"). Pass "" to hide the label. Safe from any goroutine.
+func (o *statusOverlay) SetMode(mode string) {
+	o.mu.Lock()
+	o.mode = mode
+	o.mu.Unlock()
 	win.InvalidateRect(o.hwnd, nil, true)
 }
 
