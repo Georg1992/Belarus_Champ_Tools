@@ -199,12 +199,14 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 		// StatusDead: character is dead — show "[Dead]" in overlay,
 		// try the HP potion every 1s like pots-ended (in case a
 		// revival item is bound). Don't switch to pixel-bar.
+		// Re-apply the mode every iteration so OCR validation
+		// ("Searching..." / "OCR") cannot overwrite it.
 		if result.Status == StatusDead {
 			if !dead {
 				cfg.Log("autopot: character dead (HP=1)")
-				setMode(cfg.OnStatusUIMode, "Dead")
 				dead = true
 			}
+			setMode(cfg.OnStatusUIMode, "Dead")
 			if cfg.HPEnabled && cfg.HPKeyVK != 0 {
 				if err := cfg.Session.TapKey(cfg.HPKeyVK, timing.KeyTapHold); err != nil {
 					cfg.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", cfg.HPKeyVK, err))
@@ -357,19 +359,16 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, reader BarReader, hpBar b
 		elapsed := time.Since(healStart)
 
 		// Detect pots ended: 3+ seconds of spamming with no value change.
+		// Re-apply the label on EVERY iteration while potsEnded is true so
+		// OCR validation (panel lost→found→"Searching..."→"OCR") cannot
+		// overwrite it. Only log on first entry.
 		if !potsEnded && elapsed >= noChangeTimeout && absPctDiff(pct, lastPct) < valueChangeTol {
 			potsEnded = true
-			label := "HP pots ended"
-			keyName := cfg.HPKeyName
-			if !hpBar {
-				label = "SP pots ended"
-				keyName = cfg.SPKeyName
-			}
-			if keyName != "" {
-				label += " on " + keyName
-			}
-			cfg.Log(fmt.Sprintf("autopot: %s — slowing to 1s taps", label))
-			setMode(cfg.OnStatusUIMode, label)
+			cfg.Log(fmt.Sprintf("autopot: %s — slowing to 1s taps", potsEndedLabel(cfg, hpBar)))
+		}
+		if potsEnded {
+			// Re-apply every iteration so OCR validation doesn't overwrite.
+			setMode(cfg.OnStatusUIMode, potsEndedLabel(cfg, hpBar))
 		}
 
 		// Exit pots-ended when value finally changes (potion took effect).
@@ -405,6 +404,19 @@ func (a *AutoPotRunner) clearPotsEndedMode(fn func(string), potsEnded bool) {
 	if potsEnded {
 		setMode(fn, "")
 	}
+}
+
+func potsEndedLabel(cfg AutoPotConfig, hpBar bool) string {
+	label := "HP pots ended"
+	keyName := cfg.HPKeyName
+	if !hpBar {
+		label = "SP pots ended"
+		keyName = cfg.SPKeyName
+	}
+	if keyName != "" {
+		label += " on " + keyName
+	}
+	return label
 }
 
 func absPctDiff(a, b float64) float64 {
