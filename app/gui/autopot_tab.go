@@ -200,11 +200,21 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 }
 
 func (a *guiApp) autopotConfig() runner.AutoPotConfig {
+	hpName := ""
+	if a.hpKeyVK != 0 {
+		hpName = runner.KeyName(a.hpKeyVK)
+	}
+	spName := ""
+	if a.spKeyVK != 0 {
+		spName = runner.KeyName(a.spKeyVK)
+	}
 	return runner.AutoPotConfig{
 		HPThreshold:    a.hpThreshold,
 		SPThreshold:    a.spThreshold,
 		HPKeyVK:        a.hpKeyVK,
 		SPKeyVK:        a.spKeyVK,
+		HPKeyName:      hpName,
+		SPKeyName:      spName,
 		HPEnabled:      a.hpEnabledCB.Checked(),
 		SPEnabled:      a.spEnabledCB.Checked(),
 		Log:            a.appendLog,

@@ -780,6 +780,9 @@ func (a *guiApp) onStop() {
 		}
 		a.mainWindow.Synchronize(func() {
 			a.appendLog("Clicker stopped — click Start before launching the game")
+			if a.overlay != nil {
+				a.overlay.ShowStopped()
+			}
 		})
 	}()
 }

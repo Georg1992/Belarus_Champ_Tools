@@ -75,18 +75,18 @@ func ReadSPFill(img image.Image, sp Rect) BarRead {
 	if sp.W < 1 {
 		return BarRead{Found: false}
 	}
-	if sp.H >= 3 {
-		br := readBarFillSingleRow(img, sp.X, sp.Y+1, sp.W, isSPFill)
-		if br.FilledWidth == 0 && barHasNoColorPixels(img, sp, false) {
-			return BarRead{Found: false, FullWidth: sp.W}
-		}
-		return normalizeBarRead(img, sp, false, br)
-	}
-	best := BarRead{Found: true, FullWidth: sp.W}
-	for row := 0; row < sp.H; row++ {
-		br := readBarFillSingleRow(img, sp.X, sp.Y+row, sp.W, isSPFill)
-		if br.FilledWidth > best.FilledWidth {
-			best = br
+	// Primary: read the middle row (most reliable for SP bar fill edge).
+	// Fallback: if middle row shows 0 fill, try all rows and take the
+	// widest. This handles the case where the rect is slightly misaligned
+	// due to camera drift and the middle row misses the bar entirely.
+	midRow := sp.H / 2
+	best := readBarFillSingleRow(img, sp.X, sp.Y+midRow, sp.W, isSPFill)
+	if best.FilledWidth == 0 {
+		for row := 0; row < sp.H; row++ {
+			br := readBarFillSingleRow(img, sp.X, sp.Y+row, sp.W, isSPFill)
+			if br.FilledWidth > best.FilledWidth {
+				best = br
+			}
 		}
 	}
 	if best.FilledWidth == 0 && barHasNoColorPixels(img, sp, false) {
@@ -182,12 +182,18 @@ func BarLooksFull(img image.Image, r Rect, hpBar bool) bool {
 }
 
 func bestFillWidth(img image.Image, r Rect, hpBar bool) int {
-	if !hpBar && r.H >= 3 {
-		return readBarFillSingleRow(img, r.X, r.Y+1, r.W, isSPFill).FilledWidth
-	}
 	isPixel := isHPFillRead
 	if !hpBar {
 		isPixel = isSPFill
+	}
+	// For SP bars, use middle-row-primary with fallback, matching ReadSPFill.
+	// The middle row is most reliable; only widen the search when it shows 0.
+	if !hpBar {
+		midRow := r.Y + r.H/2
+		mid := readBarFillSingleRow(img, r.X, midRow, r.W, isSPFill).FilledWidth
+		if mid > 0 {
+			return mid
+		}
 	}
 	best := 0
 	for row := 0; row < r.H; row++ {
@@ -218,7 +224,17 @@ func barReadConsistent(img image.Image, r Rect, hpBar bool, read BarRead) bool {
 	}
 	fillW := bestFillWidth(img, r, hpBar)
 	if fillW == 0 {
-		return read.FilledWidth == 0
+		if read.FilledWidth == 0 {
+			// Both say 0% fill — check if the bar area actually has
+			// bar-colored pixels (track/background). If it does, the
+			// rect is likely slightly misaligned (e.g. due to camera
+			// drift) and the fill reading is a false 0%.
+			if !barHasNoColorPixels(img, r, hpBar) {
+				return false
+			}
+			return true
+		}
+		return false
 	}
 	if read.FilledWidth == 0 {
 		return false

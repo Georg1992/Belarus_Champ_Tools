@@ -150,7 +150,7 @@ func (r *mockFlakyReader) setFailNext(n int) {
 	r.mu.Unlock()
 }
 
-func (r *mockFlakyReader) ReadBars(ctx context.Context) BarReadResult {
+func (r *mockFlakyReader) ReadValues(ctx context.Context) BarReadResult {
 	r.mu.Lock()
 	r.callCount++
 	if r.failNext > 0 {
@@ -268,7 +268,7 @@ type risingReader struct {
 	hpValues  []float64
 }
 
-func (r *risingReader) ReadBars(ctx context.Context) BarReadResult {
+func (r *risingReader) ReadValues(ctx context.Context) BarReadResult {
 	r.mu.Lock()
 	idx := r.callCount
 	if idx >= len(r.hpValues) {

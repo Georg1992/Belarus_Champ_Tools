@@ -231,6 +231,16 @@ func (o *statusOverlay) SetMode(mode string) {
 	win.InvalidateRect(o.hwnd, nil, true)
 }
 
+// ShowStopped clears the HP/SP text and sets the mode label to "Stopped"
+// so the overlay displays just "[Stopped]" without stale values.
+func (o *statusOverlay) ShowStopped() {
+	o.mu.Lock()
+	o.text = ""
+	o.mode = "Stopped"
+	o.mu.Unlock()
+	win.InvalidateRect(o.hwnd, nil, true)
+}
+
 // Hide hides the overlay without destroying it.
 func (o *statusOverlay) Hide() {
 	win.ShowWindow(o.hwnd, win.SW_HIDE)

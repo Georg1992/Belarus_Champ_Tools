@@ -3,6 +3,7 @@ package autopot
 import (
 	"context"
 	"fmt"
+	"image"
 	"time"
 
 	win "belarus-champ-tools/runner/platform/windows"
@@ -39,31 +40,58 @@ type BarReadResult struct {
 //   - pixelBarReader — colour-based bar detection (always-available fallback)
 //   - statusUIReader — OCR-based status panel reading (primary, higher precision)
 //
-// ReadBars blocks until a reading is available or ctx is cancelled.
+// ReadValues blocks until a reading is available or ctx is cancelled.
 // Name returns a short identifier for the overlay mode label.
 type BarReader interface {
-	ReadBars(ctx context.Context) BarReadResult
+	ReadValues(ctx context.Context) BarReadResult
 	Name() string
 }
 
 // pixelBarReader wraps the bar stabilisers and screen capture for
-// pixel-based HP/SP reading. It is stateless — the stabilisers carry
-// their own tracking state (fullLatched, lowStreak).
+// pixel-based HP/SP reading. Tracks the last known bar position in
+// screen coordinates so the search ROI can follow camera drift.
 type pixelBarReader struct {
 	hpStab  *BarStabilizer
 	spStab  *BarStabilizer
 	log     func(string)
 	lastLog time.Time
+
+	// lastScreenRect is the last known HP bar position in screen
+	// coordinates. Used to centre the next search ROI so the detector
+	// follows camera drift instead of always searching screen centre.
+	lastScreenRect Rect
+	// lostFrames counts consecutive frames where bars were not found.
+	// After 3 lost frames, lastScreenRect is cleared so the search
+	// falls back to screen centre (avoids getting stuck on stale pos).
+	lostFrames int
 }
 
 func (r *pixelBarReader) Name() string { return "Pixel" }
 
-func (r *pixelBarReader) ReadBars(ctx context.Context) BarReadResult {
+func (r *pixelBarReader) ReadValues(ctx context.Context) BarReadResult {
 	if ctx.Err() != nil {
 		return BarReadResult{Status: StatusInvalid, Err: ctx.Err()}
 	}
+
 	sw, sh := win.ScreenSize()
-	rct := PlayerBarSearchROI(sw, sh)
+	var rct Rect
+	if r.lastScreenRect.W > 0 && r.lostFrames < 3 {
+		// Centre the search ROI on the last known bar position so
+		// the detector follows camera drift. Keep a generous margin
+		// (mapROIHalfW × 2) so sudden movements are still captured.
+		// Clamp to screen bounds to prevent negative coordinates.
+		cx := r.lastScreenRect.X + r.lastScreenRect.W/2
+		cy := r.lastScreenRect.Y + r.lastScreenRect.H/2
+		rct = clampROI(image.Rect(0, 0, sw, sh), Rect{
+			X: cx - mapROIHalfW,
+			Y: cy - mapROIHalfH,
+			W: mapROIHalfW * 2,
+			H: mapROIHalfH * 2,
+		})
+	} else {
+		rct = PlayerBarSearchROI(sw, sh)
+	}
+
 	roi := win.ScreenROI{X: rct.X, Y: rct.Y, W: rct.W, H: rct.H}
 	img, err := win.CaptureScreenRegion(roi)
 	if err != nil {
@@ -73,17 +101,29 @@ func (r *pixelBarReader) ReadBars(ctx context.Context) BarReadResult {
 	bounds := img.Bounds()
 	mapped, pairOK := RefreshConsistentBarPair(img)
 	if !pairOK {
-		// Pair detection failed — return an error so the orchestrator
-		// retries. Don't call the stabilisers on bad data: UpdatePair
-		// would call readUnknown() which resets lowStreak to 0, making
-		// it impossible to accumulate the 3 low reads needed for
-		// BarStatusLow. By skipping UpdatePair, the stabiliser state
-		// (fullLatched, lowStreak) survives transient failures.
-		// Include ROI bounds so the user can verify the search region
-		// matches their screen / game UI layout.
+		// Bars not found — increment lostFrames. Keep lastScreenRect
+		// so the next iteration still searches near the last known
+		// position (the camera may drift back). After 3 consecutive
+		// lost frames, clear lastScreenRect to fall back to screen
+		// centre (avoids getting stuck on a stale position).
+		r.lostFrames++
+		if r.lostFrames >= 3 {
+			r.lastScreenRect = Rect{}
+		}
 		r.debugf("pixel: bars not found img=%dx%d roi %d,%d %dx%d", bounds.Dx(), bounds.Dy(), roi.X, roi.Y, roi.W, roi.H)
 		return BarReadResult{Status: StatusNotFound, Err: fmt.Errorf("pixel bars not found (ROI %d,%d %dx%d)", roi.X, roi.Y, roi.W, roi.H)}
 	}
+
+	// Convert mapped bar position from image coords to screen coords
+	// and store it so the next search follows camera drift.
+	r.lastScreenRect = Rect{
+		X: mapped.HP.X + roi.X,
+		Y: mapped.HP.Y + roi.Y,
+		W: mapped.HP.W,
+		H: mapped.HP.H,
+	}
+	r.lostFrames = 0
+
 	hp := r.hpStab.UpdatePair(img, true, mapped, pairOK)
 	sp := r.spStab.UpdatePair(img, false, mapped, pairOK)
 	r.debugf("pixel: HP=%.0f%% rect(%d,%d %dx%d) status=%d SP=%.0f%% rect(%d,%d %dx%d) status=%d mapped block(%d,%d %dx%d) score=%d img=%dx%d roi %d,%d %dx%d",
@@ -115,7 +155,7 @@ func (r *pixelBarReader) debugf(format string, args ...interface{}) {
 
 // statusUIReader wraps the StripPoller for OCR-based HP/SP reading.
 // It handles panel validation, debounced logging, overlay mode transitions,
-// and the OnStatusParsed overlay callback — all as side-effects of ReadBars.
+// and the OnStatusParsed overlay callback — all as side-effects of ReadValues.
 // The settings function provides access to live thresholds (which can change
 // via UpdateSettings mid-run) so HPLow/SPLow are computed correctly.
 type statusUIReader struct {
@@ -129,7 +169,7 @@ type statusUIReader struct {
 
 func (r *statusUIReader) Name() string { return "OCR" }
 
-func (r *statusUIReader) ReadBars(ctx context.Context) BarReadResult {
+func (r *statusUIReader) ReadValues(ctx context.Context) BarReadResult {
 	if ctx.Err() != nil {
 		return BarReadResult{Status: StatusInvalid, Err: ctx.Err()}
 	}
@@ -153,6 +193,9 @@ func (r *statusUIReader) ReadBars(ctx context.Context) BarReadResult {
 			return BarReadResult{Status: StatusInvalid, Err: err}
 		}
 	}
+	// Always notify the overlay first so it shows HP=1 when dead.
+	r.notifyParsed(status)
+
 	// HP==1 means the character is dead in the game engine. Don't
 	// heal — return an error so the main loop retries or switches to
 	// pixel. When the character respawns (HP > 1), parsing succeeds
@@ -169,7 +212,6 @@ func (r *statusUIReader) ReadBars(ctx context.Context) BarReadResult {
 	if status.SPMax > 0 {
 		spPct = float64(status.SP) * 100 / float64(status.SPMax)
 	}
-	r.notifyParsed(status)
 
 	cfg := r.settings()
 	return BarReadResult{

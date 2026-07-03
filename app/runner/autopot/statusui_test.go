@@ -7,7 +7,7 @@ import (
 	"belarus-champ-tools/runner/autopot/statusui"
 )
 
-// TestStatusUIReaderCancel verifies that ReadBars returns an error
+// TestStatusUIReaderCancel verifies that ReadValues returns an error
 // (context.Canceled) when called with an already-cancelled context.
 func TestStatusUIReaderCancel(t *testing.T) {
 	pipeline, err := statusui.NewDefaultPipeline()
@@ -23,8 +23,8 @@ func TestStatusUIReaderCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	result := reader.ReadBars(ctx)
+	result := reader.ReadValues(ctx)
 	if result.Err == nil {
-		t.Fatal("ReadBars with cancelled ctx: want error, got nil")
+		t.Fatal("ReadValues with cancelled ctx: want error, got nil")
 	}
 }
