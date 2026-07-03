@@ -6,40 +6,40 @@ import (
 	"github.com/lxn/walk"
 )
 
-type clickerStatus int
+type toolsStatus int
 
 const (
-	clickerStatusStopped clickerStatus = iota
-	clickerStatusRunning
+	toolsStatusStopped toolsStatus = iota
+	toolsStatusRunning
 )
 
-var statusColors = map[clickerStatus]walk.Color{
-	clickerStatusStopped: walk.RGB(220, 53, 53),
-	clickerStatusRunning: walk.RGB(46, 184, 70),
+var toolsColors = map[toolsStatus]walk.Color{
+	toolsStatusStopped: walk.RGB(220, 53, 53),
+	toolsStatusRunning: walk.RGB(46, 184, 70),
 }
 
-var statusTexts = map[clickerStatus]string{
-	clickerStatusStopped: "OFF",
-	clickerStatusRunning: "ON",
+var toolsTexts = map[toolsStatus]string{
+	toolsStatusStopped: "TOOLS OFF",
+	toolsStatusRunning: "TOOLS ON",
 }
 
-const statusBadgeWidth = 110
-const statusBadgeHeight = 40
+const toolsBadgeWidth = 130
+const toolsBadgeHeight = 40
 
-type statusBadge struct {
+type toolsBadge struct {
 	*walk.CustomWidget
-	status clickerStatus
+	status toolsStatus
 	font   *walk.Font
 }
 
-func newStatusBadge(parent walk.Container) (*statusBadge, error) {
+func newToolsBadge(parent walk.Container) (*toolsBadge, error) {
 	font, err := walk.NewFont("Segoe UI", 14, walk.FontBold)
 	if err != nil {
 		return nil, err
 	}
 
-	badge := &statusBadge{
-		status: clickerStatusStopped,
+	badge := &toolsBadge{
+		status: toolsStatusStopped,
 		font:   font,
 	}
 	cw, err := walk.NewCustomWidgetPixels(parent, 0, badge.paint)
@@ -50,8 +50,8 @@ func newStatusBadge(parent walk.Container) (*statusBadge, error) {
 	cw.SetPaintMode(walk.PaintBuffered)
 	badge.CustomWidget = cw
 	if err := cw.SetMinMaxSize(
-		walk.Size{Width: statusBadgeWidth, Height: statusBadgeHeight},
-		walk.Size{Width: statusBadgeWidth, Height: statusBadgeHeight},
+		walk.Size{Width: toolsBadgeWidth, Height: toolsBadgeHeight},
+		walk.Size{Width: toolsBadgeWidth, Height: toolsBadgeHeight},
 	); err != nil {
 		font.Dispose()
 		return nil, err
@@ -59,8 +59,8 @@ func newStatusBadge(parent walk.Container) (*statusBadge, error) {
 	return badge, nil
 }
 
-func (b *statusBadge) paint(canvas *walk.Canvas, bounds walk.Rectangle) error {
-	color := statusColors[b.status]
+func (b *toolsBadge) paint(canvas *walk.Canvas, bounds walk.Rectangle) error {
+	color := toolsColors[b.status]
 	brush, err := walk.NewSolidColorBrush(color)
 	if err != nil {
 		return err
@@ -72,7 +72,7 @@ func (b *statusBadge) paint(canvas *walk.Canvas, bounds walk.Rectangle) error {
 	}
 
 	return canvas.DrawTextPixels(
-		statusTexts[b.status],
+		toolsTexts[b.status],
 		b.font,
 		walk.RGB(255, 255, 255),
 		bounds,
@@ -80,7 +80,7 @@ func (b *statusBadge) paint(canvas *walk.Canvas, bounds walk.Rectangle) error {
 	)
 }
 
-func (b *statusBadge) SetStatus(status clickerStatus) {
+func (b *toolsBadge) SetStatus(status toolsStatus) {
 	if b.status == status {
 		return
 	}

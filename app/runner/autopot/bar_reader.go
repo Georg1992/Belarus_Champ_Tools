@@ -145,6 +145,8 @@ func (r *pixelBarReader) debugf(format string, args ...interface{}) {
 	if r.log == nil {
 		return
 	}
+	// Check rate limit BEFORE formatting (debugf called on every pixel
+	// read — up to 100/s — and Sprintf is expensive when suppressed).
 	now := time.Now()
 	if now.Sub(r.lastLog) < 2*time.Second {
 		return

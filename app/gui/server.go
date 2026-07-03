@@ -136,7 +136,7 @@ func ensureViiperServer(ctx context.Context, log func(string)) (started bool, er
 		_, _ = cmd.Process.Wait() // populate cmd.ProcessState for diagnostics
 		dumpViiperDiagnostics(cmd, ring, addr, log)
 		serverPID = 0
-		removeViiperTempDirPath(viiperTempDir)
+		_ = os.RemoveAll(viiperTempDir)
 		viiperTempDir = ""
 		return false, err
 	}
@@ -279,7 +279,11 @@ func dumpViiperDiagnostics(cmd *exec.Cmd, ring *outputRing, addr string, log fun
 		suggestions = append(suggestions, "No output captured — viiper.exe may have failed to start (missing DLL, permissions, or antivirus block)")
 	}
 	suggestions = append(suggestions, "Run '"+filepath.Join(viiperTempDir, "viiper.exe")+" server' in a terminal to see startup output directly")
-	suggestions = append(suggestions, "Check Windows Firewall — port "+stripPort(addr)+" must be allowed for localhost TCP")
+			if idx := strings.LastIndex(addr, ":"); idx >= 0 {
+			suggestions = append(suggestions, "Check Windows Firewall — port "+addr[idx+1:]+" must be allowed for localhost TCP")
+		} else {
+			suggestions = append(suggestions, "Check Windows Firewall — port must be allowed for localhost TCP")
+		}
 	suggestions = append(suggestions, "If port is wrong, update DefaultAPIAddr in runner/internal/timing/timing.go")
 
 	log("Suggested actions:")
@@ -290,12 +294,7 @@ func dumpViiperDiagnostics(cmd *exec.Cmd, ring *outputRing, addr string, log fun
 }
 
 // stripPort extracts the port number from a host:port address like "127.0.0.1:3242".
-func stripPort(addr string) string {
-	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
-		return addr[idx+1:]
-	}
-	return addr
-}
+
 
 // ---------------------------------------------------------------------------
 // process lifecycle
@@ -322,7 +321,7 @@ func stopViiperServerIfStarted() {
 		// Best-effort wait; process may have already terminated
 		_, _ = cmd.Process.Wait()
 	}
-	removeViiperTempDirPath(dir)
+	_ = os.RemoveAll(dir)
 }
 
 func killProcessTree(pid int) {
@@ -333,13 +332,7 @@ func killProcessTree(pid int) {
 	_ = exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").Run()
 }
 
-func removeViiperTempDirPath(dir string) {
-	if dir == "" {
-		return
-	}
-	// Best-effort cleanup; files may still be in use by the process
-	_ = os.RemoveAll(dir)
-}
+
 
 // ---------------------------------------------------------------------------
 // helpers

@@ -24,25 +24,21 @@ type lifecycleRunner interface {
 	Wait()
 }
 
-// nilable reports whether v is the nil value of its dynamic type, for
-// any type that can be nil (pointer, interface, slice, map, chan,
-// func). It returns false for non-nilable kinds (struct, int, etc.).
+// nilable reports whether v is the nil value of its dynamic type.
 //
 // Used by startLifecycle to safely check whether take() returned an
 // empty slot, without tripping the Go-generics restriction that
-// forbids comparing a type parameter to untyped nil. Wrapping the
-// nil check in a reflect-based call sidesteps the constraint entirely
-// and works uniformly for any R.
+// forbids comparing a type parameter to untyped nil.
 func nilable(v any) bool {
+	// reflect check catches typed nil (e.g. (*fakeRunner)(nil) boxed into
+	// any), which the plain `v == nil` comparison misses because the
+	// interface carries a concrete type. A typed nil is still nil in
+	// every meaningful sense for lifecycle tear-down: Stop/Wait must not
+	// be called on it.
 	if v == nil {
 		return true
 	}
-	rv := reflect.ValueOf(v)
-	switch rv.Kind() {
-	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map, reflect.Chan, reflect.Func:
-		return rv.IsNil()
-	}
-	return false
+	return reflect.ValueOf(v).IsNil()
 }
 
 // makeLifecycleSlot builds a (take, store) pair that operate on a

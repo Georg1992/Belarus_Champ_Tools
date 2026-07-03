@@ -170,7 +170,6 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 		setMode(cfg.OnStatusUIMode, "Searching...")
 	} else {
 		reader = pixel
-		// Mode label hidden — the sentinel text already shows the error.
 		if cfg.OnStatusParsed != nil {
 			cfg.OnStatusParsed(pixelModeSentinel, 0, pixelModeSentinel, 0, 0, 0, 0, 0)
 		}
@@ -196,23 +195,7 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 
 		result := reader.ReadValues(ctx)
 
-		// StatusDead: character is dead — show "[Dead]" in overlay,
-		// try the HP potion every 1s like pots-ended (in case a
-		// revival item is bound). Don't switch to pixel-bar.
-		// Re-apply the mode every iteration so OCR validation
-		// ("Searching..." / "OCR") cannot overwrite it.
-		if result.Status == StatusDead {
-			if !dead {
-				cfg.Log("autopot: character dead (HP=1)")
-				dead = true
-			}
-			setMode(cfg.OnStatusUIMode, "Dead")
-			if cfg.HPEnabled && cfg.HPKeyVK != 0 {
-				if err := cfg.Session.TapKey(cfg.HPKeyVK, timing.KeyTapHold); err != nil {
-					cfg.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", cfg.HPKeyVK, err))
-				}
-			}
-			timing.Sleep(ctx, potsEndedDelay)
+		if a.handleDead(ctx, cfg, result, &dead) {
 			continue
 		}
 
@@ -222,64 +205,20 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 			setMode(cfg.OnStatusUIMode, reader.Name())
 		}
 
-		// SINGLE OCR recovery probe — runs every iteration when pixel is
-		// active. Also handles StatusDead: when the character dies while the
-		// pixel reader is active (e.g. OCR failed during death animation),
-		// the probe detects HP=1, switches back to OCR, and the main loop's
-		// StatusDead block handles it on the next iteration.
-		if reader == pixel && ocr != nil && time.Now().After(nextOCRRetry) {
-			nextOCRRetry = time.Now().Add(ocrProbeInterval)
-			probe := ocr.ReadValues(ctx)
-			if probe.Status == StatusFound {
-				cfg.Log("autopot: statusui recovered, switching back")
-				reader = ocr
-				setMode(cfg.OnStatusUIMode, "OCR")
-				loggedPixelFail = false
-				result = probe
-			} else if probe.Status == StatusDead {
-				// Character is dead — switch back to OCR so the main
-				// loop's StatusDead block handles it properly.
-				cfg.Log("autopot: statusui recovered (dead)")
-				reader = ocr
-				loggedPixelFail = false
-				result = probe
-				continue // next iteration: StatusDead check at top
+		// Dispatch to the active reader's handler.
+		// OCR path: handle OCR reader failures (switch to pixel).
+		// Pixel path: handle OCR recovery probe and pixel failures.
+		if reader == ocr {
+			if a.handleOCR(cfg, &reader, pixel, result, &nextOCRRetry) {
+				continue
+			}
+		} else {
+			if a.handlePixel(ctx, cfg, &reader, pixel, ocr, &result, &nextOCRRetry, &pixelFailStart, &loggedPixelFail) {
+				continue
 			}
 		}
 
-		if result.Status != StatusFound {
-			if reader == ocr {
-				cfg.Log(fmt.Sprintf("autopot: statusui issue, switching to pixel-bar: %v", result.Err))
-				reader = pixel
-				setMode(cfg.OnStatusUIMode, "Pixel-bar")
-				// pixelModeSentinel → overlay shows "error: Pixelsearch is used".
-				if cfg.OnStatusParsed != nil {
-					cfg.OnStatusParsed(pixelModeSentinel, 0, pixelModeSentinel, 0, 0, 0, 0, 0)
-				}
-				nextOCRRetry = time.Now().Add(ocrProbeInterval)
-				continue
-			}
-			// Pixel reader failed. Track how long it's been continuously failing;
-			// only slow to 5s polling after 5 consecutive seconds without bars.
-			// This gives the game a window to launch without delay.
-			if pixelFailStart.IsZero() {
-				pixelFailStart = time.Now()
-			}
-			if time.Since(pixelFailStart) < statusUIRetryInterval {
-				// First 5 seconds — fast polling (50ms) for responsive startup.
-				timing.Sleep(ctx, timing.CaptureRetryDelay)
-				continue
-			}
-			// 5+ seconds without bars — slow to 5s polling. The OCR recovery
-			// probe above tries OCR every 5s; if it recovers we switch back.
-			if !loggedPixelFail {
-				cfg.Log(fmt.Sprintf("autopot: pixel bars not found for 5s — retrying every 5s: %v", result.Err))
-				loggedPixelFail = true
-			}
-			timing.Sleep(ctx, statusUIRetryInterval)
-			continue
-		}
-
+		// Normal processing — result is valid (StatusFound).
 		pixelFailStart = time.Time{}
 		loggedPixelFail = false
 
@@ -292,12 +231,103 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 			continue
 		}
 
-		// 50ms between reads during idle — fast enough to react to
-		// damage while keeping CPU usage low, especially in pixel
-		// mode (which is very fast per-iteration). During healing
-		// (healUntil) the polling runs at PollInterval (10ms).
 		timing.Sleep(ctx, timing.CaptureRetryDelay)
 	}
+}
+
+// handleDead handles the StatusDead case. Returns true if the iteration was
+// consumed (caller should continue the loop). The dead block has already slept.
+func (a *AutoPotRunner) handleDead(ctx context.Context, cfg AutoPotConfig, result BarReadResult, dead *bool) bool {
+	if result.Status != StatusDead {
+		return false
+	}
+	if !*dead {
+		cfg.Log("autopot: character dead (HP=1)")
+		*dead = true
+	}
+	setMode(cfg.OnStatusUIMode, "Dead")
+	if cfg.HPEnabled && cfg.HPKeyVK != 0 {
+		if err := cfg.Session.TapKey(cfg.HPKeyVK, timing.KeyTapHold); err != nil {
+			cfg.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", cfg.HPKeyVK, err))
+		}
+	}
+	timing.Sleep(ctx, potsEndedDelay)
+	return true
+}
+
+// handleOCR handles the case when the OCR reader is active and the result is
+// not StatusDead. If the result is valid (StatusFound), returns false so the
+// main loop proceeds to normal processing. If the OCR reader failed, switches
+// to pixel-bar mode, sends the sentinel to the overlay, and returns true.
+func (a *AutoPotRunner) handleOCR(cfg AutoPotConfig, reader *BarReader, pixel BarReader, result BarReadResult, nextOCRRetry *time.Time) bool {
+	if result.Status == StatusFound {
+		return false
+	}
+	// OCR reader failed — switch to pixel-bar fallback.
+	cfg.Log(fmt.Sprintf("autopot: statusui issue, switching to pixel-bar: %v", result.Err))
+	*reader = pixel
+	setMode(cfg.OnStatusUIMode, "Pixel-bar")
+	if cfg.OnStatusParsed != nil {
+		cfg.OnStatusParsed(pixelModeSentinel, 0, pixelModeSentinel, 0, 0, 0, 0, 0)
+	}
+	*nextOCRRetry = time.Now().Add(ocrProbeInterval)
+	return true
+}
+
+// handlePixel handles the case when the pixel reader is active and the result
+// is not StatusDead. It performs two tasks:
+//
+//  1. OCR recovery probe: periodically probes the OCR reader. If OCR recovers
+//     (StatusFound or StatusDead), switches back to OCR and updates *result.
+//     For StatusDead, returns true so the next iteration handles dead state.
+//     For StatusFound, returns false so normal processing uses the probe data.
+//
+//  2. Pixel failure: if bars are not found, tracks failure duration. For the
+//     first 5 seconds polls fast (50ms); after 5s slows to 5s polling. Logs
+//     the transition once.
+//
+// Returns true if the iteration was consumed (caller should continue loop).
+func (a *AutoPotRunner) handlePixel(ctx context.Context, cfg AutoPotConfig, reader *BarReader, pixel BarReader, ocr *statusUIReader, result *BarReadResult, nextOCRRetry *time.Time, pixelFailStart *time.Time, loggedPixelFail *bool) bool {
+	// OCR recovery probe — runs every ocrProbeInterval.
+	if ocr != nil && time.Now().After(*nextOCRRetry) {
+		*nextOCRRetry = time.Now().Add(ocrProbeInterval)
+		probe := ocr.ReadValues(ctx)
+		if probe.Status == StatusFound {
+			cfg.Log("autopot: statusui recovered, switching back")
+			*reader = ocr
+			setMode(cfg.OnStatusUIMode, "OCR")
+			*loggedPixelFail = false
+			*result = probe
+			return false // fall through to normal processing
+		}
+		if probe.Status == StatusDead {
+			cfg.Log("autopot: statusui recovered (dead)")
+			*reader = ocr
+			*loggedPixelFail = false
+			*result = probe
+			return true // next iteration: StatusDead check at top
+		}
+		// Probe didn't find anything — continue with pixel.
+	}
+
+	if result.Status == StatusFound {
+		return false // normal processing
+	}
+
+	// Pixel bars not found.
+	if pixelFailStart.IsZero() {
+		*pixelFailStart = time.Now()
+	}
+	if time.Since(*pixelFailStart) < statusUIRetryInterval {
+		timing.Sleep(ctx, timing.CaptureRetryDelay)
+		return true
+	}
+	if !*loggedPixelFail {
+		cfg.Log(fmt.Sprintf("autopot: pixel bars not found for 5s — retrying every 5s: %v", result.Err))
+		*loggedPixelFail = true
+	}
+	timing.Sleep(ctx, statusUIRetryInterval)
+	return true
 }
 
 const (
@@ -319,6 +349,7 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, reader BarReader, hpBar b
 		healStart  time.Time
 		lastPct    = -1.0
 		potsEnded  bool
+		recovered  bool
 	)
 
 	for {
@@ -339,7 +370,7 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, reader BarReader, hpBar b
 
 		result := reader.ReadValues(ctx)
 		if result.Status != StatusFound {
-			a.clearPotsEndedMode(cfg.OnStatusUIMode, potsEnded)
+			a.healExit(cfg, potsEnded)
 			// Return to the main loop — the main loop handles mode
 			// switching (OCR→pixel when OCR fails). Retrying in place
 			// would keep healing stuck forever on a dead OCR reader
@@ -355,7 +386,7 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, reader BarReader, hpBar b
 			threshold = float64(cfg.SPThreshold)
 		}
 		if pct >= threshold {
-			a.clearPotsEndedMode(cfg.OnStatusUIMode, potsEnded)
+			a.healExit(cfg, potsEnded)
 			return
 		}
 
@@ -365,56 +396,80 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, reader BarReader, hpBar b
 			lastPct = pct
 		}
 
+		// Manage pots-ended state: detection, label re-apply, recovery.
 		elapsed := time.Since(healStart)
-
-		// Detect pots ended: 3+ seconds of spamming with no value change.
-		// Re-apply the label on EVERY iteration while potsEnded is true so
-		// OCR validation (panel lost→found→"Searching..."→"OCR") cannot
-		// overwrite it. Only log on first entry.
-		if !potsEnded && elapsed >= noChangeTimeout && absPctDiff(pct, lastPct) < valueChangeTol {
-			potsEnded = true
-			cfg.Log(fmt.Sprintf("autopot: %s — slowing to 1s taps", potsEndedLabel(cfg, hpBar)))
-		}
-		if potsEnded {
-			// Re-apply every iteration so OCR validation doesn't overwrite.
-			setMode(cfg.OnStatusUIMode, potsEndedLabel(cfg, hpBar))
-		}
-
-		// Exit pots-ended when value finally changes (potion took effect).
-		// Reset healStart so the 3s timeout starts fresh in the new state.
-		// Skip the TapKey on this iteration — the potion is already working
-		// from the previous tap (1s ago), tapping again wastes a potion.
-		if potsEnded && absPctDiff(pct, lastPct) >= valueChangeTol {
-			cfg.Log("autopot: potion took effect, resuming normal speed")
-			setMode(cfg.OnStatusUIMode, "") // clear pots-ended label
-			potsEnded = false
-			healStart = time.Now()
-			continue
+		potsEnded, recovered, healStart = a.handlePotsEnded(cfg, hpBar, elapsed, pct, lastPct, potsEnded, healStart)
+		if recovered {
+			continue // skip TapKey, potion already working
 		}
 
 		lastPct = pct
 
-		if err := cfg.Session.TapKey(vk, timing.KeyTapHold); err != nil {
-			cfg.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", vk, err))
+		if !a.healTap(ctx, cfg, vk, potsEnded) {
 			return
 		}
-
-		if potsEnded {
-			// Slow taps — the potion stack appears empty, just retry
-			// every 1s in case the player looted more.
-			timing.Sleep(ctx, potsEndedDelay)
-		} else {
-			// Rapid taps — the game animation is the bottleneck.
-			timing.Sleep(ctx, timing.PollInterval)
-		}
 	}
+}
+
+// handlePotsEnded manages the pots-ended state machine within healUntil.
+// It detects when pots are empty (no pct change after noChangeTimeout),
+// re-applies the overlay label every iteration while in the state,
+// and detects recovery when the value finally changes.
+//
+// Returns (newPotsEnded, recovered, newHealStart). When recovered=true,
+// the caller should skip the TapKey on this iteration (potion already
+// working from the previous 1s-apart tap).
+func (a *AutoPotRunner) handlePotsEnded(cfg AutoPotConfig, hpBar bool, elapsed time.Duration, pct, lastPct float64, potsEnded bool, healStart time.Time) (bool, bool, time.Time) {
+	// Detect transition into pots-ended mode.
+	if !potsEnded && elapsed >= noChangeTimeout && absPctDiff(pct, lastPct) < valueChangeTol {
+		cfg.Log(fmt.Sprintf("autopot: %s — slowing to 1s taps", potsEndedLabel(cfg, hpBar)))
+		potsEnded = true
+	}
+
+	if !potsEnded {
+		return false, false, healStart
+	}
+
+	// Pots-ended mode is active: check for recovery.
+	if absPctDiff(pct, lastPct) >= valueChangeTol {
+		cfg.Log("autopot: potion took effect, resuming normal speed")
+		setMode(cfg.OnStatusUIMode, "")
+		return false, true, time.Now()
+	}
+
+	// Re-apply label every iteration so OCR validation (panel
+	// lost→found→"Searching..."→"OCR") cannot overwrite it.
+	setMode(cfg.OnStatusUIMode, potsEndedLabel(cfg, hpBar))
+	return true, false, healStart
+}
+
+// healTap presses the potion key and sleeps for the appropriate interval
+// based on whether pots-ended mode is active. Returns true on success;
+// false on TapKey error (caller should return from healUntil).
+func (a *AutoPotRunner) healTap(ctx context.Context, cfg AutoPotConfig, vk int32, potsEnded bool) bool {
+	if err := cfg.Session.TapKey(vk, timing.KeyTapHold); err != nil {
+		cfg.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", vk, err))
+		return false
+	}
+	if potsEnded {
+		timing.Sleep(ctx, potsEndedDelay)
+	} else {
+		timing.Sleep(ctx, timing.PollInterval)
+	}
+	return true
+}
+
+// healExit clears the pots-ended overlay mode when leaving healUntil.
+// Called before every return in the heal loop.
+func (a *AutoPotRunner) healExit(cfg AutoPotConfig, potsEnded bool) {
+	a.clearPotsEndedMode(cfg.OnStatusUIMode, potsEnded)
 }
 
 // clearPotsEndedMode clears the "Pots ended" overlay mode when leaving
 // healUntil (regardless of exit reason: recovered, reader failed, ctx done).
 func (a *AutoPotRunner) clearPotsEndedMode(fn func(string), potsEnded bool) {
-	if potsEnded {
-		setMode(fn, "")
+	if potsEnded && fn != nil {
+		fn("")
 	}
 }
 

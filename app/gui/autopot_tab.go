@@ -217,29 +217,33 @@ func (a *guiApp) autopotConfig() runner.AutoPotConfig {
 		})
 	}
 	return runner.AutoPotConfig{
-		HPThreshold:     a.hpThreshold,
-		SPThreshold:     a.spThreshold,
-		HPKeyVK:         a.hpKeyVK,
-		SPKeyVK:         a.spKeyVK,
-		HPKeyName:       hpName,
-		SPKeyName:       spName,
-		HPEnabled:       a.hpEnabledCB.Checked(),
-		SPEnabled:       a.spEnabledCB.Checked(),
-		Log:             a.appendLog,
-		OnStatusParsed:  a.onStatusParsed,
-		OnStatusUIMode:  modeFn,
+		HPThreshold:    a.hpThreshold,
+		SPThreshold:    a.spThreshold,
+		HPKeyVK:        a.hpKeyVK,
+		SPKeyVK:        a.spKeyVK,
+		HPKeyName:      hpName,
+		SPKeyName:      spName,
+		HPEnabled:      a.hpEnabledCB.Checked(),
+		SPEnabled:      a.spEnabledCB.Checked(),
+		Log:            a.appendLog,
+		OnStatusParsed: func(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int) {
+			a.mainWindow.Synchronize(func() {
+				a.onStatusParsed(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH)
+			})
+		},
+		OnStatusUIMode: modeFn,
 	}
 }
 
 // onStatusParsed is called from the autopot goroutine whenever new HP/SP
-// values are parsed. It forwards the values to the overlay window via the
-// walk message queue (Synchronize is thread-safe).
+// values are parsed. It forwards the values to the overlay window.
+// The caller (autopotConfig) already wraps this in mainWindow.Synchronize,
+// so this method can access walk UI directly.
 func (a *guiApp) onStatusParsed(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int) {
 	if a.overlay == nil {
 		return
 	}
-	ovl := a.overlay
-	ovl.Update(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH)
+	a.overlay.Update(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH)
 }
 
 func (a *guiApp) commitHPThresholdEdit() {

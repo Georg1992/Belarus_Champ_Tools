@@ -16,7 +16,7 @@ func (a *guiApp) buildControlPanel(parent walk.Container) error {
 	if err != nil {
 		return err
 	}
-	if err := runGB.SetTitle("1. Clicker control"); err != nil {
+	if err := runGB.SetTitle("1. Tools Control"); err != nil {
 		return err
 	}
 	runLayout := walk.NewVBoxLayout()
@@ -35,17 +35,61 @@ func (a *guiApp) buildControlPanel(parent walk.Container) error {
 		return err
 	}
 
-	leftPanel, err := walk.NewComposite(controlRow)
+	// ---- VIIPER block ----
+	viiperPanel, err := walk.NewComposite(controlRow)
 	if err != nil {
 		return err
 	}
-	leftVBox := walk.NewVBoxLayout()
-	leftVBox.SetSpacing(4)
-	if err := leftPanel.SetLayout(leftVBox); err != nil {
+	viiperVBox := walk.NewVBoxLayout()
+	viiperVBox.SetSpacing(4)
+	if err := viiperPanel.SetLayout(viiperVBox); err != nil {
 		return err
 	}
 
-	btnRow, err := walk.NewComposite(leftPanel)
+	a.viiperBadge, err = newViiperBadge(viiperPanel)
+	if err != nil {
+		return err
+	}
+
+	a.viiperStartBtn, err = walk.NewPushButton(viiperPanel)
+	if err != nil {
+		return err
+	}
+	if err := a.viiperStartBtn.SetText("Start VIIPER"); err != nil {
+		return err
+	}
+	a.viiperStartBtn.Clicked().Attach(a.onStartViiper)
+
+	viiperHint, err := walk.NewLabel(viiperPanel)
+	if err != nil {
+		return err
+	}
+	if err := viiperHint.SetText("Start VIIPER to enable tools."); err != nil {
+		return err
+	}
+	viiperHint.SetFont(hintFont)
+
+	if _, err := walk.NewHSpacer(controlRow); err != nil {
+		return err
+	}
+
+	// ---- TOOLS block ----
+	toolsPanel, err := walk.NewComposite(controlRow)
+	if err != nil {
+		return err
+	}
+	toolsVBox := walk.NewVBoxLayout()
+	toolsVBox.SetSpacing(4)
+	if err := toolsPanel.SetLayout(toolsVBox); err != nil {
+		return err
+	}
+
+	a.toolsBadge, err = newToolsBadge(toolsPanel)
+	if err != nil {
+		return err
+	}
+
+	btnRow, err := walk.NewComposite(toolsPanel)
 	if err != nil {
 		return err
 	}
@@ -74,72 +118,15 @@ func (a *guiApp) buildControlPanel(parent walk.Container) error {
 	a.stopBtn.SetEnabled(false)
 	a.stopBtn.Clicked().Attach(a.onStop)
 
-	startHint, err := walk.NewLabel(leftPanel)
+	toggleHint, err := walk.NewLabel(toolsPanel)
 	if err != nil {
 		return err
 	}
-	if err := startHint.SetText("Start before launching the game."); err != nil {
+	if err := toggleHint.SetText("Toggle: End"); err != nil {
 		return err
 	}
-	startHint.SetFont(hintFont)
+	toggleHint.SetFont(hintFont)
 
-	if _, err := walk.NewHSpacer(controlRow); err != nil {
-		return err
-	}
-
-	rightPanel, err := walk.NewComposite(controlRow)
-	if err != nil {
-		return err
-	}
-	rightVBox := walk.NewVBoxLayout()
-	rightVBox.SetSpacing(4)
-	if err := rightPanel.SetLayout(rightVBox); err != nil {
-		return err
-	}
-
-	badgeRow, err := walk.NewComposite(rightPanel)
-	if err != nil {
-		return err
-	}
-	badgeHBox := walk.NewHBoxLayout()
-	badgeHBox.SetSpacing(8)
-	if err := badgeRow.SetLayout(badgeHBox); err != nil {
-		return err
-	}
-	if _, err := walk.NewHSpacer(badgeRow); err != nil {
-		return err
-	}
-	a.viiperBadge, err = newViiperBadge(badgeRow)
-	if err != nil {
-		return err
-	}
-	a.statusBadge, err = newStatusBadge(badgeRow)
-	if err != nil {
-		return err
-	}
-	a.setClickerStatus(clickerStatusStopped)
-
-	toggleRow, err := walk.NewComposite(rightPanel)
-	if err != nil {
-		return err
-	}
-	toggleHBox := walk.NewHBoxLayout()
-	toggleHBox.SetSpacing(6)
-	if err := toggleRow.SetLayout(toggleHBox); err != nil {
-		return err
-	}
-	if _, err := walk.NewHSpacer(toggleRow); err != nil {
-		return err
-	}
-
-	toggleCaption, err := walk.NewLabel(toggleRow)
-	if err != nil {
-		return err
-	}
-	if err := toggleCaption.SetText("Toggle start / stop: End"); err != nil {
-		return err
-	}
-	toggleCaption.SetFont(hintFont)
-
+	// Initial state set in createWindow after all tabs are built.
 	return nil
 }

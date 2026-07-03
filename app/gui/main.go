@@ -35,10 +35,13 @@ type guiApp struct {
 	clickerTriggerVKs      [runner.ClickerSlotCount][]int32
 	clickerBindingSlot     int
 	clickerLastLoggedDelay [runner.ClickerSlotCount]int
-	startBtn               *walk.PushButton
-	stopBtn                *walk.PushButton
-	statusBadge            *statusBadge
-	viiperBadge            *viiperBadge
+
+	// Control panel
+	startBtn      *walk.PushButton  // Tools Start
+	stopBtn       *walk.PushButton  // Tools Stop
+	viiperStartBtn *walk.PushButton // VIIPER Start
+	toolsBadge    *toolsBadge
+	viiperBadge   *viiperBadge
 
 	// Timer keys (clicker tab)
 	timerSlots        [runner.TimerKeySlotCount]timerSlotWidgets
@@ -70,13 +73,13 @@ type guiApp struct {
 	bindingActive bool
 	logFile      *os.File
 	// starting is true while onStart's background goroutine is wiring
-	// up the viper server + session + runners. It is set on the GUI
-	// thread inside onStart and cleared by either the goroutine on
-	// completion (success or fail) or by onStop. While it is true,
-	// isStarted reports true so sync*Settings don't trigger secondary
-	// runner startups that would race with the main one. The startup
-	// goroutine also re-checks this flag after every slot publish so
-	// a Stop click during startup cancels any not-yet-published work.
+	// up runners. It is set on the GUI thread inside onStart and cleared
+	// by either the goroutine on completion (success or fail) or by
+	// onStop. While it is true, isStarted reports true so sync*Settings
+	// don't trigger secondary runner startups that would race with the
+	// main one. The startup goroutine also re-checks this flag after
+	// every slot publish so a Stop click during startup cancels any
+	// not-yet-published work.
 	starting       bool
 	startupCancel  context.CancelFunc // cancels in-flight startInBackground on Stop
 	runner         *runner.Runner
@@ -88,8 +91,8 @@ type guiApp struct {
 	spKeyVK        int32
 	hpThreshold    int
 	spThreshold    int
-	overlay       *statusOverlay
-	viiperMonitor *viiperMonitor
+	overlay        *statusOverlay
+	viiperMonitor  *viiperMonitor
 }
 
 func main() {
@@ -134,17 +137,17 @@ func (a *guiApp) shutdown() {
 		}
 		a.mu.Unlock()
 
-	if a.viiperMonitor != nil {
-		a.viiperMonitor.stop()
-		a.viiperMonitor = nil
-	}
+		if a.viiperMonitor != nil {
+			a.viiperMonitor.stop()
+			a.viiperMonitor = nil
+		}
 
-	if a.logFile != nil {
-		_ = a.logFile.Close()
-		a.logFile = nil
-	}
+		if a.logFile != nil {
+			_ = a.logFile.Close()
+			a.logFile = nil
+		}
 
-	if r != nil {
+		if r != nil {
 			r.Stop()
 			r.Wait()
 		}
@@ -225,11 +228,16 @@ func (a *guiApp) createWindow() error {
 				a.viiperBadge.SetStatus(viiperActive)
 			} else {
 				a.viiperBadge.SetStatus(viiperInactive)
-				// If tools are running and VIIPER goes down, stop everything.
+				// VIIPER went down — stop tools and disable everything
+				// except the Start VIIPER button.
 				if a.isStarted() {
 					a.appendLog("VIIPER server disconnected — stopping tools")
 					a.onStop()
 				}
+				a.startBtn.SetEnabled(false)
+				a.stopBtn.SetEnabled(false)
+				a.setConfigEnabled(false)
+				a.viiperStartBtn.SetEnabled(true)
 			}
 		})
 	})
@@ -319,7 +327,14 @@ func (a *guiApp) createWindow() error {
 		return err
 	}
 	a.wireThresholdBlurOnClick(mw)
-	a.setStarted(false)
+	// Initial state (after all tabs are built):
+	// VIIPER OFF, TOOLS OFF, only Start VIIPER enabled.
+	a.viiperBadge.SetStatus(viiperInactive)
+	a.toolsBadge.SetStatus(toolsStatusStopped)
+	a.viiperStartBtn.SetEnabled(true)
+	a.startBtn.SetEnabled(false)
+	a.stopBtn.SetEnabled(false)
+	a.setConfigEnabled(false)
 
 	mw.Closing().Attach(func(canceled *bool, reason walk.CloseReason) {
 		a.shutdown()
@@ -364,6 +379,286 @@ func (a *guiApp) isStarted() bool {
 	return false
 }
 
+// setConfigEnabled enables or disables all tab configuration (clicker slots,
+// autopot, timer keys, keychain). Called when VIIPER state changes — config
+// is enabled when VIIPER is running, disabled when VIIPER is down.
+func (a *guiApp) setConfigEnabled(enabled bool) {
+	a.setClickerConfigEnabled(enabled)
+	a.setAutoPotConfigEnabled(enabled)
+	a.setTimerKeyConfigEnabled(enabled)
+	a.setKeyChainConfigEnabled(enabled)
+}
+
+// setToolsStarted updates the TOOLS badge and Start/Stop button states.
+// Does NOT touch config enable/disable — that's managed by VIIPER state.
+// MUST be called on the GUI thread.
+func (a *guiApp) setToolsStarted(started bool) {
+	a.startBtn.SetEnabled(!started)
+	a.stopBtn.SetEnabled(started)
+	if started {
+		a.toolsBadge.SetStatus(toolsStatusRunning)
+	} else {
+		a.toolsBadge.SetStatus(toolsStatusStopped)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// VIIPER lifecycle
+// ---------------------------------------------------------------------------
+
+// onStartViiper starts the VIIPER server and opens an input session. Called
+// from the VIIPER Start button. Runs the blocking startup on a background
+// goroutine so the GUI stays responsive.
+func (a *guiApp) onStartViiper() {
+	a.viiperStartBtn.SetEnabled(false)
+	a.appendLog("Starting VIIPER server...")
+
+	go func() {
+		logFn := func(s string) {
+			a.mainWindow.Synchronize(func() { a.appendLog(s) })
+		}
+
+		_, err := ensureViiperServer(context.Background(), logFn)
+		if err != nil {
+			a.mainWindow.Synchronize(func() {
+				a.appendLog(fmt.Sprintf("VIIPER start failed: %v", err))
+				a.viiperStartBtn.SetEnabled(true) // retry
+			})
+			return
+		}
+
+		logFn("Opening VIIPER session...")
+		session, err := runner.OpenViiperSession(context.Background(), runner.DefaultAPIAddr, logFn)
+		if err != nil {
+			stopViiperServerIfStarted()
+			a.mainWindow.Synchronize(func() {
+				a.appendLog(fmt.Sprintf("VIIPER session failed: %v", err))
+				a.viiperStartBtn.SetEnabled(true) // retry
+			})
+			return
+		}
+
+		a.mu.Lock()
+		a.inputSession = session
+		a.mu.Unlock()
+
+		a.mainWindow.Synchronize(func() {
+			a.viiperBadge.SetStatus(viiperActive)
+			a.appendLog("VIIPER server ready")
+			// VIIPER is running — enable config and Tools Start button.
+			a.setConfigEnabled(true)
+			a.startBtn.SetEnabled(true)
+			a.stopBtn.SetEnabled(false)
+			a.viiperStartBtn.SetEnabled(false) // already running
+		})
+	}()
+}
+
+// ---------------------------------------------------------------------------
+// Tools lifecycle
+// ---------------------------------------------------------------------------
+
+// onStart is the Tools Start button click handler. It assumes VIIPER is
+// already running (inputSession is non-nil) and starts all runners.
+// The blocking portion runs on a background goroutine so the GUI stays
+// responsive during session wiring.
+func (a *guiApp) onStart() {
+	a.mu.Lock()
+	if a.inputSession == nil {
+		a.mu.Unlock()
+		a.appendLog("Cannot start tools — VIIPER is not running. Start VIIPER first.")
+		return
+	}
+	if (a.runner != nil && a.runner.Running()) || (a.autopotRunner != nil && a.autopotRunner.Running()) {
+		a.mu.Unlock()
+		return
+	}
+	if ready, msg := inputDriverReady(); !ready {
+		a.mu.Unlock()
+		a.appendLog("Input driver not ready — see Setup required dialog.")
+		walk.MsgBox(a.mainWindow, "Setup required", msg, walk.MsgBoxIconWarning)
+		return
+	}
+	// Cancel any previous startup goroutine that is still running.
+	if a.startupCancel != nil {
+		a.startupCancel()
+		a.startupCancel = nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.startupCancel = cancel
+	a.starting = true
+	a.mu.Unlock()
+
+	// Immediate UI feedback.
+	a.setToolsStarted(true)
+	a.appendLog("Starting tools...")
+
+	go a.startInBackground(ctx)
+}
+
+// startInBackground runs the long-running tools startup work off the GUI
+// thread. VIIPER is already running — this only wires up the runners.
+func (a *guiApp) startInBackground(ctx context.Context) {
+	logFn := func(s string) {
+		a.mainWindow.Synchronize(func() { a.appendLog(s) })
+	}
+	isStillStarting := func() bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.starting
+	}
+	finishFailure := func() {
+		if ctx.Err() != nil {
+			return // superseded by a newer Start
+		}
+		a.mu.Lock()
+		if a.starting {
+			a.starting = false
+		}
+		a.mu.Unlock()
+		a.mainWindow.Synchronize(func() { a.setToolsStarted(false) })
+	}
+
+	// Use the existing VIIPER session (already set up by onStartViiper).
+	a.mu.Lock()
+	session := a.inputSession
+	a.mu.Unlock()
+
+	if session == nil {
+		logFn("Cannot start — VIIPER session is nil")
+		finishFailure()
+		return
+	}
+
+	logFn("Reusing VIIPER session...")
+	session.Reset()
+
+	if !isStillStarting() {
+		session.Reset()
+		return
+	}
+
+	cfg := a.clickerConfig()
+	cfg.Session = session
+	cfg.Log = logFn
+
+	r := runner.New(cfg)
+	if err := r.Start(); err != nil {
+		session.Close()
+		a.mu.Lock()
+		a.inputSession = nil
+		a.mu.Unlock()
+		logFn(fmt.Sprintf("Start failed: %v", err))
+		stopViiperServerIfStarted()
+		finishFailure()
+		return
+	}
+
+	a.mu.Lock()
+	a.runner = r
+	a.mu.Unlock()
+	if !isStillStarting() {
+		r.Stop()
+		r.Wait()
+		session.Close()
+		a.mu.Lock()
+		a.runner = nil
+		a.inputSession = nil
+		a.mu.Unlock()
+		stopViiperServerIfStarted()
+		return
+	}
+
+	autopotCfg := a.autopotWanted()
+	autopotCfg.Session = session
+	autopotCfg.Log = logFn
+	timerCfg := a.timerKeyWanted()
+	timerCfg.Session = session
+	timerCfg.Log = logFn
+
+	keyChainCfg := a.keyChainConfig()
+	keyChainCfg.Session = session
+	keyChainCfg.Log = logFn
+
+	a.startAutoPotRunner(autopotCfg, logFn)
+	a.startTimerKeyRunner(timerCfg, logFn)
+	a.startKeyChainRunner(keyChainCfg, logFn)
+
+	a.mu.Lock()
+	canceled := !a.starting
+	if a.starting {
+		a.starting = false
+	}
+	a.mu.Unlock()
+
+	if canceled {
+		return
+	}
+	a.mainWindow.Synchronize(func() { a.setToolsStarted(true) })
+	logFn("Tools started")
+}
+
+// onStop stops all tools but keeps the VIIPER session alive so the next
+// Start reuses it. The blocking Stop+Wait runs on a background goroutine.
+// VIIPER server is NOT stopped — it stays running for reuse.
+func (a *guiApp) onStop() {
+	a.mu.Lock()
+	r := a.runner
+	ap := a.autopotRunner
+	tk := a.timerKeyRunner
+	kc := a.keyChainRunner
+	session := a.inputSession
+	a.runner = nil
+	a.autopotRunner = nil
+	a.timerKeyRunner = nil
+	a.keyChainRunner = nil
+	// Keep a.inputSession alive so the next Start reuses it.
+	// Full cleanup (Close) happens in shutdown().
+	// Cancel any in-flight startup goroutine.
+	a.starting = false
+	if a.startupCancel != nil {
+		a.startupCancel()
+		a.startupCancel = nil
+	}
+	a.mu.Unlock()
+
+	a.setToolsStarted(false)
+	a.appendLog("Stopping tools...")
+
+	go func() {
+		if r != nil {
+			r.Stop()
+			r.Wait()
+		}
+		if ap != nil {
+			ap.Stop()
+			ap.Wait()
+		}
+		if tk != nil {
+			tk.Stop()
+			tk.Wait()
+		}
+		if kc != nil {
+			kc.Stop()
+			kc.Wait()
+		}
+		if session != nil {
+			session.Reset()
+			// Keep the session alive; the next Start reuses it.
+			// Full cleanup (Close) happens in shutdown().
+		}
+		a.mainWindow.Synchronize(func() {
+			a.appendLog("Tools stopped — Start to relaunch")
+			if a.overlay != nil {
+				a.overlay.ShowStopped()
+			}
+		})
+	}()
+}
+
 func (a *guiApp) autopotWanted() runner.AutoPotConfig {
 	cfg := a.autopotConfig()
 	cfg.HPEnabled = cfg.HPEnabled && cfg.HPKeyVK != 0
@@ -389,39 +684,6 @@ func (a *guiApp) startAutoPotRunner(cfg runner.AutoPotConfig, log func(string)) 
 			return runner.NewAutoPot(cfg)
 		},
 	)
-}
-
-func (a *guiApp) setStarted(started bool) {
-	a.startBtn.SetEnabled(!started)
-	a.stopBtn.SetEnabled(started)
-	a.setClickerConfigEnabled(started)
-	a.setAutoPotConfigEnabled(started)
-	a.setTimerKeyConfigEnabled(started)
-	a.setKeyChainConfigEnabled(started)
-	if started {
-		a.setClickerStatus(clickerStatusRunning)
-	} else {
-		a.setClickerStatus(clickerStatusStopped)
-	}
-}
-
-// setClickerStatus updates the status badge. MUST be called on the
-// GUI thread. Off-thread callers must marshal through
-// GUI thread. Marshaling is owned at the call site so the threading
-// model is explicit.
-//
-// Earlier versions wrapped Synchronize here. That marshal was the
-// dead-end of the original "stuck at Starting..." path: Synchronize
-// posts a window message and blocks the caller until the GUI message
-// pump processes it. Calling it from the GUI thread (e.g. from
-// setStarted inside an onStart click handler) deadlocks the pump on
-// itself, and calling it from inside another Synchronize's posted
-// function deadlocks for the same reason. Marshaling is owned at the
-// call site now so the threading model is explicit, not implicit.
-func (a *guiApp) setClickerStatus(status clickerStatus) {
-	if a.statusBadge != nil {
-		a.statusBadge.SetStatus(status)
-	}
 }
 
 // unsetKeyBinding searches every key storage location in the app for vk.
@@ -489,293 +751,4 @@ func (a *guiApp) syncRunnerSettings() {
 	if r != nil && r.Running() {
 		r.UpdateSettings(cfg.Slots)
 	}
-}
-
-// onStart is the Start button click handler. The blocking portion of
-// startup (ensureViiperServer, OpenViiperSession, runner wiring) used
-// to run on the GUI thread, holding the walk message pump hostage for
-// up to ~30 s while viper.exe can't be pinged. While the pump was
-// busy in onStart, any off-thread log call via mainWindow.Synchronize
-// (from a runner goroutine)
-// would deadlock the caller, and the GUI was frozen at "Starting..."
-// with no further progress.
-//
-// The fix keeps only the fast state checks and immediate UI feedback
-// on the GUI thread, then spawns a goroutine for everything that
-// touches the network or viper. The message pump keeps running, so
-// off-thread callbacks can marshal logs and status updates back to
-// the GUI thread and the user can still click Stop / close the window
-// while startup is in flight.
-func (a *guiApp) onStart() {
-	a.mu.Lock()
-	if (a.runner != nil && a.runner.Running()) || (a.autopotRunner != nil && a.autopotRunner.Running()) {
-		a.mu.Unlock()
-		return
-	}
-	if ready, msg := inputDriverReady(); !ready {
-		a.mu.Unlock()
-		a.appendLog("Input driver not ready — see Setup required dialog.")
-		walk.MsgBox(a.mainWindow, "Setup required", msg, walk.MsgBoxIconWarning)
-		return
-	}
-	// Cancel any previous startup goroutine that is still running
-	// (e.g. stuck in waitForServer). This ensures the stale goroutine
-	// releases serverMu and doesn't write back stale state.
-	if a.startupCancel != nil {
-		a.startupCancel()
-		a.startupCancel = nil
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	a.startupCancel = cancel
-	a.starting = true
-	a.mu.Unlock()
-
-	// Immediate UI feedback so the user sees we accepted the click.
-	// Safe on the GUI thread: setStarted → setClickerStatus reach walk
-	// directly now (no internal Synchronize).
-	a.setStarted(true)
-	a.appendLog("Starting...")
-
-	go a.startInBackground(ctx)
-}
-
-// startInBackground runs the long-running startup work off the GUI
-// thread. Every UI mutation goes through a mainWindow.Synchronize
-// closure so it lands on the GUI thread; every cfg.Log / OnStatusParsed
-// / onStop/onStart logging uses the same closure pattern so log calls
-// from off-thread goroutines don't punch walk API directly.
-func (a *guiApp) startInBackground(ctx context.Context) {
-	// logFn: ship a string from off-thread to a.appendLog on the GUI
-	// thread (via mainWindow.Synchronize).
-	logFn := func(s string) {
-		a.mainWindow.Synchronize(func() { a.appendLog(s) })
-	}
-	// statusFn: ship HP/SP parse results from the autopot goroutine to
-	// a.onStatusParsed on the GUI thread.
-	statusFn := func(hp, hpMax, sp, spMax, x, y, w, h int) {
-		a.mainWindow.Synchronize(func() {
-			a.onStatusParsed(hp, hpMax, sp, spMax, x, y, w, h)
-		})
-	}
-	// isStillStarting reports whether the startup goroutine should
-	// keep publishing slots. It checks the context (canceled by
-	// onStop) and the starting flag. The goroutine checks this after
-	// every slot write so an onStop click during startup cancels any
-	// not-yet-published work. Slots already published are not
-	// retracted here — onStop has already snapshotted them and its
-	// cleanup goroutine is responsible for tearing them down.
-	isStillStarting := func() bool {
-		if ctx.Err() != nil {
-			return false
-		}
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		return a.starting
-	}
-	// finishFailure: restores the UI to "stopped" and clears the
-	// starting flag so isStarted() falls back to false on the next
-	// call. Only touches state when this goroutine's context is still
-	// alive (a newer Start has not canceled us). viper cleanup is the
-	// caller's responsibility because the viper server may or may not
-	// have been started.
-	finishFailure := func() {
-		if ctx.Err() != nil {
-			return // superseded by a newer startup
-		}
-		a.mu.Lock()
-		if a.starting {
-			a.starting = false
-		}
-		a.mu.Unlock()
-		a.mainWindow.Synchronize(func() { a.setStarted(false) })
-	}
-
-	logFn("Checking VIIPER server...")
-	_, err := ensureViiperServer(ctx, logFn)
-	if err != nil {
-		if ctx.Err() != nil {
-			return // Stop clicked; onStop already handled UI
-		}
-		logFn(fmt.Sprintf("Start failed: %v", err))
-		finishFailure()
-		return
-	}
-
-	// Reuse a previous VIIPER session if one is still alive (kept alive
-	// by onStop's Reset path). Otherwise create a new one.
-	a.mu.Lock()
-	session := a.inputSession
-	reused := session != nil
-	a.mu.Unlock()
-
-	if reused {
-		logFn("Reusing VIIPER session...")
-		session.Reset()
-	} else {
-		logFn("Opening VIIPER session...")
-		var err error
-		session, err = runner.OpenViiperSession(ctx, runner.DefaultAPIAddr, logFn)
-		if err != nil {
-			logFn(fmt.Sprintf("Start failed: %v", err))
-			stopViiperServerIfStarted()
-			finishFailure()
-			return
-		}
-
-		a.mu.Lock()
-		a.inputSession = session
-		a.mu.Unlock()
-	}
-
-	// Cancel-detected after acquiring the session but before wiring
-	// the clicker runner: clean up our side. onStop may have already
-	// snapshotted (nil) session — it will skip server teardown.
-	if !isStillStarting() {
-		if reused {
-			session.Reset()
-		} else {
-			session.Close()
-			a.mu.Lock()
-			a.inputSession = nil
-			a.mu.Unlock()
-			stopViiperServerIfStarted()
-		}
-		return
-	}
-
-	cfg := a.clickerConfig()
-	cfg.Session = session
-	// Override the Log wiring from a.appendLog (which the cfg getter
-	// pre-fills) to logFn, so the clicker goroutine's log dispatches
-	// marshal through Synchronize instead of touching walk API off
-	// the GUI thread.
-	cfg.Log = logFn
-
-	r := runner.New(cfg)
-	if err := r.Start(); err != nil {
-		session.Close()
-		a.mu.Lock()
-		a.inputSession = nil
-		a.mu.Unlock()
-		logFn(fmt.Sprintf("Start failed: %v", err))
-		stopViiperServerIfStarted()
-		finishFailure()
-		return
-	}
-
-	a.mu.Lock()
-	a.runner = r
-	a.mu.Unlock()
-	// Cancel-detected after the clicker runner publish. Stop the
-	// runner, close the session, tear down the server. onStop
-	// already nil-ed its snapshot — this cleanup is ours.
-	if !isStillStarting() {
-		r.Stop()
-		r.Wait()
-		session.Close()
-		a.mu.Lock()
-		a.runner = nil
-		a.inputSession = nil
-		a.mu.Unlock()
-		stopViiperServerIfStarted()
-		return
-	}
-
-	autopotCfg := a.autopotWanted()
-	autopotCfg.Session = session
-	autopotCfg.Log = logFn
-	autopotCfg.OnStatusParsed = statusFn
-
-	timerCfg := a.timerKeyWanted()
-	timerCfg.Session = session
-	timerCfg.Log = logFn
-
-	keyChainCfg := a.keyChainConfig()
-	keyChainCfg.Session = session
-	keyChainCfg.Log = logFn
-
-	a.startAutoPotRunner(autopotCfg, logFn)
-	a.startTimerKeyRunner(timerCfg, logFn)
-	a.startKeyChainRunner(keyChainCfg, logFn)
-
-	a.mu.Lock()
-	// If onStop cleared starting before we reached this point,
-	// it has already snapshotted the runners/session for its
-	// cleanup goroutine — nothing more for us to do.
-	canceled := !a.starting
-	if a.starting {
-		a.starting = false
-	}
-	a.mu.Unlock()
-
-	if canceled {
-		return
-	}
-	a.mainWindow.Synchronize(func() { a.setStarted(true) })
-	logFn("Started")
-}
-
-func (a *guiApp) onStop() {
-	// onStop is idempotent against an empty state: every field
-	// snapshot below is nil-safe (each runner has its own nil
-	// guard inside Stop/Wait, session.Reset is idempotent, the
-	// viper-server teardown is a no-op if never started). So no
-	// early return is needed; the cleanup goroutine does nothing on
-	// a Stop click that fires before any Start.
-	a.mu.Lock()
-	r := a.runner
-	ap := a.autopotRunner
-	tk := a.timerKeyRunner
-	kc := a.keyChainRunner
-	session := a.inputSession
-	a.runner = nil
-	a.autopotRunner = nil
-	a.timerKeyRunner = nil
-	a.keyChainRunner = nil
-	// Keep a.inputSession alive so the next Start reuses it.
-	// Full cleanup (Close) happens in shutdown().
-	// Cancel any in-flight startup goroutine's "starting" gate so
-	// isStarted() falls back to false immediately, even if the
-	// startup goroutine hasn't reached its own clear-yet.
-	a.starting = false
-	// Cancel the startup context so ensureViiperServer / waitForServer
-	// bail out of their polling loops and release serverMu promptly.
-	if a.startupCancel != nil {
-		a.startupCancel()
-		a.startupCancel = nil
-	}
-	a.mu.Unlock()
-
-	a.setStarted(false)
-	a.appendLog("Stopping...")
-
-	go func() {
-		if r != nil {
-			r.Stop()
-			r.Wait()
-		}
-		if ap != nil {
-			ap.Stop()
-			ap.Wait()
-		}
-		if tk != nil {
-			tk.Stop()
-			tk.Wait()
-		}
-		if kc != nil {
-			kc.Stop()
-			kc.Wait()
-		}
-		if session != nil {
-			session.Reset()
-			// Keep the session alive; the next Start reuses it.
-			// Full cleanup (Close) happens in shutdown().
-		}
-		a.mainWindow.Synchronize(func() {
-			a.appendLog("Clicker stopped — click Start before launching the game")
-			if a.overlay != nil {
-				a.overlay.ShowStopped()
-			}
-		})
-	}()
 }

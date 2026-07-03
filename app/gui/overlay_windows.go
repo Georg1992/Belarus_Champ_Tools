@@ -26,13 +26,10 @@ var (
 
 // Supplementary Win32 constants.
 const (
-	ovlTransparent   = 1   // SetBkMode TRANSPARENT
 	ovlFwBold        = 700 // LOGFONT lfWeight FW_BOLD
 	ovlLwaAlpha      = 0x00000002
 	ovlSwpNoActivate = 0x0010
 	ovlSwpShowWindow = 0x0040
-	ovlSwpHideWindow = 0x0080
-	ovlSwShowNA      = 8 // SW_SHOWNA — show without activating
 )
 
 // overlayClassName is the Win32 window class name for the overlay.
@@ -157,7 +154,7 @@ func (o *statusOverlay) onPaint(hwnd win.HWND) {
 	}
 
 	oldFont := win.SelectObject(hdc, win.HGDIOBJ(o.font))
-	win.SetBkMode(hdc, ovlTransparent)
+	win.SetBkMode(hdc, 1) // TRANSPARENT
 
 	// Row 1: HP/SP values (white), vertically centred in upper half.
 	if text != "" {
