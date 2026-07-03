@@ -120,22 +120,22 @@ func (s *ViiperSession) KeyUp() error {
 }
 
 func (s *ViiperSession) TapKey(vk int32, hold time.Duration) error {
-	if err := s.KeyDown(vk); err != nil {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := keyDownLocked(s.keyStream, vk); err != nil {
 		return err
 	}
 	time.Sleep(hold)
-	return s.KeyUp()
+	return keyUpLocked(s.keyStream)
 }
 
-func (s *ViiperSession) MouseDown() error {
+func (s *ViiperSession) MouseClick(hold time.Duration) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return mouseDownLocked(s.mouseStream)
-}
-
-func (s *ViiperSession) MouseUp() error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
+	if err := mouseDownLocked(s.mouseStream); err != nil {
+		return err
+	}
+	time.Sleep(hold)
 	return mouseUpLocked(s.mouseStream)
 }
 

@@ -142,14 +142,13 @@ func (r *Runner) runSlot(ctx context.Context, sess session.InputSession, slot Cl
 			}
 		}
 
-		// 2. Mouse click (only slot 0)
+		// 2. Mouse click (only slot 0) — atomic down+up under the session
+		// wire mutex so key events from other runners cannot interleave.
 		if slot.MouseClick {
-			if err := sess.MouseDown(); err != nil {
-				r.settings().Log(fmt.Sprintf("clicker mouse down failed: %v", err))
+			if err := sess.MouseClick(delay); err != nil {
+				r.settings().Log(fmt.Sprintf("clicker mouse click failed: %v", err))
 				return false
 			}
-			time.Sleep(delay)
-			_ = sess.MouseUp()
 		}
 
 		// 3. Delay before next iteration

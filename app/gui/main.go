@@ -7,7 +7,7 @@
 // this directory for the full layering rules and the import boundary.
 //
 // Quick rule: this package must only import `belarus-champ-tools/runner`
-// (the public facade). Never import `runner/autopot`, `runner/statusui`,
+// (the public facade). Never import `runner/autopot`, `runner/autopot/statusui`,
 // `runner/internal/...`, or `runner/platform/...` directly — add the
 // missing surface to `runner` first, then consume it here.
 package main
@@ -65,8 +65,9 @@ type guiApp struct {
 	keyChainClearBtn    *walk.PushButton
 	keyChainBindingSlot int
 
-	mu           sync.Mutex
-	shutdownOnce sync.Once
+	mu            sync.Mutex
+	shutdownOnce  sync.Once
+	bindingActive bool
 	logFile      *os.File
 	// starting is true while onStart's background goroutine is wiring
 	// up the viper server + session + runners. It is set on the GUI
@@ -87,13 +88,12 @@ type guiApp struct {
 	spKeyVK        int32
 	hpThreshold    int
 	spThreshold    int
-	autopotBinding bool
 	overlay       *statusOverlay
 	viiperMonitor *viiperMonitor
 }
 
 func main() {
-	app := &guiApp{timerBindingSlot: -1, keyChainBindingSlot: -1, clickerBindingSlot: -1}
+	app := &guiApp{timerBindingSlot: -1, keyChainBindingSlot: -1, clickerBindingSlot: -1, bindingActive: false}
 	defer app.shutdown()
 
 	// Open a persistent log file in a logs/ directory next to the

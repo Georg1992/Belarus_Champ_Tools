@@ -185,8 +185,8 @@ func (a *guiApp) logClickerDelayIfChanged(index int) {
 func (a *guiApp) setClickerConfigEnabled(enabled bool) {
 	for i := 0; i < runner.ClickerSlotCount; i++ {
 		a.clickerSlots[i].delayEdit.SetEnabled(enabled)
-		a.clickerSlots[i].bindBtn.SetEnabled(true)
-		a.clickerSlots[i].clearBtn.SetEnabled(true)
+		a.clickerSlots[i].bindBtn.SetEnabled(enabled)
+		a.clickerSlots[i].clearBtn.SetEnabled(enabled)
 	}
 }
 
@@ -207,14 +207,16 @@ func (a *guiApp) clearClickerKey(index int) {
 func (a *guiApp) bindClickerKey(index int) {
 	a.bindKeyFlow(
 		func() bool {
-			if !a.isStarted() || a.clickerBindingSlot >= 0 || index < 0 || index >= runner.ClickerSlotCount {
+			if !a.isStarted() || a.bindingActive || index < 0 || index >= runner.ClickerSlotCount {
 				return false
 			}
+			a.bindingActive = true
 			a.clickerBindingSlot = index
+			a.clickerSlots[index].bindBtn.SetEnabled(false)
 			return true
 		},
 		fmt.Sprintf("Press a key to add for %s (%s timeout)...", clickerSlotTitles[index], runner.KeyBindTimeout),
-		func() { a.clickerBindingSlot = -1 },
+		func() { a.clickerBindingSlot = -1; a.bindingActive = false },
 		func() { a.setClickerConfigEnabled(a.isStarted()) },
 		func(vk int32) {
 			a.unsetKeyBinding(vk)

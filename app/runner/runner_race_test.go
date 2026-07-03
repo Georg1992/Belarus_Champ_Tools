@@ -38,8 +38,7 @@ func (m *mockSession) TapKey(vk int32, hold time.Duration) error {
 	return nil
 }
 
-func (m *mockSession) MouseDown() error { return nil }
-func (m *mockSession) MouseUp() error   { return nil }
+func (m *mockSession) MouseClick(_ time.Duration) error { return nil }
 func (m *mockSession) TapCount() int64  { return m.tapCount.Load() }
 
 // TestTimerKeyRunnerStress starts a real TimerKeyRunner (whose run() loop
@@ -213,6 +212,148 @@ func TestKeyChainRunnerStress(t *testing.T) {
 	r.Wait()
 	if r.Running() {
 		t.Fatal("still running after Stop+Wait")
+	}
+}
+
+// TestClickerAndAutoPotConcurrent starts both the clicker runner and the
+// autopot runner with a shared mock session, then hammers UpdateSettings,
+// Running(), and Paused-toggling from many goroutines. This exercises the
+// cross-runner concurrency that the individual runner stress tests miss:
+//   - Two run() goroutines alive simultaneously, each reading lifecycle
+//     settings (liveMu.RLock) and checking session.Paused()
+//   - External callers writing settings (liveMu.Lock) and toggling Paused()
+//   - Direct TapKey calls from multiple goroutines (simulates
+//     clicker+autopot key interleaving on a shared session)
+//
+// The autopot run() loop returns StatusNotFound (no game running), so it
+// does NOT call TapKey — but the direct TapKey callers below exercise
+// the same pattern ViiperSession would see under concurrent TapKey.
+func TestClickerAndAutoPotConcurrent(t *testing.T) {
+	sess := &mockSession{}
+
+	clicker := New(Config{
+		Session: sess,
+		Log:     func(string) {},
+		Slots:   [ClickerSlotCount]ClickerSlot{},
+	})
+	if err := clicker.Start(); err != nil {
+		t.Fatalf("clicker Start: %v", err)
+	}
+
+	ap := NewAutoPot(AutoPotConfig{
+		Session:     sess,
+		HPThreshold: 50,
+		SPThreshold: 50,
+		HPKeyVK:     'Q',
+		SPKeyVK:     'W',
+		HPEnabled:   true,
+		SPEnabled:   true,
+		Log:         func(string) {},
+	})
+	if err := ap.Start(); err != nil {
+		t.Fatalf("autopot Start: %v", err)
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Settings writers for both runners.
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(seed int) {
+			defer wg.Done()
+			n := seed
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					clicker.UpdateSettings([ClickerSlotCount]ClickerSlot{
+						{TriggerVKs: []int32{int32('A' + rune(n%5))}, DelayMs: 50 + n%50, MouseClick: n%2 == 0},
+						{},
+					})
+					ap.UpdateSettings(AutoPotConfig{
+						Session:     sess,
+						HPThreshold: 40 + n%40,
+						SPThreshold: 40 + n%40,
+						HPKeyVK:     'Q',
+						SPKeyVK:     'W',
+						HPEnabled:   n%2 == 0,
+						SPEnabled:   true,
+						Log:         func(string) {},
+					})
+					n++
+				}
+			}
+		}(i)
+	}
+
+	// Paused toggler.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		on := false
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(3 * time.Millisecond):
+				on = !on
+				sess.SetPaused(on)
+			}
+		}
+	}()
+
+	// Running readers for both runners.
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					_ = clicker.Running()
+					_ = ap.Running()
+				}
+			}
+		}()
+	}
+
+	// Direct TapKey callers — simulates concurrent key taps from
+	// multiple runners on the same session (the real ViiperSession
+	// serialises via writeMu, but the mock exercises the pattern).
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					_ = sess.TapKey('A', time.Millisecond)
+					_ = sess.TapKey('Q', time.Millisecond)
+				}
+			}
+		}()
+	}
+
+	time.Sleep(300 * time.Millisecond)
+	close(stop)
+	wg.Wait()
+
+	clicker.Stop()
+	clicker.Wait()
+	ap.Stop()
+	ap.Wait()
+
+	if clicker.Running() {
+		t.Fatal("clicker still running after Stop+Wait")
+	}
+	if ap.Running() {
+		t.Fatal("autopot still running after Stop+Wait")
 	}
 }
 

@@ -52,7 +52,7 @@ func statusGlyphsDir(t *testing.T) string {
 
 func statusFixturesDir(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(statusRootDir(t), "..", "autopot", "testdata")
+	return filepath.Join(statusRootDir(t), "..", "testdata")
 }
 
 func loadPNGImage(t *testing.T, path string) image.Image {
@@ -298,7 +298,7 @@ func statusGlyphsDirB(b *testing.B) string {
 }
 
 func statusFixturesDirB(b *testing.B) string {
-	return filepath.Join(statusRootDirB(b), "..", "autopot", "testdata")
+	return filepath.Join(statusRootDirB(b), "..", "testdata")
 }
 
 func loadPNGImageB(b *testing.B, path string) image.Image {

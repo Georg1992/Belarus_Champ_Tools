@@ -37,7 +37,7 @@ sibling packages.
 It must never import any of the internal subpackages directly:
 
 - ❌ `belarus-champ-tools/runner/autopot`
-- ❌ `belarus-champ-tools/runner/statusui`
+- ❌ `belarus-champ-tools/runner/autopot/statusui`
 - ❌ `belarus-champ-tools/runner/internal/...`
 - ❌ `belarus-champ-tools/runner/platform/...`
 

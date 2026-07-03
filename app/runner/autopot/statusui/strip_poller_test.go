@@ -35,7 +35,7 @@ func TestStripPoller_AcquireThenPoll(t *testing.T) {
 	}
 
 	src := loadPNGImage(t, filepath.Join(
-		statusUIDirForPoller(t), "..", "autopot", "testdata", "aa.png",
+		statusUIDirForPoller(t), "..", "testdata", "aa.png",
 	))
 
 	// Validate acquires the strip rect.
@@ -73,7 +73,7 @@ func TestStripPoller_NeedsValidationAfterInterval(t *testing.T) {
 	poller.ValidateEvery = 50 * time.Millisecond
 
 	src := loadPNGImage(t, filepath.Join(
-		statusUIDirForPoller(t), "..", "autopot", "testdata", "aa.png",
+		statusUIDirForPoller(t), "..", "testdata", "aa.png",
 	))
 	if err := poller.Validate(src); err != nil {
 		t.Fatalf("Validate: %v", err)
@@ -98,7 +98,7 @@ func TestStripPoller_Invalidate(t *testing.T) {
 
 	poller := NewStripPoller(pipeline)
 	src := loadPNGImage(t, filepath.Join(
-		statusUIDirForPoller(t), "..", "autopot", "testdata", "aa.png",
+		statusUIDirForPoller(t), "..", "testdata", "aa.png",
 	))
 	if err := poller.Validate(src); err != nil {
 		t.Fatalf("Validate: %v", err)

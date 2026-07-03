@@ -261,8 +261,8 @@ func (a *guiApp) setTimerKeyConfigEnabled(enabled bool) {
 	for i := 0; i < a.timerVisibleCount; i++ {
 		a.timerSlots[i].enabledCB.SetEnabled(enabled)
 		a.timerSlots[i].intervalEdit.SetEnabled(enabled)
-		a.timerSlots[i].bindBtn.SetEnabled(true)
-		a.timerSlots[i].clearBtn.SetEnabled(true)
+		a.timerSlots[i].bindBtn.SetEnabled(enabled)
+		a.timerSlots[i].clearBtn.SetEnabled(enabled)
 	}
 	if a.timerAddBtn != nil {
 		a.timerAddBtn.SetEnabled(enabled && a.timerVisibleCount < runner.TimerKeySlotCount)
@@ -302,14 +302,16 @@ func (a *guiApp) clearTimerKey(index int) {
 func (a *guiApp) bindTimerKey(index int) {
 	a.bindKeyFlow(
 		func() bool {
-			if !a.isStarted() || a.timerBindingSlot >= 0 || index < 0 || index >= a.timerVisibleCount {
+			if !a.isStarted() || a.bindingActive || index < 0 || index >= a.timerVisibleCount {
 				return false
 			}
+			a.bindingActive = true
 			a.timerBindingSlot = index
+			a.timerSlots[index].bindBtn.SetEnabled(false)
 			return true
 		},
 		fmt.Sprintf("Press a key for timer %d (%s timeout)...", index+1, runner.KeyBindTimeout),
-		func() { a.timerBindingSlot = -1 },
+		func() { a.timerBindingSlot = -1; a.bindingActive = false },
 		func() { a.setTimerKeyConfigEnabled(a.isStarted()) },
 		func(vk int32) {
 			a.unsetKeyBinding(vk)

@@ -270,7 +270,13 @@ func findPlayerBarPair(hpRuns, spRuns []ColorRun, roi Rect, cx, cy int) (hp, sp 
 		}
 	}
 
-	if hasPair {
+		if hasPair {
+		// Verify vertical bar structure: each detected run must have at
+		// least one adjacent row with an overlapping run (real bars have
+		// barRowHeight=3 rows of fill; single-row artifacts are desktop noise).
+		if !barHasHeight(hpRuns, bestHP) || !barHasHeight(spRuns, bestSP) {
+			return ColorRun{}, ColorRun{}, 0, false
+		}
 		return bestHP, bestSP, bestScore, true
 	}
 
@@ -284,7 +290,12 @@ func findPlayerBarPair(hpRuns, spRuns []ColorRun, roi Rect, cx, cy int) (hp, sp 
 		if len(hpRuns) > 0 && !anchoredRunConsistent(hpRun, hpRuns) {
 			return ColorRun{}, ColorRun{}, 0, false
 		}
-		return hpRun, spRun, scoreBarPair(hpRun, spRun, cx, cy), true
+		// Require the source SP run to have vertical bar structure.
+		if !barHasHeight(spRuns, spRun) {
+			return ColorRun{}, ColorRun{}, 0, false
+		}
+		score := scoreBarPair(hpRun, spRun, cx, cy)
+		return hpRun, spRun, score, true
 	}
 	if len(hpRuns) > 0 {
 		hpRun := nearestBarRun(hpRuns, roi, cx, cy)
@@ -294,7 +305,12 @@ func findPlayerBarPair(hpRuns, spRuns []ColorRun, roi Rect, cx, cy int) (hp, sp 
 		if len(spRuns) > 0 && !anchoredRunConsistent(spRun, spRuns) {
 			return ColorRun{}, ColorRun{}, 0, false
 		}
-		return hpRun, spRun, scoreBarPair(hpRun, spRun, cx, cy), true
+		// Require the source HP run to have vertical bar structure.
+		if !barHasHeight(hpRuns, hpRun) {
+			return ColorRun{}, ColorRun{}, 0, false
+		}
+		score := scoreBarPair(hpRun, spRun, cx, cy)
+		return hpRun, spRun, score, true
 	}
 	return ColorRun{}, ColorRun{}, 0, false
 }
@@ -385,6 +401,22 @@ func scoreBarRun(r ColorRun, cx, cy int) int {
 func anchoredRunConsistent(anchored ColorRun, scannedRuns []ColorRun) bool {
 	for _, r := range scannedRuns {
 		if absInt(r.Y-anchored.Y) <= maxBarPairGap {
+			return true
+		}
+	}
+	return false
+}
+
+// barHasHeight checks that the given run has at least one adjacent row
+// with an overlapping run within barRowHeight distance. A real bar has
+// barRowHeight=3 rows of fill (e.g. Y, Y+1, Y+2), so its runs should have
+// vertical neighbors. Single-row artifacts on the desktop lack this structure.
+func barHasHeight(runs []ColorRun, target ColorRun) bool {
+	for _, r := range runs {
+		if r.Y == target.Y {
+			continue
+		}
+		if absInt(r.Y-target.Y) < barRowHeight && runOverlap(r, target) >= minRunWidth {
 			return true
 		}
 	}

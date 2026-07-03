@@ -296,10 +296,10 @@ func (a *guiApp) setAutoPotConfigEnabled(enabled bool) {
 	a.spEnabledCB.SetEnabled(enabled)
 	a.hpThresholdEdit.SetEnabled(enabled)
 	a.spThresholdEdit.SetEnabled(enabled)
-	a.hpBindBtn.SetEnabled(true)
-	a.hpClearBtn.SetEnabled(true)
-	a.spBindBtn.SetEnabled(true)
-	a.spClearBtn.SetEnabled(true)
+	a.hpBindBtn.SetEnabled(enabled)
+	a.hpClearBtn.SetEnabled(enabled)
+	a.spBindBtn.SetEnabled(enabled)
+	a.spClearBtn.SetEnabled(enabled)
 }
 
 func (a *guiApp) onClearHPKey() {
@@ -375,14 +375,19 @@ func (a *guiApp) onBindSPKey() {
 func (a *guiApp) bindAutoPotKey(hp bool) {
 	a.bindKeyFlow(
 		func() bool {
-			if !a.isStarted() || a.autopotBinding {
+			if !a.isStarted() || a.bindingActive {
 				return false
 			}
-			a.autopotBinding = true
+			a.bindingActive = true
+			if hp {
+				a.hpBindBtn.SetEnabled(false)
+			} else {
+				a.spBindBtn.SetEnabled(false)
+			}
 			return true
 		},
 		fmt.Sprintf("Press a potion hotkey to assign (%s timeout)...", runner.KeyBindTimeout),
-		func() { a.autopotBinding = false },
+		func() { a.bindingActive = false },
 		func() { a.setAutoPotConfigEnabled(a.isStarted()) },
 		func(vk int32) {
 			a.unsetKeyBinding(vk)

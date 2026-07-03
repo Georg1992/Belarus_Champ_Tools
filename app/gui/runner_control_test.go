@@ -54,8 +54,7 @@ type fakeSession struct{}
 
 func (fakeSession) Paused() bool                          { return false }
 func (fakeSession) TapKey(_ int32, _ time.Duration) error { return nil }
-func (fakeSession) MouseDown() error                      { return nil }
-func (fakeSession) MouseUp() error                        { return nil }
+func (fakeSession) MouseClick(_ time.Duration) error      { return nil }
 
 // sessionOK returns a runner.InputSession that's non-nil — used by all
 // tests that exercise the path past the session-nil guard.

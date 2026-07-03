@@ -18,7 +18,7 @@ func testdataPath(t *testing.T, name string) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	return filepath.Join(filepath.Dir(file), "..", "autopot", "testdata", name)
+	return filepath.Join(filepath.Dir(file), "..", "testdata", name)
 }
 
 // templatePath resolves the StatusPanel.png template that's checked in

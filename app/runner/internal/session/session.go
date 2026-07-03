@@ -10,6 +10,8 @@ import "time"
 // without a concrete type binding. ViiperSession satisfies it.
 type InputSession interface {
 	TapKey(vk int32, hold time.Duration) error
-	MouseDown() error
-	MouseUp() error
+	// MouseClick performs an atomic mouse down+up with the given hold
+	// between them, holding the wire mutex for the whole duration so
+	// key events from other goroutines cannot interleave.
+	MouseClick(hold time.Duration) error
 }

@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"time"
 
-	"belarus-champ-tools/runner/statusui"
+	"belarus-champ-tools/runner/autopot/statusui"
 
 	"belarus-champ-tools/runner/internal/lifecycle"
 	"belarus-champ-tools/runner/internal/session"
@@ -175,6 +175,7 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 
 	nextOCRRetry := time.Time{}
 	loggedPixelFail := false
+	pixelFailStart := time.Time{}
 
 	for {
 		select {
@@ -219,16 +220,28 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 				nextOCRRetry = time.Now().Add(statusUIRetryInterval)
 				continue
 			}
-			// Pixel reader failed — retry. Log once so the user sees
-			// the error but the GUI isn't flooded on repeat failures.
+			// Pixel reader failed. Track how long it's been continuously failing;
+			// only slow to 5s polling after 5 consecutive seconds without bars.
+			// This gives the game a window to launch without delay.
+			if pixelFailStart.IsZero() {
+				pixelFailStart = time.Now()
+			}
+			if time.Since(pixelFailStart) < statusUIRetryInterval {
+				// First 5 seconds — fast polling (50ms) for responsive startup.
+				timing.Sleep(ctx, timing.CaptureRetryDelay)
+				continue
+			}
+			// 5+ seconds without bars — slow to 5s polling. The OCR recovery
+			// probe above tries OCR every 5s; if it recovers we switch back.
 			if !loggedPixelFail {
-				cfg.Log(fmt.Sprintf("autopot: pixel read failed: %v", result.Err))
+				cfg.Log(fmt.Sprintf("autopot: pixel bars not found for 5s — retrying every 5s: %v", result.Err))
 				loggedPixelFail = true
 			}
-			timing.Sleep(ctx, timing.CaptureRetryDelay)
+			timing.Sleep(ctx, statusUIRetryInterval)
 			continue
 		}
 
+		pixelFailStart = time.Time{}
 		loggedPixelFail = false
 
 		if cfg.HPEnabled && result.HPLow {

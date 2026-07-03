@@ -271,11 +271,11 @@ func (a *guiApp) syncKeyChainSettings() {
 
 func (a *guiApp) setKeyChainConfigEnabled(enabled bool) {
 	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		a.keyChainSlots[i].keyEdit.SetEnabled(true)
+		a.keyChainSlots[i].keyEdit.SetEnabled(enabled)
 		a.keyChainSlots[i].delayEdit.SetEnabled(enabled)
 	}
 	if a.keyChainClearBtn != nil {
-		a.keyChainClearBtn.SetEnabled(true)
+		a.keyChainClearBtn.SetEnabled(enabled)
 	}
 }
 
@@ -328,14 +328,16 @@ func (a *guiApp) clearKeyChain() {
 func (a *guiApp) bindKeyChainKey(index int) {
 	a.bindKeyFlow(
 		func() bool {
-			if !a.isStarted() || a.keyChainBindingSlot >= 0 || index < 0 || index >= runner.KeyChainSlotCount {
+			if !a.isStarted() || a.bindingActive || index < 0 || index >= runner.KeyChainSlotCount {
 				return false
 			}
+			a.bindingActive = true
 			a.keyChainBindingSlot = index
+			a.keyChainSlots[index].keyEdit.SetEnabled(false)
 			return true
 		},
 		fmt.Sprintf("Press a key for chain slot %d (%s timeout)...", index+1, runner.KeyBindTimeout),
-		func() { a.keyChainBindingSlot = -1 },
+		func() { a.keyChainBindingSlot = -1; a.bindingActive = false },
 		func() { a.setKeyChainConfigEnabled(a.isStarted()) },
 		func(vk int32) {
 			a.unsetKeyBinding(vk)

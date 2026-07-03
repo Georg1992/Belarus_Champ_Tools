@@ -6,7 +6,7 @@ import (
 	"time"
 
 	win "belarus-champ-tools/runner/platform/windows"
-	"belarus-champ-tools/runner/statusui"
+	"belarus-champ-tools/runner/autopot/statusui"
 )
 
 // BarReadStatus distinguishes the semantic state of a BarReadResult.

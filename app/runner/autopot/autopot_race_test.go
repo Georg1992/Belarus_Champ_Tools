@@ -36,8 +36,7 @@ func (m *mockSession) TapKey(vk int32, hold time.Duration) error {
 	return nil
 }
 
-func (m *mockSession) MouseDown() error { return nil }
-func (m *mockSession) MouseUp() error   { return nil }
+func (m *mockSession) MouseClick(_ time.Duration) error { return nil }
 
 // TestAutoPotRunnerStress starts a real AutoPotRunner. The run() loop
 // calls win.CapturePlayerBarSearch(), which fails in a non-game test env
