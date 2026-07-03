@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"belarus-champ-tools/runner"
@@ -72,15 +73,15 @@ type guiApp struct {
 	shutdownOnce  sync.Once
 	bindingActive bool
 	logFile      *os.File
-	// starting is true while onStart's background goroutine is wiring
+	// starting is 1 while onStart's background goroutine is wiring
 	// up runners. It is set on the GUI thread inside onStart and cleared
 	// by either the goroutine on completion (success or fail) or by
-	// onStop. While it is true, isStarted reports true so sync*Settings
+	// onStop. While it is 1, isStarted reports true so sync*Settings
 	// don't trigger secondary runner startups that would race with the
 	// main one. The startup goroutine also re-checks this flag after
 	// every slot publish so a Stop click during startup cancels any
 	// not-yet-published work.
-	starting       bool
+	starting       atomic.Int32
 	startupCancel  context.CancelFunc // cancels in-flight startInBackground on Stop
 	runner         *runner.Runner
 	autopotRunner  *runner.AutoPotRunner
@@ -340,6 +341,10 @@ func (a *guiApp) createWindow() error {
 		a.shutdown()
 	})
 
+	// Auto-start VIIPER on launch so tools are ready before the game.
+	// The goroutine in onStartViiper handles errors and logs progress.
+	a.onStartViiper()
+
 	mw.Show()
 	mw.Run()
 	return nil
@@ -365,11 +370,12 @@ func (a *guiApp) appendLog(line string) {
 }
 
 func (a *guiApp) isStarted() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.starting {
+	// Fast path: startup in flight — no mutex needed (atomic load).
+	if a.starting.Load() != 0 {
 		return true
 	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.runner != nil && a.runner.Running() {
 		return true
 	}
@@ -486,7 +492,7 @@ func (a *guiApp) onStart() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a.startupCancel = cancel
-	a.starting = true
+	a.starting.Store(1)
 	a.mu.Unlock()
 
 	// Immediate UI feedback.
@@ -506,19 +512,13 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 		if ctx.Err() != nil {
 			return false
 		}
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		return a.starting
+		return a.starting.Load() != 0
 	}
 	finishFailure := func() {
 		if ctx.Err() != nil {
 			return // superseded by a newer Start
 		}
-		a.mu.Lock()
-		if a.starting {
-			a.starting = false
-		}
-		a.mu.Unlock()
+		a.starting.Swap(0)
 		a.mainWindow.Synchronize(func() { a.setToolsStarted(false) })
 	}
 
@@ -587,16 +587,14 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 	a.startTimerKeyRunner(timerCfg, logFn)
 	a.startKeyChainRunner(keyChainCfg, logFn)
 
-	a.mu.Lock()
-	canceled := !a.starting
-	if a.starting {
-		a.starting = false
+	// atomically read+clear the starting flag so onStop can't race
+	// between the two operations.
+	wasStarting := a.starting.Swap(0)
+	if wasStarting == 0 {
+		return // onStop already cleared starting before we could finish
 	}
-	a.mu.Unlock()
 
-	if canceled {
-		return
-	}
+
 	a.mainWindow.Synchronize(func() { a.setToolsStarted(true) })
 	logFn("Tools started")
 }
@@ -618,7 +616,7 @@ func (a *guiApp) onStop() {
 	// Keep a.inputSession alive so the next Start reuses it.
 	// Full cleanup (Close) happens in shutdown().
 	// Cancel any in-flight startup goroutine.
-	a.starting = false
+	a.starting.Store(0)
 	if a.startupCancel != nil {
 		a.startupCancel()
 		a.startupCancel = nil

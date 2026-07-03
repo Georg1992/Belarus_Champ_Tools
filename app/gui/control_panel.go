@@ -64,7 +64,7 @@ func (a *guiApp) buildControlPanel(parent walk.Container) error {
 	if err != nil {
 		return err
 	}
-	if err := viiperHint.SetText("Start VIIPER to enable tools."); err != nil {
+	if err := viiperHint.SetText("VIIPER starts automatically."); err != nil {
 		return err
 	}
 	viiperHint.SetFont(hintFont)

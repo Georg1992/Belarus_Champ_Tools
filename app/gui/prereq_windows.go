@@ -7,7 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -44,7 +46,9 @@ func usbipDriverPresent() bool {
 }
 
 func usbipServiceRunning() bool {
-	out, err := exec.Command("sc", "query", "usbip2_ude").CombinedOutput()
+	cmd := exec.Command("sc", "query", "usbip2_ude")
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW}
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return false
 	}
