@@ -167,20 +167,33 @@ func (o *statusOverlay) onPaint(hwnd win.HWND) {
 		win.TextOut(hdc, 4, 2, textUTF16, textLen)
 	}
 
-	// Row 2: mode message (orange for alerts, dim grey for idle).
+	// Row 2: mode message.
 	if mode != "" {
-		modeText := "[" + mode + "]"
-		// Orange-red for alerts, dim grey for normal modes.
-		switch mode {
-		case "OCR", "Pixel-bar", "Searching...", "Stopped":
+		// For alerts (Dead, pots-ended) highlight in orange; normal modes in dim grey.
+		isAlert := mode != "OCR" && mode != "Pixel-bar" && mode != "Searching..." && mode != "Stopped"
+		if isAlert {
+			// Append alert directly after the HP/SP values on row 1,
+			// measured via GetTextExtentPoint32 for exact positioning.
+			alertText := " > [" + mode + "]"
+			win.SetTextColor(hdc, win.RGB(255, 160, 70))
+			alertUTF16, _ := syscall.UTF16PtrFromString(alertText)
+			alertLen := int32(len([]rune(alertText)))
+			var textW int32
+			if text != "" {
+				textUTF16, _ := syscall.UTF16PtrFromString(text)
+				var sz win.SIZE
+				win.GetTextExtentPoint32(hdc, textUTF16, int32(len([]rune(text))), &sz)
+				textW = sz.CX
+			}
+			win.TextOut(hdc, 4+textW+6, 2, alertUTF16, alertLen)
+		} else {
+			// Normal mode on row 2, dim grey.
+			modeText := "[" + mode + "]"
 			win.SetTextColor(hdc, win.RGB(180, 180, 190))
-		default:
-			// Pots-ended, Dead — highlight.
-			win.SetTextColor(hdc, win.RGB(255, 140, 60))
+			modeUTF16, _ := syscall.UTF16PtrFromString(modeText)
+			modeLen := int32(len([]rune(modeText)))
+			win.TextOut(hdc, 4, 16, modeUTF16, modeLen)
 		}
-		modeUTF16, _ := syscall.UTF16PtrFromString(modeText)
-		modeLen := int32(len([]rune(modeText)))
-		win.TextOut(hdc, 4, 16, modeUTF16, modeLen)
 	}
 
 	win.SelectObject(hdc, oldFont)
@@ -216,10 +229,12 @@ func (o *statusOverlay) Update(hp, hpMax, sp, spMax, panelX, panelY, panelW, pan
 	// Reposition only when we have valid panel coordinates (OCR reader).
 	// Pixel-bar reader passes zeros — skip repositioning, just repaint.
 	if panelW > 0 && panelH > 0 {
+		// Wider window (panelW+80) so long alerts like "HP pots ended on F9"
+		// are never clipped. 258px is too tight for two rows of info.
 		win.SetWindowPos(
 			o.hwnd, win.HWND_TOPMOST,
 			int32(panelX), int32(panelY+panelH+3),
-			int32(panelW+40), 34,
+			int32(panelW+80), 34,
 			ovlSwpNoActivate|ovlSwpShowWindow,
 		)
 	}

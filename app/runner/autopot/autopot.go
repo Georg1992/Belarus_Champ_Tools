@@ -223,9 +223,10 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 		}
 
 		// SINGLE OCR recovery probe — runs every iteration when pixel is
-		// active. Eliminates duplication of this logic across the pixel-success
-		// and pixel-failure branches. When OCR recovers, switches the active
-		// reader and uses the OCR probe's result (higher precision).
+		// active. Also handles StatusDead: when the character dies while the
+		// pixel reader is active (e.g. OCR failed during death animation),
+		// the probe detects HP=1, switches back to OCR, and the main loop's
+		// StatusDead block handles it on the next iteration.
 		if reader == pixel && ocr != nil && time.Now().After(nextOCRRetry) {
 			nextOCRRetry = time.Now().Add(ocrProbeInterval)
 			probe := ocr.ReadValues(ctx)
@@ -235,6 +236,14 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 				setMode(cfg.OnStatusUIMode, "OCR")
 				loggedPixelFail = false
 				result = probe
+			} else if probe.Status == StatusDead {
+				// Character is dead — switch back to OCR so the main
+				// loop's StatusDead block handles it properly.
+				cfg.Log("autopot: statusui recovered (dead)")
+				reader = ocr
+				loggedPixelFail = false
+				result = probe
+				continue // next iteration: StatusDead check at top
 			}
 		}
 
