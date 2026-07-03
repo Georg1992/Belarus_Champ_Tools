@@ -445,8 +445,11 @@ func (a *AutoPotRunner) handlePotsEnded(cfg AutoPotConfig, hpBar bool, elapsed t
 
 // healTap presses the potion key and sleeps for the appropriate interval
 // based on whether pots-ended mode is active. Returns true on success;
-// false on TapKey error (caller should return from healUntil).
+// false on TapKey error or nil session (caller should return from healUntil).
 func (a *AutoPotRunner) healTap(ctx context.Context, cfg AutoPotConfig, vk int32, potsEnded bool) bool {
+	if cfg.Session == nil {
+		return false
+	}
 	if err := cfg.Session.TapKey(vk, timing.KeyTapHold); err != nil {
 		cfg.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", vk, err))
 		return false

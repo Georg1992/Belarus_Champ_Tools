@@ -157,7 +157,10 @@ func normalizeBarRead(img image.Image, r Rect, hpBar bool, read BarRead) BarRead
 	if !read.Found || r.W < 2 {
 		return read
 	}
-	if !BarLooksFull(img, r, hpBar) {
+	// Bar is full when FilledWidth nearly equals the bar width AND there's
+	// no empty track at the right edge. Uses the already-computed fill
+	// width instead of calling bestFillWidth again via BarLooksFull.
+	if read.FilledWidth < r.W-2 || barRightHasEmptyTrack(img, r, hpBar) {
 		return read
 	}
 	if read.FullWidth < 1 {
@@ -209,7 +212,10 @@ func barConfirmedNotFull(img image.Image, r Rect, hpBar bool, read BarRead) bool
 	if !read.Found || !barReadConsistent(img, r, hpBar, read) {
 		return false
 	}
-	if BarLooksFull(img, r, hpBar) || read.Percent >= 99 {
+	// BarLooksFull is already checked by the caller (UpdatePair) before
+	// reaching here — no need to re-check. Only check the Percent guard
+	// and the empty-track test.
+	if read.Percent >= 99 {
 		return false
 	}
 	return barRightHasEmptyTrack(img, r, hpBar)
@@ -219,10 +225,14 @@ func barReadConsistent(img image.Image, r Rect, hpBar bool, read BarRead) bool {
 	if !read.Found || r.W < 2 {
 		return false
 	}
-	if BarLooksFull(img, r, hpBar) {
+	// Compute best fill width once and reuse for both the full-check and
+	// the consistency comparison, eliminating the redundant bestFillWidth
+	// call that happened when BarLooksFull called it internally and then
+	// the fallback called it again.
+	fillW := bestFillWidth(img, r, hpBar)
+	if fillW >= r.W-2 && !barRightHasEmptyTrack(img, r, hpBar) {
 		return true
 	}
-	fillW := bestFillWidth(img, r, hpBar)
 	if fillW == 0 {
 		if read.FilledWidth == 0 {
 			// Both say 0% fill — check if the bar area actually has
@@ -250,12 +260,14 @@ func barHasNoColorPixels(img image.Image, r Rect, hpBar bool) bool {
 	if !hpBar {
 		isPixel = isSPFill
 	}
-	for y := r.Y; y < r.Y+r.H; y++ {
-		for x := r.X; x < r.X+r.W; x++ {
-			rp, gp, bp := pixelAt(img, x, y)
-			if isPixel(rp, gp, bp) {
-				return false
-			}
+	// Only scan the middle row — bar height is 3px. If the middle row has
+	// no color pixels, the bar is truly empty (scrolling all 3 rows is
+	// redundant and costs 3× more pixelAt calls on every low-fill read).
+	midY := r.Y + r.H/2
+	for x := r.X; x < r.X+r.W; x++ {
+		rp, gp, bp := pixelAt(img, x, midY)
+		if isPixel(rp, gp, bp) {
+			return false
 		}
 	}
 	return true
