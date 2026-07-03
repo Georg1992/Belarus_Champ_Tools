@@ -106,7 +106,7 @@ func newStatusOverlay() (*statusOverlay, error) {
 	hwnd := win.CreateWindowEx(
 		exStyle, clsName, title,
 		win.WS_POPUP,
-		5, 60, 260, 34, // 2 rows: HP/SP + mode message
+		5, 60, 260, 58, // height matches status UI panel (58px)
 		0, 0,
 		win.HINSTANCE(hInst),
 		nil,
@@ -159,41 +159,27 @@ func (o *statusOverlay) onPaint(hwnd win.HWND) {
 	oldFont := win.SelectObject(hdc, win.HGDIOBJ(o.font))
 	win.SetBkMode(hdc, ovlTransparent)
 
-	// Row 1: HP/SP values (white).
+	// Row 1: HP/SP values (white), vertically centred in upper half.
 	if text != "" {
 		win.SetTextColor(hdc, win.RGB(240, 240, 240))
 		textUTF16, _ := syscall.UTF16PtrFromString(text)
 		textLen := int32(len([]rune(text)))
-		win.TextOut(hdc, 4, 2, textUTF16, textLen)
+		win.TextOut(hdc, 4, 10, textUTF16, textLen)
 	}
 
-	// Row 2: mode message.
+	// Row 2: mode message, vertically centred in lower half.
+	// Alert modes (Dead, pots-ended) highlighted in orange; normal modes in dim grey.
 	if mode != "" {
-		// For alerts (Dead, pots-ended) highlight in orange; normal modes in dim grey.
+		modeText := "[" + mode + "]"
 		isAlert := mode != "OCR" && mode != "Pixel-bar" && mode != "Searching..." && mode != "Stopped"
 		if isAlert {
-			// Append alert directly after the HP/SP values on row 1,
-			// measured via GetTextExtentPoint32 for exact positioning.
-			alertText := " > [" + mode + "]"
 			win.SetTextColor(hdc, win.RGB(255, 160, 70))
-			alertUTF16, _ := syscall.UTF16PtrFromString(alertText)
-			alertLen := int32(len([]rune(alertText)))
-			var textW int32
-			if text != "" {
-				textUTF16, _ := syscall.UTF16PtrFromString(text)
-				var sz win.SIZE
-				win.GetTextExtentPoint32(hdc, textUTF16, int32(len([]rune(text))), &sz)
-				textW = sz.CX
-			}
-			win.TextOut(hdc, 4+textW+6, 2, alertUTF16, alertLen)
 		} else {
-			// Normal mode on row 2, dim grey.
-			modeText := "[" + mode + "]"
 			win.SetTextColor(hdc, win.RGB(180, 180, 190))
-			modeUTF16, _ := syscall.UTF16PtrFromString(modeText)
-			modeLen := int32(len([]rune(modeText)))
-			win.TextOut(hdc, 4, 16, modeUTF16, modeLen)
 		}
+		modeUTF16, _ := syscall.UTF16PtrFromString(modeText)
+		modeLen := int32(len([]rune(modeText)))
+		win.TextOut(hdc, 4, 36, modeUTF16, modeLen)
 	}
 
 	win.SelectObject(hdc, oldFont)
@@ -234,7 +220,7 @@ func (o *statusOverlay) Update(hp, hpMax, sp, spMax, panelX, panelY, panelW, pan
 		win.SetWindowPos(
 			o.hwnd, win.HWND_TOPMOST,
 			int32(panelX), int32(panelY+panelH+3),
-			int32(panelW+80), 34,
+			int32(panelW+80), int32(panelH), // same height as panel
 			ovlSwpNoActivate|ovlSwpShowWindow,
 		)
 	}

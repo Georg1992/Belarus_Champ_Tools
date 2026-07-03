@@ -382,11 +382,14 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, reader BarReader, hpBar b
 
 		// Exit pots-ended when value finally changes (potion took effect).
 		// Reset healStart so the 3s timeout starts fresh in the new state.
+		// Skip the TapKey on this iteration — the potion is already working
+		// from the previous tap (1s ago), tapping again wastes a potion.
 		if potsEnded && absPctDiff(pct, lastPct) >= valueChangeTol {
 			cfg.Log("autopot: potion took effect, resuming normal speed")
 			setMode(cfg.OnStatusUIMode, "") // clear pots-ended label
 			potsEnded = false
 			healStart = time.Now()
+			continue
 		}
 
 		lastPct = pct

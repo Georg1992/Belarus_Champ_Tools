@@ -208,17 +208,26 @@ func (a *guiApp) autopotConfig() runner.AutoPotConfig {
 	if a.spKeyVK != 0 {
 		spName = runner.KeyName(a.spKeyVK)
 	}
+	modeFn := func(mode string) {
+		if a.overlay == nil {
+			return
+		}
+		a.mainWindow.Synchronize(func() {
+			a.overlay.SetMode(mode)
+		})
+	}
 	return runner.AutoPotConfig{
-		HPThreshold:    a.hpThreshold,
-		SPThreshold:    a.spThreshold,
-		HPKeyVK:        a.hpKeyVK,
-		SPKeyVK:        a.spKeyVK,
-		HPKeyName:      hpName,
-		SPKeyName:      spName,
-		HPEnabled:      a.hpEnabledCB.Checked(),
-		SPEnabled:      a.spEnabledCB.Checked(),
-		Log:            a.appendLog,
-		OnStatusParsed: a.onStatusParsed,
+		HPThreshold:     a.hpThreshold,
+		SPThreshold:     a.spThreshold,
+		HPKeyVK:         a.hpKeyVK,
+		SPKeyVK:         a.spKeyVK,
+		HPKeyName:       hpName,
+		SPKeyName:       spName,
+		HPEnabled:       a.hpEnabledCB.Checked(),
+		SPEnabled:       a.spEnabledCB.Checked(),
+		Log:             a.appendLog,
+		OnStatusParsed:  a.onStatusParsed,
+		OnStatusUIMode:  modeFn,
 	}
 }
 

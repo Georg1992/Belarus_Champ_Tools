@@ -223,3 +223,111 @@ func TestOverlaySetMode_Replaces(t *testing.T) {
 		t.Errorf("SetMode OCR→Pixel-bar mode = %q; want %q", got, want)
 	}
 }
+
+func TestOverlaySetMode_DeadAlert(t *testing.T) {
+	ovl, err := newStatusOverlay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ovl.Destroy()
+
+	ovl.Update(1, 1290, 0, 201, 100, 500, 218, 58)
+	ovl.SetMode("Dead")
+
+	ovl.mu.Lock()
+	gotMode := ovl.mode
+	gotText := ovl.text
+	ovl.mu.Unlock()
+
+	if gotMode != "Dead" {
+		t.Errorf("SetMode('Dead') mode = %q; want %q", gotMode, "Dead")
+	}
+	if gotText != "HP 1/1290  SP 0/201" {
+		t.Errorf("text after SetMode('Dead') = %q; want %q", gotText, "HP 1/1290  SP 0/201")
+	}
+}
+
+func TestOverlaySetMode_PotsEnded(t *testing.T) {
+	ovl, err := newStatusOverlay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ovl.Destroy()
+
+	ovl.Update(350, 1290, 107, 201, 100, 500, 218, 58)
+	ovl.SetMode("HP pots ended on F9")
+
+	ovl.mu.Lock()
+	gotMode := ovl.mode
+	gotText := ovl.text
+	ovl.mu.Unlock()
+
+	if gotMode != "HP pots ended on F9" {
+		t.Errorf("SetMode('HP pots ended on F9') mode = %q; want %q", gotMode, "HP pots ended on F9")
+	}
+	if gotText != "HP 350/1290  SP 107/201" {
+		t.Errorf("text after pots-ended = %q; want %q", gotText, "HP 350/1290  SP 107/201")
+	}
+}
+
+func TestOverlayShowStopped(t *testing.T) {
+	ovl, err := newStatusOverlay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ovl.Destroy()
+
+	// Set some values first.
+	ovl.Update(750, 1290, 100, 200, 0, 0, 0, 0)
+	ovl.SetMode("OCR")
+
+	// Now show stopped.
+	ovl.ShowStopped()
+
+	ovl.mu.Lock()
+	gotMode := ovl.mode
+	gotText := ovl.text
+	ovl.mu.Unlock()
+
+	if gotMode != "Stopped" {
+		t.Errorf("ShowStopped() mode = %q; want %q", gotMode, "Stopped")
+	}
+	if gotText != "" {
+		t.Errorf("ShowStopped() text = %q; want empty", gotText)
+	}
+}
+
+func TestOverlayShowStopped_ThenUpdateRestoresText(t *testing.T) {
+	ovl, err := newStatusOverlay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ovl.Destroy()
+
+	ovl.ShowStopped()
+	ovl.Update(750, 1290, 100, 200, 0, 0, 0, 0)
+
+	ovl.mu.Lock()
+	gotText := ovl.text
+	gotMode := ovl.mode
+	ovl.mu.Unlock()
+
+	if gotText != "HP 750/1290  SP 100/200" {
+		t.Errorf("Update after ShowStopped text = %q; want %q", gotText, "HP 750/1290  SP 100/200")
+	}
+	// Update does NOT clear mode.
+	if gotMode != "Stopped" {
+		t.Errorf("mode after Update = %q; want %q", gotMode, "Stopped")
+	}
+}
+
+func TestOverlayHide(t *testing.T) {
+	ovl, err := newStatusOverlay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ovl.Destroy()
+
+	// Just ensure it doesn't panic — no return value to assert.
+	ovl.Hide()
+}
