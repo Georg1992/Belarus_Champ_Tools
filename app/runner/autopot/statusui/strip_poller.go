@@ -44,6 +44,7 @@ type StripPoller struct {
 
 	pipeline     *Pipeline
 	mu           sync.Mutex
+	panelRect    image.Rectangle
 	stripRect    image.Rectangle
 	lastValidate time.Time
 }
@@ -90,6 +91,7 @@ func (p *StripPoller) Validate(screen image.Image) error {
 		return err
 	}
 	p.mu.Lock()
+	p.panelRect = rec.PanelRect
 	p.stripRect = rec.StripRect
 	p.lastValidate = time.Now()
 	p.mu.Unlock()
@@ -109,9 +111,16 @@ func (p *StripPoller) Parse(strip image.Image) (ParsedStatus, error) {
 // Invalidate forces NeedsValidation to return true on the next call,
 // triggering an immediate re-acquisition. Use when the game window is
 // known to have moved or the panel may have changed.
+func (p *StripPoller) PanelRect() image.Rectangle {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.panelRect
+}
+
 func (p *StripPoller) Invalidate() {
 	p.mu.Lock()
 	p.lastValidate = time.Time{}
+	p.panelRect = image.Rectangle{}
 	p.stripRect = image.Rectangle{}
 	p.mu.Unlock()
 }

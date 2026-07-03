@@ -106,7 +106,7 @@ func newStatusOverlay() (*statusOverlay, error) {
 	hwnd := win.CreateWindowEx(
 		exStyle, clsName, title,
 		win.WS_POPUP,
-		5, 60, 220, 18, // shorter and thinner
+		5, 60, 260, 34, // 2 rows: HP/SP + mode message
 		0, 0,
 		win.HINSTANCE(hInst),
 		nil,
@@ -156,44 +156,48 @@ func (o *statusOverlay) onPaint(hwnd win.HWND) {
 		return
 	}
 
-	// Mode label: dim grey, drawn on the right side.
-	if mode != "" {
-		modeText := "[" + mode + "]"
-		modeUTF16, _ := syscall.UTF16PtrFromString(modeText)
-		modeLen := int32(len([]rune(modeText)))
-		win.SetTextColor(hdc, win.RGB(120, 120, 130))
-		win.SetBkMode(hdc, ovlTransparent)
-		oldFont := win.SelectObject(hdc, win.HGDIOBJ(o.font))
-		// Right-align the mode label.
-		win.TextOut(hdc, int32(rc.Right)-modeLen*6-4, 2, modeUTF16, modeLen)
-		win.SelectObject(hdc, oldFont)
-	}
-
-	if text == "" {
-		return
-	}
-
-	// HP/SP text: white, transparent background.
 	oldFont := win.SelectObject(hdc, win.HGDIOBJ(o.font))
-	win.SetTextColor(hdc, win.RGB(240, 240, 240))
 	win.SetBkMode(hdc, ovlTransparent)
 
-	textUTF16, _ := syscall.UTF16PtrFromString(text)
-	textLen := int32(len([]rune(text)))
-	win.TextOut(hdc, 4, 2, textUTF16, textLen)
+	// Row 1: HP/SP values (white).
+	if text != "" {
+		win.SetTextColor(hdc, win.RGB(240, 240, 240))
+		textUTF16, _ := syscall.UTF16PtrFromString(text)
+		textLen := int32(len([]rune(text)))
+		win.TextOut(hdc, 4, 2, textUTF16, textLen)
+	}
+
+	// Row 2: mode message (orange for alerts, dim grey for idle).
+	if mode != "" {
+		modeText := "[" + mode + "]"
+		// Orange-red for alerts, dim grey for normal modes.
+		switch mode {
+		case "OCR", "Pixel-bar", "Searching...", "Stopped":
+			win.SetTextColor(hdc, win.RGB(180, 180, 190))
+		default:
+			// Pots-ended, Dead — highlight.
+			win.SetTextColor(hdc, win.RGB(255, 140, 60))
+		}
+		modeUTF16, _ := syscall.UTF16PtrFromString(modeText)
+		modeLen := int32(len([]rune(modeText)))
+		win.TextOut(hdc, 4, 16, modeUTF16, modeLen)
+	}
 
 	win.SelectObject(hdc, oldFont)
 }
 
 // Update stores the latest HP/SP values and repositions the window just below
-// the status strip. Safe to call from any goroutine.
+// the status panel. Safe to call from any goroutine.
 //
 // Sentinel: when hp < 0 or sp < 0 the overlay shows an error message
 // (pixel-bar fallback is active, no OCR data available).
 //
 // Otherwise, hpMax > 0 means OCR absolute values (HP/nnn); hpMax == 0
 // is a bare fallback with no max known.
-func (o *statusOverlay) Update(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int) {
+//
+// The last 4 params are panelX, panelY, panelW, panelH from OCR detection.
+// The overlay is positioned below the full panel (panelY+panelH+3).
+func (o *statusOverlay) Update(hp, hpMax, sp, spMax, panelX, panelY, panelW, panelH int) {
 	var text string
 	if hp < 0 || sp < 0 {
 		text = "error: Pixelsearch is used"
@@ -209,13 +213,13 @@ func (o *statusOverlay) Update(hp, hpMax, sp, spMax, stripX, stripY, stripW, str
 	o.text = text
 	o.mu.Unlock()
 
-	// Reposition only when we have valid strip coordinates (OCR reader).
+	// Reposition only when we have valid panel coordinates (OCR reader).
 	// Pixel-bar reader passes zeros — skip repositioning, just repaint.
-	if stripW > 0 && stripH > 0 {
+	if panelW > 0 && panelH > 0 {
 		win.SetWindowPos(
 			o.hwnd, win.HWND_TOPMOST,
-			int32(stripX), int32(stripY+stripH+3),
-			int32(stripW+40), 18,
+			int32(panelX), int32(panelY+panelH+3),
+			int32(panelW+40), 34,
 			ovlSwpNoActivate|ovlSwpShowWindow,
 		)
 	}

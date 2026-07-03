@@ -279,6 +279,12 @@ func (r *statusUIReader) notifyParsed(s statusui.ParsedStatus) {
 	if r.onParsed == nil {
 		return
 	}
-	strip := r.poller.StripRect()
-	r.onParsed(s.HP, s.HPMax, s.SP, s.SPMax, strip.Min.X, strip.Min.Y, strip.Dx(), strip.Dy())
+	panel := r.poller.PanelRect()
+	if panel.Empty() {
+		// Fallback to strip rect if panel not yet available.
+		strip := r.poller.StripRect()
+		r.onParsed(s.HP, s.HPMax, s.SP, s.SPMax, strip.Min.X, strip.Min.Y, strip.Dx(), strip.Dy())
+		return
+	}
+	r.onParsed(s.HP, s.HPMax, s.SP, s.SPMax, panel.Min.X, panel.Min.Y, panel.Dx(), panel.Dy())
 }
