@@ -43,35 +43,30 @@ type FindStatusPanelOptions struct {
 	// typical Ragnarok status window location in the upper-left.
 	TopLeftRegion image.Rectangle
 	// MaxScore is the maximum acceptable SAD score (0 = perfect,
-	// 1 = worst). Defaults to 0.30 when zero. 0.30 sits above the
-	// worst top-left-panel SAD observed in the regression set
+	// 1 = worst). Defaults to 0.45 when zero. 0.45 sits well above
+	// the worst top-left-panel SAD observed in the regression set
 	// (≈0.25 on captures with content drift) and below
 	// false-positive SAD observed on flat unrelated regions
-	// (≈0.99) — so VerifyPanel's content signals remain the
-	// discriminator.
+	// (≈0.99) while allowing nearby UI elements (skill hotbar,
+	// chat window trim, etc.) that slightly raise the SAD score
+	// to still pass through to VerifyPanel.
 	MaxScore float64
 }
 
 // FindStatusPanel searches for the status panel inside img using
 // grayscale sum-of-absolute-differences (SAD) against the template.
 //
-// The search runs in two passes:
+// The search uses a fast two-phase approach:
 //
-//  1. The TopLeftRegion (defaults to image.Rect(0, 0, 400, 200)).
-//     The Ragnarok status panel normally lives in this region on
-//     real captures; if a match below MaxScore exists here, this
-//     returns immediately.
+//  1. Top-left region (default 400×200) at stride=1. The Ragnarok status
+//     panel lives in the upper-left corner of the screen in most cases,
+//     so this finds it immediately with pixel accuracy in a few ms.
 //
-//  2. The rest of the image (img.Bounds()). If the first pass did
-//     not find anything, this passes continues looking for a
-//     panel-shaped match anywhere else on screen. It is the
-//     continuation of the search, not a fallback.
-//
-// Both passes use the same single full-accuracy scan algorithm
-// (findPanelInRegion); only the search region differs. This is the
-// "same behaviour" — a single uniform algorithm applied to two
-// candidate regions in a defined order — instead of two different
-// implementations trying to do the same thing.
+//  2. Full-screen at stride=8 as fallback. Scanning every 8th pixel
+//     position evaluates ~27K positions instead of ~1.7M — ~60× fewer
+//     than a pixel-accurate full scan — and completes in ~100ms. The
+//     best coarse position is refined with stride=1 in a ±8px
+//     neighborhood for pixel-accurate placement.
 //
 // For *image.RGBA (the format produced by the screen-capture path)
 // the hot loop accesses the underlying Pix slice directly rather
@@ -80,24 +75,41 @@ type FindStatusPanelOptions struct {
 //
 // Returns the best match location, the normalized 0..1 score (0 =
 // perfect, 1 = worst), and ok=true iff the best score is at or
-// below MaxScore. If no match is found in either region, rect is
-// the zero Rectangle and ok=false.
+// below MaxScore. If no match is found, rect is the zero
+// Rectangle and ok=false.
 func FindStatusPanel(img, template image.Image, opts FindStatusPanelOptions) (image.Rectangle, float64, bool) {
+	maxScore := opts.MaxScore
+	if maxScore == 0 {
+		maxScore = 0.45
+	}
+	tb := template.Bounds()
+
+	// Phase 1: top-left region at stride=1 (common case, instant).
 	region := opts.TopLeftRegion
 	if region.Empty() {
 		region = image.Rect(0, 0, 400, 200)
 	}
-	maxScore := opts.MaxScore
-	if maxScore == 0 {
-		maxScore = 0.30
-	}
-
-	// Pass 1: top-left region.
-	if rect, score, ok := findPanelInRegion(img, template, region, maxScore); ok {
+	rect, score, ok := findPanelInRegion(img, template, region, maxScore, 1)
+	if ok {
 		return rect, score, true
 	}
-	// Pass 2: continuation across the rest of the screen.
-	return findPanelInRegion(img, template, img.Bounds(), maxScore)
+
+	// Phase 2: full-screen at stride=8 (coarse scan, ~60× fewer positions).
+	fullRegion := img.Bounds()
+	coarseRect, coarseScore, found := findPanelInRegion(img, template, fullRegion, maxScore, 8)
+	if !found {
+		return image.Rectangle{}, coarseScore, false
+	}
+
+	// Phase 3: refine at stride=1 in ±8px neighborhood around coarse best.
+	radius := 8
+	refineRegion := image.Rect(
+		coarseRect.Min.X-radius,
+		coarseRect.Min.Y-radius,
+		coarseRect.Min.X+radius+tb.Dx(),
+		coarseRect.Min.Y+radius+tb.Dy(),
+	)
+	return findPanelInRegion(img, template, refineRegion, maxScore, 1)
 }
 
 // panelBoundaryOverflowPx is the maximum number of pixels the template may
@@ -111,15 +123,20 @@ const panelBoundaryOverflowPx = 20
 // must be inside the image for a candidate position to be evaluated.
 const panelMinVisibleFraction = 0.75
 
-// findPanelInRegion scans the given region of img at full pixel
-// accuracy (stride=1) against the template and returns the
-// lowest-SAD match below maxScore, or ok=false if no match qualifies.
+// findPanelInRegion scans the given region of img at the given stride
+// against the template and returns the lowest-SAD match below maxScore,
+// or ok=false if no match qualifies.
+//
+// Stride controls the sampling density: 1 = every pixel position (slowest,
+// highest accuracy), 8 = every 8th position (~60× faster, used for coarse
+// full-screen searches). The best match is refined at stride=1 in a small
+// neighborhood by the caller (FindStatusPanel).
 //
 // The search min boundary is extended by panelBoundaryOverflowPx so a panel
 // partially clipped at the screen top-left is found at its real position.
 // Only the visible intersection is compared; the SAD is normalized by that
 // area so a partly-clipped match competes fairly with fully-visible candidates.
-func findPanelInRegion(img, template image.Image, region image.Rectangle, maxScore float64) (image.Rectangle, float64, bool) {
+func findPanelInRegion(img, template image.Image, region image.Rectangle, maxScore float64, stride int) (image.Rectangle, float64, bool) {
 	ib := img.Bounds()
 	tb := template.Bounds()
 	tw, th := tb.Dx(), tb.Dy()
@@ -200,8 +217,8 @@ func findPanelInRegion(img, template image.Image, region image.Rectangle, maxSco
 	bestScore := maxPossible + 1
 	bestX, bestY := minX, minY
 scan:
-	for y := minY; y <= maxY; y++ {
-		for x := minX; x <= maxX; x++ {
+	for y := minY; y <= maxY; y += stride {
+		for x := minX; x <= maxX; x += stride {
 			score := sadPartial(x, y, bestScore)
 			if score < bestScore {
 				bestScore = score

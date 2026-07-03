@@ -424,6 +424,62 @@ func (a *guiApp) setClickerStatus(status clickerStatus) {
 	}
 }
 
+// unsetKeyBinding searches every key storage location in the app for vk.
+// If found, it clears the old binding (UI label + state), syncs the
+// affected runner, and logs the change. Call this from any onPress
+// handler BEFORE assigning the key to the new slot so a key can only
+// ever be bound in one place at a time.
+func (a *guiApp) unsetKeyBinding(vk int32) {
+	// Check clicker slots (each slot can have multiple VKs).
+	for i := 0; i < runner.ClickerSlotCount; i++ {
+		for j, existing := range a.clickerTriggerVKs[i] {
+			if existing == vk {
+				a.clickerTriggerVKs[i] = append(a.clickerTriggerVKs[i][:j], a.clickerTriggerVKs[i][j+1:]...)
+				a.updateClickerKeyLabel(i)
+				a.appendLog(fmt.Sprintf("Key %s removed from %s (reassigned)", runner.KeyName(vk), clickerSlotTitles[i]))
+				a.syncRunnerSettings()
+				return
+			}
+		}
+	}
+	// Check timer keys.
+	for i := 0; i < a.timerVisibleCount; i++ {
+		if a.timerKeyVKs[i] == vk {
+			a.timerKeyVKs[i] = 0
+			a.timerSlots[i].keyLabel.SetText("none")
+			a.appendLog(fmt.Sprintf("Key %s removed from Timer %d (reassigned)", runner.KeyName(vk), i+1))
+			a.syncTimerKeySettings()
+			return
+		}
+	}
+	// Check HP potion.
+	if a.hpKeyVK == vk {
+		a.hpKeyVK = 0
+		a.hpKeyLabel.SetText("none")
+		a.appendLog(fmt.Sprintf("Key %s removed from HP potion (reassigned)", runner.KeyName(vk)))
+		a.syncAutoPotSettings()
+		return
+	}
+	// Check SP potion.
+	if a.spKeyVK == vk {
+		a.spKeyVK = 0
+		a.spKeyLabel.SetText("none")
+		a.appendLog(fmt.Sprintf("Key %s removed from SP potion (reassigned)", runner.KeyName(vk)))
+		a.syncAutoPotSettings()
+		return
+	}
+	// Check keychain slots.
+	for i := 0; i < runner.KeyChainSlotCount; i++ {
+		if a.keyChainKeyVKs[i] == vk {
+			a.keyChainKeyVKs[i] = 0
+			a.setKeyChainKeyText(i, 0)
+			a.appendLog(fmt.Sprintf("Key %s removed from Chain slot %d (reassigned)", runner.KeyName(vk), i+1))
+			a.syncKeyChainSettings()
+			return
+		}
+	}
+}
+
 func (a *guiApp) syncRunnerSettings() {
 	cfg := a.clickerConfig()
 	a.mu.Lock()

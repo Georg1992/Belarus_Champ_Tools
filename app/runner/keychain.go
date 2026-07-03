@@ -63,6 +63,11 @@ func NewKeyChain(cfg KeyChainConfig) *KeyChainRunner {
 func (k *KeyChainRunner) Running() bool { return k.lc.Running() }
 
 func (k *KeyChainRunner) UpdateSettings(cfg KeyChainConfig) {
+	// Preserve Log and Session from the existing config — the initial
+	// values use Synchronize-wrapped callbacks and the live session.
+	old := k.settings()
+	cfg.Log = old.Log
+	cfg.Session = old.Session
 	cfg.applyDefaults()
 	k.lc.UpdateSettings(cfg)
 }

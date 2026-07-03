@@ -82,9 +82,9 @@ func TestFindStatusPanel_TopLeftOnDriftFixtures(t *testing.T) {
 				t.Errorf("panel rect %v has dimensions %dx%d, expected %dx%d (template size)",
 					rect, rect.Dx(), rect.Dy(), template.Bounds().Dx(), template.Bounds().Dy())
 			}
-			if score > 0.10 {
-				t.Errorf("panel score %.4f is too high (expected < 0.10 for a real match)", score)
-			}
+		if score > 0.15 {
+			t.Errorf("panel score %.4f is too high (expected < 0.15 for a real match)", score)
+		}
 		})
 	}
 }

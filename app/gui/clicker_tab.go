@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	"slices"
 	"strconv"
 
 	"belarus-champ-tools/runner"
@@ -218,12 +217,7 @@ func (a *guiApp) bindClickerKey(index int) {
 		func() { a.clickerBindingSlot = -1 },
 		func() { a.setClickerConfigEnabled(a.isStarted()) },
 		func(vk int32) {
-			for i := 0; i < runner.ClickerSlotCount; i++ {
-				if slices.Contains(a.clickerTriggerVKs[i], vk) {
-					a.appendLog(fmt.Sprintf("Key %s is already bound to %s", runner.KeyName(vk), clickerSlotTitles[i]))
-					return
-				}
-			}
+			a.unsetKeyBinding(vk)
 			a.clickerTriggerVKs[index] = append(a.clickerTriggerVKs[index], vk)
 			a.updateClickerKeyLabel(index)
 			a.appendLog(fmt.Sprintf("%s added key %s", clickerSlotTitles[index], runner.KeyName(vk)))

@@ -80,6 +80,11 @@ func NewTimerKey(cfg TimerKeyConfig) *TimerKeyRunner {
 func (t *TimerKeyRunner) Running() bool { return t.lc.Running() }
 
 func (t *TimerKeyRunner) UpdateSettings(cfg TimerKeyConfig) {
+	// Preserve Log and Session from the existing config — the initial
+	// values use Synchronize-wrapped callbacks and the live session.
+	old := t.settings()
+	cfg.Log = old.Log
+	cfg.Session = old.Session
 	cfg.applyDefaults()
 	t.lc.UpdateSettings(cfg)
 }

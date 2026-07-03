@@ -262,6 +262,24 @@ func (a *guiApp) syncAutoPotSettings() {
 	}
 
 	if r != nil && r.Running() {
+		// If neither HP nor SP keys are bound, stop the runner
+		// instead of letting it spin doing nothing.
+		if !cfg.HPEnabled && !cfg.SPEnabled {
+			// Nil the runner immediately so isStarted() and
+			// subsequent sync calls see a stopped state.
+			a.mu.Lock()
+			a.autopotRunner = nil
+			a.mu.Unlock()
+			// Stop+Wait on a background goroutine: calling
+			// r.Wait() on the GUI thread would deadlock if
+			// the runner goroutine is in a Synchronize call
+			// (logging, status, mode switch).
+			go func(old *runner.AutoPotRunner) {
+				old.Stop()
+				old.Wait()
+			}(r)
+			return
+		}
 		r.UpdateSettings(cfg)
 		return
 	}
@@ -367,19 +385,12 @@ func (a *guiApp) bindAutoPotKey(hp bool) {
 		func() { a.autopotBinding = false },
 		func() { a.setAutoPotConfigEnabled(a.isStarted()) },
 		func(vk int32) {
+			a.unsetKeyBinding(vk)
 			if hp {
-				if a.spKeyVK != 0 && a.spKeyVK == vk {
-					a.appendLog(fmt.Sprintf("Key %s is already assigned to SP potion", runner.KeyName(vk)))
-					return
-				}
 				a.hpKeyVK = vk
 				a.hpKeyLabel.SetText(runner.KeyName(vk))
 				a.appendLog(fmt.Sprintf("HP potion key: %s", runner.KeyName(vk)))
 			} else {
-				if a.hpKeyVK != 0 && a.hpKeyVK == vk {
-					a.appendLog(fmt.Sprintf("Key %s is already assigned to HP potion", runner.KeyName(vk)))
-					return
-				}
 				a.spKeyVK = vk
 				a.spKeyLabel.SetText(runner.KeyName(vk))
 				a.appendLog(fmt.Sprintf("SP potion key: %s", runner.KeyName(vk)))

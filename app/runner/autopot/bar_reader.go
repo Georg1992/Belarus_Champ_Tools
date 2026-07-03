@@ -9,17 +9,29 @@ import (
 	"belarus-champ-tools/runner/statusui"
 )
 
+// BarReadStatus distinguishes the semantic state of a BarReadResult.
+type BarReadStatus int
+
+const (
+	StatusFound    BarReadStatus = iota // valid HP/SP data
+	StatusNotFound                      // bars/panel not found on screen
+	StatusInvalid                       // transient error (capture fail, etc.)
+	StatusDead                          // character is dead (HP=1)
+)
+
 // BarReadResult is the unified HP/SP reading produced by any BarReader.
 // HP and SP are 0-100 percentages. HPLow/SPLow are true when the relevant
 // bar is below its threshold (for the pixel-bar reader this requires
 // PotConfirmReads=3 consecutive low reads via the stabiliser; for the
-// statusUI reader a single low parse suffices). Err is non-nil when the
-// read failed (panel not found, parse error, capture failure, etc.).
+// statusUI reader a single low parse suffices). Status discriminates the
+// semantic state (found, not found, invalid, dead). Err carries the
+// underlying error for logging when Status != StatusFound.
 type BarReadResult struct {
-	HP    float64
-	SP    float64
+	HP     float64
+	SP     float64
 	HPLow bool
 	SPLow bool
+	Status BarReadStatus
 	Err   error
 }
 
@@ -48,7 +60,7 @@ func (r *pixelBarReader) Name() string { return "Pixel" }
 
 func (r *pixelBarReader) ReadBars(ctx context.Context) BarReadResult {
 	if ctx.Err() != nil {
-		return BarReadResult{Err: ctx.Err()}
+		return BarReadResult{Status: StatusInvalid, Err: ctx.Err()}
 	}
 	sw, sh := win.ScreenSize()
 	rct := PlayerBarSearchROI(sw, sh)
@@ -56,10 +68,10 @@ func (r *pixelBarReader) ReadBars(ctx context.Context) BarReadResult {
 	img, err := win.CaptureScreenRegion(roi)
 	if err != nil {
 		r.debugf("pixel: capture failed, roi %d,%d %dx%d: %v", roi.X, roi.Y, roi.W, roi.H, err)
-		return BarReadResult{Err: err}
+		return BarReadResult{Status: StatusInvalid, Err: err}
 	}
 	bounds := img.Bounds()
-	mapped, pairOK := RefreshStableBarPair(img)
+	mapped, pairOK := RefreshConsistentBarPair(img)
 	if !pairOK {
 		// Pair detection failed — return an error so the orchestrator
 		// retries. Don't call the stabilisers on bad data: UpdatePair
@@ -70,7 +82,7 @@ func (r *pixelBarReader) ReadBars(ctx context.Context) BarReadResult {
 		// Include ROI bounds so the user can verify the search region
 		// matches their screen / game UI layout.
 		r.debugf("pixel: bars not found img=%dx%d roi %d,%d %dx%d", bounds.Dx(), bounds.Dy(), roi.X, roi.Y, roi.W, roi.H)
-		return BarReadResult{Err: fmt.Errorf("pixel bars not found (ROI %d,%d %dx%d)", roi.X, roi.Y, roi.W, roi.H)}
+		return BarReadResult{Status: StatusNotFound, Err: fmt.Errorf("pixel bars not found (ROI %d,%d %dx%d)", roi.X, roi.Y, roi.W, roi.H)}
 	}
 	hp := r.hpStab.UpdatePair(img, true, mapped, pairOK)
 	sp := r.spStab.UpdatePair(img, false, mapped, pairOK)
@@ -80,10 +92,11 @@ func (r *pixelBarReader) ReadBars(ctx context.Context) BarReadResult {
 		mapped.Block.X, mapped.Block.Y, mapped.Block.W, mapped.Block.H, mapped.MapScore,
 		bounds.Dx(), bounds.Dy(), roi.X, roi.Y, roi.W, roi.H)
 	return BarReadResult{
-		HP:    hp.Percent,
-		SP:    sp.Percent,
-		HPLow: hp.Status == BarStatusLow,
-		SPLow: sp.Status == BarStatusLow,
+		HP:     hp.Percent,
+		SP:     sp.Percent,
+		HPLow:  hp.Status == BarStatusLow,
+		SPLow:  sp.Status == BarStatusLow,
+		Status: StatusFound,
 	}
 }
 
@@ -118,11 +131,11 @@ func (r *statusUIReader) Name() string { return "OCR" }
 
 func (r *statusUIReader) ReadBars(ctx context.Context) BarReadResult {
 	if ctx.Err() != nil {
-		return BarReadResult{Err: ctx.Err()}
+		return BarReadResult{Status: StatusInvalid, Err: ctx.Err()}
 	}
 	if r.poller.NeedsValidation() {
 		if err := r.validate(); err != nil {
-			return BarReadResult{Err: err}
+			return BarReadResult{Status: StatusNotFound, Err: err}
 		}
 	}
 	status, err := r.captureAndParse()
@@ -133,13 +146,21 @@ func (r *statusUIReader) ReadBars(ctx context.Context) BarReadResult {
 		// doesn't have to switch to pixel on a single transient error.
 		r.poller.Invalidate()
 		if valErr := r.validate(); valErr != nil {
-			return BarReadResult{Err: valErr}
+			return BarReadResult{Status: StatusNotFound, Err: valErr}
 		}
 		status, err = r.captureAndParse()
 		if err != nil {
-			return BarReadResult{Err: err}
+			return BarReadResult{Status: StatusInvalid, Err: err}
 		}
 	}
+	// HP==1 means the character is dead in the game engine. Don't
+	// heal — return an error so the main loop retries or switches to
+	// pixel. When the character respawns (HP > 1), parsing succeeds
+	// and healing resumes.
+	if status.HP == 1 {
+		return BarReadResult{Status: StatusDead, Err: fmt.Errorf("character dead (HP=1)")}
+	}
+
 	hpPct := 0.0
 	spPct := 0.0
 	if status.HPMax > 0 {
@@ -152,10 +173,11 @@ func (r *statusUIReader) ReadBars(ctx context.Context) BarReadResult {
 
 	cfg := r.settings()
 	return BarReadResult{
-		HP:    hpPct,
-		SP:    spPct,
-		HPLow: hpPct < float64(cfg.HPThreshold),
-		SPLow: spPct < float64(cfg.SPThreshold),
+		HP:     hpPct,
+		SP:     spPct,
+		HPLow:  hpPct < float64(cfg.HPThreshold),
+		SPLow:  spPct < float64(cfg.SPThreshold),
+		Status: StatusFound,
 	}
 }
 

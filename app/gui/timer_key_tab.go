@@ -234,11 +234,18 @@ func (a *guiApp) syncTimerKeySettings() {
 
 	if t != nil && t.Running() {
 		if !cfg.AnyActive() {
-			t.Stop()
-			t.Wait()
+			// Nil the runner immediately so isStarted() and
+			// subsequent sync calls see a stopped state.
 			a.mu.Lock()
 			a.timerKeyRunner = nil
 			a.mu.Unlock()
+			// Stop+Wait on a background goroutine to avoid
+			// deadlocking the GUI thread if the runner
+			// goroutine is in a Synchronize call.
+			go func(old *runner.TimerKeyRunner) {
+				old.Stop()
+				old.Wait()
+			}(t)
 			return
 		}
 		t.UpdateSettings(cfg)
@@ -305,6 +312,7 @@ func (a *guiApp) bindTimerKey(index int) {
 		func() { a.timerBindingSlot = -1 },
 		func() { a.setTimerKeyConfigEnabled(a.isStarted()) },
 		func(vk int32) {
+			a.unsetKeyBinding(vk)
 			a.timerKeyVKs[index] = vk
 			a.timerSlots[index].keyLabel.SetText(runner.KeyName(vk))
 			a.appendLog(fmt.Sprintf("Timer %d key: %s", index+1, runner.KeyName(vk)))

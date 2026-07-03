@@ -82,7 +82,12 @@ func (s *BarStabilizer) UpdatePair(img image.Image, hpBar bool, mapped MappedBar
 	// missing SP bar would reset the HP stabiliser's lowStreak too —
 	// making pixel search autopot silently never heal.
 	if !read.Found || !barReadConsistent(img, rect, s.hpBar, read) {
-		return s.readUnknown()
+		// Consistency failure — the bar IS there (RefreshConsistentBarPair
+		// confirmed the pair), but the fill measurement briefly
+		// wavered. Don't reset lowStreak: accumulating evidence of low
+		// HP should survive transient read noise so the heal triggers
+		// reliably during sustained combat damage.
+		return s.readUnknownPreserveStreak()
 	}
 
 	s.mu.Lock()
@@ -105,14 +110,23 @@ func (s *BarStabilizer) UpdatePair(img image.Image, hpBar bool, mapped MappedBar
 				s.lastValidRect = rect
 			}
 		} else if !rectStable {
-			s.notFullStreak = 0
-			return s.readUnknownLocked()
+			// Rect drifted — adopt the new position so later
+			// iterations don't keep seeing drift and the
+			// stabilizer doesn't get permanently stuck in the
+			// latched state. Preserve notFullStreak so
+			// unlatching progress isn't lost.
+			s.lastValidRect = rect
+			return s.readUnknownLockedFullLatched()
 		} else {
-			s.notFullStreak = 0
-			return s.readUnknownLocked()
+			// Rect stable but not confirmed not-full. Preserve
+			// notFullStreak so the next consistent not-full read
+			// can continue the unlatching process.
+			return s.readUnknownLockedFullLatched()
 		}
 		if s.fullLatched {
-			return s.readUnknownLocked()
+			// Still latched after the streak check (no unlatch
+			// yet). Return unknown but preserve streak counters.
+			return s.readUnknownLockedFullLatched()
 		}
 	}
 
@@ -132,6 +146,24 @@ func (s *BarStabilizer) readUnknown() StableBarRead {
 
 func (s *BarStabilizer) readUnknownLocked() StableBarRead {
 	s.lowStreak = 0
+	return StableBarRead{Status: BarStatusUnknown}
+}
+
+// readUnknownPreserveStreak returns BarStatusUnknown without resetting
+// lowStreak. Used when the bar pair was found but a transient consistency
+// check failed — we want to preserve accumulated low-read evidence so
+// that brief measurement noise doesn't prevent healing from triggering.
+func (s *BarStabilizer) readUnknownPreserveStreak() StableBarRead {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return StableBarRead{Status: BarStatusUnknown}
+}
+
+// readUnknownLockedFullLatched returns BarStatusUnknown while preserving
+// both notFullStreak and lowStreak. Used in the fullLatched path when a
+// transient inconsistency occurs during unlatching — we don't want to
+// lose progress on either counter. Caller must already hold s.mu.
+func (s *BarStabilizer) readUnknownLockedFullLatched() StableBarRead {
 	return StableBarRead{Status: BarStatusUnknown}
 }
 

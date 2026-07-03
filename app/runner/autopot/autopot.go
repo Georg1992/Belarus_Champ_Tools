@@ -82,13 +82,19 @@ func NewAutoPot(cfg AutoPotConfig) *AutoPotRunner {
 func (a *AutoPotRunner) Running() bool { return a.lc.Running() }
 
 // UpdateSettings propagates new settings to the stabilisers.
+//
+// IMPORTANT: Log, OnStatusParsed, OnStatusUIMode, and Session are
+// preserved from the existing config. The GUI layer passes bare
+// callbacks (a.appendLog, a.onStatusParsed) without Synchronize;
+// the initial startup replaces them with Synchronize-wrapped
+// versions. We must keep those wrappers so UI calls from the
+// autopot goroutine always marshal to the GUI thread.
 func (a *AutoPotRunner) UpdateSettings(cfg AutoPotConfig) {
-	if cfg.OnStatusUIMode == nil {
-		cfg.OnStatusUIMode = a.settings().OnStatusUIMode
-	}
-	if cfg.OnStatusParsed == nil {
-		cfg.OnStatusParsed = a.settings().OnStatusParsed
-	}
+	old := a.settings()
+	cfg.Log = old.Log
+	cfg.OnStatusParsed = old.OnStatusParsed
+	cfg.OnStatusUIMode = old.OnStatusUIMode
+	cfg.Session = old.Session
 	a.lc.UpdateSettings(cfg)
 	a.hpStabilizer.SetThreshold(cfg.HPThreshold)
 	a.spStabilizer.SetThreshold(cfg.SPThreshold)
@@ -192,7 +198,7 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 		if reader == pixel && ocr != nil && time.Now().After(nextOCRRetry) {
 			nextOCRRetry = time.Now().Add(statusUIRetryInterval)
 			probe := ocr.ReadBars(ctx)
-			if probe.Err == nil {
+			if probe.Status == StatusFound {
 				cfg.Log("autopot: statusui recovered, switching back")
 				reader = ocr
 				setMode(cfg.OnStatusUIMode, "OCR")
@@ -201,10 +207,11 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 			}
 		}
 
-		if result.Err != nil {
+		if result.Status != StatusFound {
 			if reader == ocr {
 				cfg.Log(fmt.Sprintf("autopot: statusui issue, switching to pixel-bar: %v", result.Err))
 				reader = pixel
+				setMode(cfg.OnStatusUIMode, "Pixel-bar")
 				// pixelModeSentinel → overlay shows "error: Pixelsearch is used".
 				if cfg.OnStatusParsed != nil {
 					cfg.OnStatusParsed(pixelModeSentinel, 0, pixelModeSentinel, 0, 0, 0, 0, 0)
@@ -233,7 +240,11 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 			continue
 		}
 
-		timing.Sleep(ctx, timing.KeyTapHold)
+		// 50ms between reads during idle — fast enough to react to
+		// damage while keeping CPU usage low, especially in pixel
+		// mode (which is very fast per-iteration). During healing
+		// (healUntil) the polling runs at PollInterval (10ms).
+		timing.Sleep(ctx, timing.CaptureRetryDelay)
 	}
 }
 
@@ -260,7 +271,12 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, reader BarReader, hpBar b
 		}
 
 		result := reader.ReadBars(ctx)
-		if result.Err != nil {
+		if result.Status != StatusFound {
+			// Return to the main loop — the main loop handles mode
+			// switching (OCR→pixel when OCR fails). Retrying in place
+			// would keep healing stuck forever on a dead OCR reader
+			// while the main loop never gets control to switch to
+			// pixel fallback.
 			return
 		}
 

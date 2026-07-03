@@ -305,8 +305,13 @@ func (a *guiApp) stopKeyChainRunner() {
 	a.keyChainRunner = nil
 	a.mu.Unlock()
 	if kc != nil {
-		kc.Stop()
-		kc.Wait()
+		// Stop+Wait on a background goroutine to avoid
+		// deadlocking the GUI thread if the runner
+		// goroutine is in a Synchronize call.
+		go func(old *runner.KeyChainRunner) {
+			old.Stop()
+			old.Wait()
+		}(kc)
 	}
 }
 
@@ -333,6 +338,7 @@ func (a *guiApp) bindKeyChainKey(index int) {
 		func() { a.keyChainBindingSlot = -1 },
 		func() { a.setKeyChainConfigEnabled(a.isStarted()) },
 		func(vk int32) {
+			a.unsetKeyBinding(vk)
 			a.keyChainKeyVKs[index] = vk
 			a.setKeyChainKeyText(index, vk)
 			a.appendLog(fmt.Sprintf("Chain key %d: %s", index+1, runner.KeyName(vk)))

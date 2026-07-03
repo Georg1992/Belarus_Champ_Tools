@@ -76,12 +76,14 @@ type PanelVerifyOptions struct {
 	// worst observed value.
 	MinBlueFraction float64
 
-	// MinCornerContrast, default 50 (avg per-channel stddev in 12×12
+	// MinCornerContrast, default 40 (avg per-channel stddev in 12×12
 	// top-right patch, 0..255). Real panel ~65; skill hotbar ~25.
-	// Tightened from the original 30 calibration — the observed TP
-	// cluster sits around 65 and the worst observed false-positive
-	// stddev is ~25, so 50 leaves a ~2× margin over the highest
-	// false-positive in the calibration set.
+	// 40 leaves a ~1.6× margin over the highest false-positive
+	// (~25) while being resilient to a 3-pixel position shift
+	// (which loses ~25% of the emblem patch and reduces stddev
+	// from ~65 to ~49). The original 50 threshold failed on
+	// panels where the SAD match position drifted by as little
+	// as 2-3 px due to nearby UI elements.
 	MinCornerContrast float64
 
 	// MinEdgeFraction, default 0.07 (7%). Real panel ~11–12%; skill
@@ -99,7 +101,7 @@ type PanelVerifyOptions struct {
 func DefaultPanelVerifyOptions() PanelVerifyOptions {
 	return PanelVerifyOptions{
 		MinBlueFraction:   0.08,
-		MinCornerContrast: 50,
+		MinCornerContrast: 40,
 		MinEdgeFraction:   0.07,
 	}
 }
