@@ -130,37 +130,4 @@ func ReadProcessUint32(h windows.Handle, baseAddr uintptr, offset uintptr) (uint
 	return val, nil
 }
 
-// FindProcessByName returns the first process whose executable name
-// matches (case-insensitive). Returns (0, nil) if not found.
-func FindProcessByName(target string) (ProcessInfo, error) {
-	processes, err := ListProcesses()
-	if err != nil {
-		return ProcessInfo{}, err
-	}
-	for _, p := range processes {
-		if len(p.Name) == len(target) && caseInsensitiveEqual(p.Name, target) {
-			return p, nil
-		}
-	}
-	return ProcessInfo{}, nil
-}
 
-func caseInsensitiveEqual(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		if a[i] == b[i] {
-			continue
-		}
-		// Simple ASCII case folding ('A'-'Z' ↔ 'a'-'z')
-		if a[i] >= 'A' && a[i] <= 'Z' && a[i]+32 == b[i] {
-			continue
-		}
-		if b[i] >= 'A' && b[i] <= 'Z' && b[i]+32 == a[i] {
-			continue
-		}
-		return false
-	}
-	return true
-}

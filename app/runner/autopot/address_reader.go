@@ -30,8 +30,9 @@ type addressReader struct {
 	// strip coordinates are set to 0 since address mode has no screen panel.
 	onParsed func(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int)
 
-	lastLog time.Time
-	log     func(string)
+	lastLog  time.Time
+	log      func(string)
+	loggedFirstFail bool // logs the first failure clearly, then rate-limits
 }
 
 func (r *addressReader) Name() string { return "Address" }
@@ -47,7 +48,7 @@ func (r *addressReader) ReadValues(ctx context.Context) BarReadResult {
 	// Read HP values.
 	curHP, err := win.ReadProcessUint32(r.handle, 0, r.profile.CurrentHPAddr)
 	if err != nil {
-		r.debugf("address: read HP failed: %v", err)
+		r.logFirstFail("address: %v", err)
 		return BarReadResult{Status: StatusInvalid, Err: err}
 	}
 	maxHP, err := win.ReadProcessUint32(r.handle, 0, r.profile.MaxHPAddr)
@@ -114,7 +115,21 @@ func (r *addressReader) ReadValues(ctx context.Context) BarReadResult {
 	}
 }
 
-// debugf logs at most once per 2 seconds.
+// logFirstFail logs the first failure immediately, then rate-limits to
+// once per 10 seconds so the user sees the error without spamming.
+func (r *addressReader) logFirstFail(format string, args ...interface{}) {
+	if r.log == nil {
+		return
+	}
+	now := time.Now()
+	if !r.loggedFirstFail || now.Sub(r.lastLog) > 10*time.Second {
+		r.logger(format, args...)
+		r.loggedFirstFail = true
+		r.lastLog = now
+	}
+}
+
+// debugf logs at most once per 2 seconds (kept for non-critical messages).
 func (r *addressReader) debugf(format string, args ...interface{}) {
 	if r.log == nil {
 		return
@@ -124,5 +139,9 @@ func (r *addressReader) debugf(format string, args ...interface{}) {
 		return
 	}
 	r.lastLog = now
+	r.log(fmt.Sprintf(format, args...))
+}
+
+func (r *addressReader) logger(format string, args ...interface{}) {
 	r.log(fmt.Sprintf(format, args...))
 }

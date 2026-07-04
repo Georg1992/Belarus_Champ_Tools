@@ -231,9 +231,13 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 		}
 
 		// Dispatch to the active reader's handler.
-		// OCR path: handle OCR reader failures (switch to pixel).
-		// Pixel path: handle OCR recovery probe and pixel failures.
-		if reader == ocr {
+		// Address mode: no fallback to pixel/OCR. Just retry on failure.
+		if reader == address {
+			if result.Status != StatusFound {
+				timing.Sleep(ctx, timing.PollInterval)
+				continue
+			}
+		} else if reader == ocr {
 			if a.handleOCR(cfg, &reader, pixel, result, &nextOCRRetry) {
 				continue
 			}
