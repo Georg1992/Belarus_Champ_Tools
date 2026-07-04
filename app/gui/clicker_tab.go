@@ -207,7 +207,7 @@ func (a *guiApp) clearClickerKey(index int) {
 func (a *guiApp) bindClickerKey(index int) {
 	a.bindKeyFlow(
 		func() bool {
-			if !a.isStarted() || a.bindingActive || index < 0 || index >= runner.ClickerSlotCount {
+			if !a.isViiperReady() || a.bindingActive || index < 0 || index >= runner.ClickerSlotCount {
 				return false
 			}
 			a.bindingActive = true
@@ -217,7 +217,7 @@ func (a *guiApp) bindClickerKey(index int) {
 		},
 		fmt.Sprintf("Press a key to add for %s (%s timeout)...", clickerSlotTitles[index], runner.KeyBindTimeout),
 		func() { a.clickerBindingSlot = -1; a.bindingActive = false },
-		func() { a.setClickerConfigEnabled(a.isStarted()) },
+		func() { a.setClickerConfigEnabled(a.isViiperReady()) },
 		func(vk int32) {
 			a.unsetKeyBinding(vk)
 			a.clickerTriggerVKs[index] = append(a.clickerTriggerVKs[index], vk)

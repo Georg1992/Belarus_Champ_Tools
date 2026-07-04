@@ -302,7 +302,7 @@ func (a *guiApp) clearTimerKey(index int) {
 func (a *guiApp) bindTimerKey(index int) {
 	a.bindKeyFlow(
 		func() bool {
-			if !a.isStarted() || a.bindingActive || index < 0 || index >= a.timerVisibleCount {
+			if !a.isViiperReady() || a.bindingActive || index < 0 || index >= a.timerVisibleCount {
 				return false
 			}
 			a.bindingActive = true
@@ -312,7 +312,7 @@ func (a *guiApp) bindTimerKey(index int) {
 		},
 		fmt.Sprintf("Press a key for timer %d (%s timeout)...", index+1, runner.KeyBindTimeout),
 		func() { a.timerBindingSlot = -1; a.bindingActive = false },
-		func() { a.setTimerKeyConfigEnabled(a.isStarted()) },
+		func() { a.setTimerKeyConfigEnabled(a.isViiperReady()) },
 		func(vk int32) {
 			a.unsetKeyBinding(vk)
 			a.timerKeyVKs[index] = vk

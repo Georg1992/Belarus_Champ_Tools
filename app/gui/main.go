@@ -229,12 +229,18 @@ func (a *guiApp) createWindow() error {
 				a.viiperBadge.SetStatus(viiperActive)
 			} else {
 				a.viiperBadge.SetStatus(viiperInactive)
-				// VIIPER went down — stop tools and disable everything
-				// except the Start VIIPER button.
+				// VIIPER went down — stop tools, close the session,
+				// and disable everything except Start VIIPER.
 				if a.isStarted() {
 					a.appendLog("VIIPER server disconnected — stopping tools")
 					a.onStop()
 				}
+				a.mu.Lock()
+				if a.inputSession != nil {
+					a.inputSession.Close()
+					a.inputSession = nil
+				}
+				a.mu.Unlock()
 				a.startBtn.SetEnabled(false)
 				a.stopBtn.SetEnabled(false)
 				a.setConfigEnabled(false)
@@ -350,6 +356,14 @@ func (a *guiApp) createWindow() error {
 	return nil
 }
 
+// isViiperReady reports whether VIIPER is running with an active session.
+// This is the minimum requirement for key binding and tools operation.
+func (a *guiApp) isViiperReady() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.inputSession != nil
+}
+
 func (a *guiApp) appendLog(line string) {
 	stamped := fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), line)
 
@@ -445,6 +459,10 @@ func (a *guiApp) onStartViiper() {
 		}
 
 		a.mu.Lock()
+		// Close any stale session before replacing it.
+		if a.inputSession != nil {
+			a.inputSession.Close()
+		}
 		a.inputSession = session
 		a.mu.Unlock()
 

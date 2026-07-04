@@ -398,7 +398,7 @@ func (a *guiApp) onBindSPKey() {
 func (a *guiApp) bindAutoPotKey(hp bool) {
 	a.bindKeyFlow(
 		func() bool {
-			if !a.isStarted() || a.bindingActive {
+			if !a.isViiperReady() || a.bindingActive {
 				return false
 			}
 			a.bindingActive = true
@@ -411,7 +411,7 @@ func (a *guiApp) bindAutoPotKey(hp bool) {
 		},
 		fmt.Sprintf("Press a potion hotkey to assign (%s timeout)...", runner.KeyBindTimeout),
 		func() { a.bindingActive = false },
-		func() { a.setAutoPotConfigEnabled(a.isStarted()) },
+		func() { a.setAutoPotConfigEnabled(a.isViiperReady()) },
 		func(vk int32) {
 			a.unsetKeyBinding(vk)
 			if hp {

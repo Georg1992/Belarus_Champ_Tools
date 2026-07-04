@@ -54,11 +54,12 @@ Users extract the ZIP and run `Install.cmd`. See `packaging/README.txt`.
 
 ## Usage
 
-1. Click **Start** before launching the game
-2. Configure tools on each tab (Clicker, AutoPot, KeyChain, TimerKey)
-3. Hold a trigger key to click, or let AutoPot/KeyChain/TimerKey run
-4. Press **End** to stop tools (keep VIIPER running) or start them again
-5. Click **Stop** or close the app to turn off
+1. Launch the app — VIIPER starts automatically (takes a few seconds)
+2. **Configure keys on any tab** — works anytime VIIPER is running, even before clicking Start
+3. Click **Start** to enable tools, then launch your game
+4. Hold a trigger key to click, or let AutoPot/KeyChain/TimerKey run
+5. Press **End** to toggle tools on/off (VIIPER stays running)
+6. Click **Stop** or close the app
 
 ### AutoPot tab
 
@@ -95,10 +96,8 @@ Default delay: **50 ms**. If a game misses clicks, try **50–100 ms**.
 
 | Path | Purpose |
 |------|---------|
-| Path | Purpose |
-|------|---------|
-| `app/gui/main.go` | Main window, Start/Stop, status badge |
-| `app/gui/status_badge.go` | ON / OFF indicator |
+| `app/gui/main.go` | Main window, VIIPER + tools lifecycle, key binding |
+| `app/gui/status_badge.go` | TOOLS status badge (ON / OFF) |
 | `app/gui/server.go` | Embedded VIIPER lifecycle |
 | `app/gui/viiper_badge.go` | VIIPER server status badge |
 | `app/gui/viiper_monitor.go` | VIIPER server health monitor |

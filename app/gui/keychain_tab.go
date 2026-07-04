@@ -328,7 +328,7 @@ func (a *guiApp) clearKeyChain() {
 func (a *guiApp) bindKeyChainKey(index int) {
 	a.bindKeyFlow(
 		func() bool {
-			if !a.isStarted() || a.bindingActive || index < 0 || index >= runner.KeyChainSlotCount {
+			if !a.isViiperReady() || a.bindingActive || index < 0 || index >= runner.KeyChainSlotCount {
 				return false
 			}
 			a.bindingActive = true
@@ -338,7 +338,7 @@ func (a *guiApp) bindKeyChainKey(index int) {
 		},
 		fmt.Sprintf("Press a key for chain slot %d (%s timeout)...", index+1, runner.KeyBindTimeout),
 		func() { a.keyChainBindingSlot = -1; a.bindingActive = false },
-		func() { a.setKeyChainConfigEnabled(a.isStarted()) },
+		func() { a.setKeyChainConfigEnabled(a.isViiperReady()) },
 		func(vk int32) {
 			a.unsetKeyBinding(vk)
 			a.keyChainKeyVKs[index] = vk

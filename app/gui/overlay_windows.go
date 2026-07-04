@@ -103,7 +103,7 @@ func newStatusOverlay() (*statusOverlay, error) {
 	hwnd := win.CreateWindowEx(
 		exStyle, clsName, title,
 		win.WS_POPUP,
-		5, 60, 260, 58, // height matches status UI panel (58px)
+		5, 60, 195, 32, // compact: 2 rows + small padding
 		0, 0,
 		win.HINSTANCE(hInst),
 		nil,
@@ -156,15 +156,15 @@ func (o *statusOverlay) onPaint(hwnd win.HWND) {
 	oldFont := win.SelectObject(hdc, win.HGDIOBJ(o.font))
 	win.SetBkMode(hdc, 1) // TRANSPARENT
 
-	// Row 1: HP/SP values (white), vertically centred in upper half.
+	// Row 1: HP/SP values (white), compact top.
 	if text != "" {
 		win.SetTextColor(hdc, win.RGB(240, 240, 240))
 		textUTF16, _ := syscall.UTF16PtrFromString(text)
 		textLen := int32(len([]rune(text)))
-		win.TextOut(hdc, 4, 10, textUTF16, textLen)
+		win.TextOut(hdc, 4, 2, textUTF16, textLen)
 	}
 
-	// Row 2: mode message, vertically centred in lower half.
+	// Row 2: mode message, compact below the values.
 	// Alert modes (Dead, pots-ended) highlighted in orange; normal modes in dim grey.
 	if mode != "" {
 		modeText := "[" + mode + "]"
@@ -176,7 +176,7 @@ func (o *statusOverlay) onPaint(hwnd win.HWND) {
 		}
 		modeUTF16, _ := syscall.UTF16PtrFromString(modeText)
 		modeLen := int32(len([]rune(modeText)))
-		win.TextOut(hdc, 4, 36, modeUTF16, modeLen)
+		win.TextOut(hdc, 4, 17, modeUTF16, modeLen)
 	}
 
 	win.SelectObject(hdc, oldFont)
@@ -212,12 +212,12 @@ func (o *statusOverlay) Update(hp, hpMax, sp, spMax, panelX, panelY, panelW, pan
 	// Reposition only when we have valid panel coordinates (OCR reader).
 	// Pixel-bar reader passes zeros — skip repositioning, just repaint.
 	if panelW > 0 && panelH > 0 {
-		// Wider window (panelW+80) so long alerts like "HP pots ended on F9"
-		// are never clipped. 258px is too tight for two rows of info.
+		// Compact overlay below the panel: fixed width (195px) fits all text,
+		// fixed height (32px) for 2 rows + small padding.
 		win.SetWindowPos(
 			o.hwnd, win.HWND_TOPMOST,
 			int32(panelX), int32(panelY+panelH+3),
-			int32(panelW+80), int32(panelH), // same height as panel
+			195, 32,
 			ovlSwpNoActivate|ovlSwpShowWindow,
 		)
 	}

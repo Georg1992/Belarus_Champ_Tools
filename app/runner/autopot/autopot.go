@@ -342,14 +342,18 @@ const (
 // Pots-ended detection: if the stat doesn't change for `noChangeTimeout`
 // while we're spamming below threshold, assume the potion stack is empty.
 // In this state the tap interval slows to `potsEndedDelay` (1s) and the
-// overlay shows "HP pots ended" / "SP pots ended". If the value eventually
-// changes (a potion took effect), we exit the slow state immediately.
+// overlay shows "HP pots ended" / "SP pots ended".
+//
+// Recovery in slow mode is checked immediately after each tap: we read the
+// value before the tap, tap the key, then read the value again (before the
+// 1s sleep). If the value changed >= 1%, the potion took effect and we
+// exit slow mode instantly — no need to wait for the next loop iteration.
 func (a *AutoPotRunner) healUntil(ctx context.Context, reader BarReader, hpBar bool) {
 	var (
-		healStart  time.Time
-		lastPct    = -1.0
-		potsEnded  bool
-		recovered  bool
+		healStart time.Time
+		lastPct   = -1.0
+		potsEnded bool
+		recovered bool
 	)
 
 	for {
@@ -400,13 +404,40 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, reader BarReader, hpBar b
 		elapsed := time.Since(healStart)
 		potsEnded, recovered, healStart = a.handlePotsEnded(cfg, hpBar, elapsed, pct, lastPct, potsEnded, healStart)
 		if recovered {
-			continue // skip TapKey, potion already working
+			timing.Sleep(ctx, potsEndedDelay)
+			continue
 		}
 
 		lastPct = pct
 
-		if !a.healTap(ctx, cfg, vk, potsEnded) {
-			return
+		// In slow mode: check immediately after the tap if the potion worked.
+		// Read before, tap, read after — if the value changed >= 1%, recovery.
+		if potsEnded {
+			beforePct := pct
+			if err := cfg.Session.TapKey(vk, timing.KeyTapHold); err != nil {
+				cfg.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", vk, err))
+				return
+			}
+			afterResult := reader.ReadValues(ctx)
+			if afterResult.Status == StatusFound {
+				afterPct := afterResult.HP
+				if !hpBar {
+					afterPct = afterResult.SP
+				}
+				if absPctDiff(afterPct, beforePct) >= valueChangeTol {
+					cfg.Log("autopot: potion took effect, resuming normal speed")
+					setMode(cfg.OnStatusUIMode, "")
+					potsEnded = false
+					healStart = time.Now()
+					continue
+				}
+			}
+			// No recovery — sleep the slow interval and loop again.
+			timing.Sleep(ctx, potsEndedDelay)
+		} else {
+			if !a.healTap(ctx, cfg, vk, false) {
+				return
+			}
 		}
 	}
 }
