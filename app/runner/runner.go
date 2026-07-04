@@ -18,6 +18,9 @@ import (
 	"belarus-champ-tools/runner/autopot"
 	"belarus-champ-tools/runner/internal/lifecycle"
 	"belarus-champ-tools/runner/internal/session"
+	win "belarus-champ-tools/runner/platform/windows"
+
+	"golang.org/x/sys/windows"
 )
 
 // InputSession is the canonical input-device interface any runner uses.
@@ -36,4 +39,44 @@ type (
 var (
 	NewAutoPot = autopot.NewAutoPot
 )
+
+// OpenGameProcess opens a handle to the process with the given PID
+// for memory reading (PROCESS_VM_READ | PROCESS_QUERY_INFORMATION).
+// Returns 0 and an error on failure. The returned handle must be
+// closed with CloseGameProcess when no longer needed.
+func OpenGameProcess(pid uint32) (uintptr, error) {
+	h, err := win.OpenProcessHandle(pid)
+	if err != nil {
+		return 0, err
+	}
+	return uintptr(h), nil
+}
+
+// CloseGameProcess closes a process handle obtained from
+// OpenGameProcess. Safe to call with 0.
+func CloseGameProcess(h uintptr) {
+	if h != 0 {
+		win.CloseProcessHandle(windows.Handle(h))
+	}
+}
+
+// ProcessInfo holds process details for the GUI process selector.
+type ProcessInfo struct {
+	PID  uint32
+	Name string
+}
+
+// ListGameProcesses returns all running processes sorted by name,
+// suitable for populating a process combo box.
+func ListGameProcesses() ([]ProcessInfo, error) {
+	procs, err := win.ListProcesses()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ProcessInfo, len(procs))
+	for i, p := range procs {
+		out[i] = ProcessInfo{PID: p.PID, Name: p.Name}
+	}
+	return out, nil
+}
 

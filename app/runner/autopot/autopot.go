@@ -23,10 +23,13 @@ import (
 	"time"
 
 	"belarus-champ-tools/runner/autopot/statusui"
+	"belarus-champ-tools/runner/profiles"
 
 	"belarus-champ-tools/runner/internal/lifecycle"
 	"belarus-champ-tools/runner/internal/session"
 	"belarus-champ-tools/runner/internal/timing"
+
+	"golang.org/x/sys/windows"
 )
 
 // AutoPotConfig is what gui/main.go passes to NewAutoPot.
@@ -43,6 +46,11 @@ type AutoPotConfig struct {
 	Log            func(string)
 	OnStatusParsed func(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int)
 	OnStatusUIMode func(mode string)
+
+	// Address reading mode — reads HP/SP directly from game process memory.
+	AddressMode   bool
+	ProcessHandle uintptr // from OpenProcess; 0 = invalid
+	Profile       profiles.Profile
 }
 
 // AutoPotRunner heals HP/SP based on readings from the active BarReader.
@@ -145,33 +153,50 @@ const (
 func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 	defer a.resetStabilizers()
 
-	pixel := &pixelBarReader{
-		hpStab: a.hpStabilizer,
-		spStab: a.spStabilizer,
-		log:    cfg.Log,
-	}
-
-	pipeline, err := statusui.NewDefaultPipeline()
-	hasOCR := err == nil
-	var ocr *statusUIReader
-	if hasOCR {
-		ocr = &statusUIReader{
-			poller:       statusui.NewStripPoller(pipeline),
-			onModeChange: cfg.OnStatusUIMode,
-			onParsed:     cfg.OnStatusParsed,
-			log:          cfg.Log,
-			settings:     a.settings,
-		}
-	}
-
+	// Determine which reader to use based on the config.
+	// Address mode takes priority when a valid process handle is provided.
 	var reader BarReader
-	if hasOCR {
-		reader = ocr
-		setMode(cfg.OnStatusUIMode, "Searching...")
+	var pixel *pixelBarReader
+	var ocr *statusUIReader
+	var address *addressReader
+
+	if cfg.AddressMode && cfg.ProcessHandle != 0 {
+		address = &addressReader{
+			handle:     windows.Handle(cfg.ProcessHandle),
+			profile:    cfg.Profile,
+			log:        cfg.Log,
+			liveConfig: a.settings,
+			onParsed:   cfg.OnStatusParsed,
+		}
+		reader = address
+		setMode(cfg.OnStatusUIMode, "Address")
 	} else {
-		reader = pixel
-		if cfg.OnStatusParsed != nil {
-			cfg.OnStatusParsed(pixelModeSentinel, 0, pixelModeSentinel, 0, 0, 0, 0, 0)
+		pixel = &pixelBarReader{
+			hpStab: a.hpStabilizer,
+			spStab: a.spStabilizer,
+			log:    cfg.Log,
+		}
+
+		pipeline, err := statusui.NewDefaultPipeline()
+		hasOCR := err == nil
+		if hasOCR {
+			ocr = &statusUIReader{
+				poller:       statusui.NewStripPoller(pipeline),
+				onModeChange: cfg.OnStatusUIMode,
+				onParsed:     cfg.OnStatusParsed,
+				log:          cfg.Log,
+				settings:     a.settings,
+			}
+		}
+
+		if hasOCR {
+			reader = ocr
+			setMode(cfg.OnStatusUIMode, "Searching...")
+		} else {
+			reader = pixel
+			if cfg.OnStatusParsed != nil {
+				cfg.OnStatusParsed(pixelModeSentinel, 0, pixelModeSentinel, 0, 0, 0, 0, 0)
+			}
 		}
 	}
 

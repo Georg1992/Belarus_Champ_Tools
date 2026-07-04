@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"belarus-champ-tools/runner"
+	"belarus-champ-tools/runner/profiles"
 	"github.com/lxn/walk"
 )
 
@@ -23,6 +24,152 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 		return err
 	}
 
+	// ---- Mode: Visual / Address reading ----
+	modeGB, err := walk.NewGroupBox(page)
+	if err != nil {
+		return err
+	}
+	if err := modeGB.SetTitle("Detection mode"); err != nil {
+		return err
+	}
+	modeLayout := walk.NewVBoxLayout()
+	modeLayout.SetSpacing(4)
+	if err := modeGB.SetLayout(modeLayout); err != nil {
+		return err
+	}
+
+	modeRow, err := walk.NewComposite(modeGB)
+	if err != nil {
+		return err
+	}
+	modeHBox := walk.NewHBoxLayout()
+	modeHBox.SetSpacing(16)
+	if err := modeRow.SetLayout(modeHBox); err != nil {
+		return err
+	}
+
+	a.autopotVisualRB, err = walk.NewRadioButton(modeRow)
+	if err != nil {
+		return err
+	}
+	if err := a.autopotVisualRB.SetText("Visual (screen capture)"); err != nil {
+		return err
+	}
+	a.autopotVisualRB.SetChecked(true)
+
+	a.autopotAddressRB, err = walk.NewRadioButton(modeRow)
+	if err != nil {
+		return err
+	}
+	if err := a.autopotAddressRB.SetText("Address reading"); err != nil {
+		return err
+	}
+
+	// Address-mode sub-controls (process selector + profile).
+	addrRow, err := walk.NewComposite(modeGB)
+	if err != nil {
+		return err
+	}
+	addrHBox := walk.NewHBoxLayout()
+	addrHBox.SetSpacing(8)
+	if err := addrRow.SetLayout(addrHBox); err != nil {
+		return err
+	}
+
+	procLabel, err := walk.NewLabel(addrRow)
+	if err != nil {
+		return err
+	}
+	if err := procLabel.SetText("Game process:"); err != nil {
+		return err
+	}
+
+	a.processCB, err = walk.NewComboBox(addrRow)
+	if err != nil {
+		return err
+	}
+	if err := a.processCB.SetMinMaxSize(walk.Size{Width: 260, Height: 0}, walk.Size{Width: 260, Height: 0}); err != nil {
+		return err
+	}
+
+	a.processRefreshBtn, err = walk.NewPushButton(addrRow)
+	if err != nil {
+		return err
+	}
+	if err := a.processRefreshBtn.SetText("Refresh"); err != nil {
+		return err
+	}
+
+	profileLabel, err := walk.NewLabel(addrRow)
+	if err != nil {
+		return err
+	}
+	if err := profileLabel.SetText("Profile:"); err != nil {
+		return err
+	}
+
+	a.profileCB, err = walk.NewComboBox(addrRow)
+	if err != nil {
+		return err
+	}
+	if err := a.profileCB.SetMinMaxSize(walk.Size{Width: 120, Height: 0}, walk.Size{Width: 120, Height: 0}); err != nil {
+		return err
+	}
+	// Populate profiles from the profiles package.
+	allProfiles := profiles.All()
+	profileNames := make([]string, 0, len(allProfiles))
+	for _, p := range allProfiles {
+		profileNames = append(profileNames, p.Name)
+	}
+	if err := a.profileCB.SetModel(profileNames); err != nil {
+		return err
+	}
+	if len(profileNames) > 0 {
+		a.profileCB.SetCurrentIndex(0)
+	}
+
+	// Wire mode toggle: when Visual is checked, disable address controls
+	// and clear keys. When Address is checked, enable controls.
+	a.autopotVisualRB.CheckedChanged().Attach(func() {
+		isAddress := a.autopotAddressRB.Checked()
+		a.setAutoPotAddressModeEnabled(isAddress)
+		if isAddress {
+			a.appendLog("AutoPot mode: Address reading — select a game process and bind potion keys")
+		}
+	})
+	a.autopotAddressRB.CheckedChanged().Attach(func() {
+		isAddress := a.autopotAddressRB.Checked()
+		a.setAutoPotAddressModeEnabled(isAddress)
+	})
+
+	// Wire process selection: when the user selects a process, open a handle.
+	// When the selection is cleared, close the handle and clear keys.
+	a.processCB.CurrentIndexChanged().Attach(func() {
+		if a.isRefreshingProcesses {
+			return
+		}
+		if a.processCB.CurrentIndex() < 0 {
+			a.closeProcessHandle()
+			a.clearAutoPotKeys()
+			a.appendLog("Game process cleared — potion keys reset")
+		} else {
+			// Open handle to the newly selected process.
+			if err := a.openSelectedProcessHandle(); err != nil {
+				a.appendLog(fmt.Sprintf("Failed to open process: %v", err))
+			}
+		}
+	})
+
+	// Wire refresh button.
+	a.processRefreshBtn.Clicked().Attach(func() {
+		a.isRefreshingProcesses = true
+		if _, err := populateProcessComboBox(a.processCB); err != nil {
+			a.appendLog(fmt.Sprintf("Process list refresh failed: %v", err))
+		}
+		a.isRefreshingProcesses = false
+	})
+
+	// ---- HP potion ----
 	hpGB, err := walk.NewGroupBox(page)
 	if err != nil {
 		return err
@@ -105,6 +252,7 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 	}
 	a.hpClearBtn.Clicked().Attach(a.onClearHPKey)
 
+	// ---- SP potion ----
 	spGB, err := walk.NewGroupBox(page)
 	if err != nil {
 		return err
@@ -196,7 +344,82 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 	}
 	autopotHint.SetFont(hintFont)
 
+	// Initial state: address controls disabled (default is Visual mode).
+	// Must be AFTER all controls are created (hpKeyLabel, windowCB, etc.).
+	a.setAutoPotAddressModeEnabled(false)
+
 	return nil
+}
+
+// isAutoPotAddressMode returns true if Address Reading mode is active.
+func (a *guiApp) isAutoPotAddressMode() bool {
+	return a.autopotAddressRB != nil && a.autopotAddressRB.Checked()
+}
+
+// setAutoPotAddressModeEnabled enables or disables the address-mode
+// UI elements (process selector, profile). When switching to/from
+// address mode, closes the process handle and clears all potion keys.
+func (a *guiApp) setAutoPotAddressModeEnabled(enabled bool) {
+	a.processCB.SetEnabled(enabled)
+	a.processRefreshBtn.SetEnabled(enabled)
+	a.profileCB.SetEnabled(enabled)
+	if !enabled {
+		a.closeProcessHandle()
+	}
+	a.clearAutoPotKeys()
+}
+
+// clearAutoPotKeys resets both HP and SP key bindings and logs it.
+func (a *guiApp) clearAutoPotKeys() {
+	a.hpKeyVK = 0
+	a.spKeyVK = 0
+	a.hpKeyLabel.SetText("none")
+	a.spKeyLabel.SetText("none")
+	a.syncAutoPotSettings()
+}
+
+// selectedProfile returns the server memory profile selected in the
+// combo box, or the default profile if nothing is selected.
+func (a *guiApp) selectedProfile() profiles.Profile {
+	all := profiles.All()
+	idx := a.profileCB.CurrentIndex()
+	if idx >= 0 && idx < len(all) {
+		return all[idx]
+	}
+	return profiles.Default()
+}
+
+// openSelectedProcessHandle opens a handle to the currently selected
+// process from the combo box. Closes any previous handle first.
+func (a *guiApp) openSelectedProcessHandle() error {
+	// Close any previous handle first.
+	a.closeProcessHandle()
+
+	items, err := listProcesses()
+	if err != nil {
+		return fmt.Errorf("list processes: %w", err)
+	}
+	idx := a.processCB.CurrentIndex()
+	if idx < 0 || idx >= len(items) {
+		return nil // nothing selected
+	}
+
+	pid := items[idx].PID
+	handle, err := runner.OpenGameProcess(pid)
+	if err != nil {
+		return fmt.Errorf("open PID %d: %w", pid, err)
+	}
+	a.processHandle = handle
+	a.appendLog(fmt.Sprintf("Opened handle to %s (PID %d)", items[idx].Name, pid))
+	return nil
+}
+
+// closeProcessHandle closes the current process handle, if any.
+func (a *guiApp) closeProcessHandle() {
+	if a.processHandle != 0 {
+		runner.CloseGameProcess(a.processHandle)
+		a.processHandle = 0
+	}
 }
 
 func (a *guiApp) autopotConfig() runner.AutoPotConfig {
@@ -216,6 +439,9 @@ func (a *guiApp) autopotConfig() runner.AutoPotConfig {
 			a.overlay.SetMode(mode)
 		})
 	}
+
+	isAddress := a.isAutoPotAddressMode()
+	profile := a.selectedProfile()
 	return runner.AutoPotConfig{
 		HPThreshold:    a.hpThreshold,
 		SPThreshold:    a.spThreshold,
@@ -232,6 +458,10 @@ func (a *guiApp) autopotConfig() runner.AutoPotConfig {
 			})
 		},
 		OnStatusUIMode: modeFn,
+		// Address reading fields.
+		AddressMode:   isAddress && a.processHandle != 0,
+		ProcessHandle: a.processHandle,
+		Profile:       profile,
 	}
 }
 
@@ -288,15 +518,9 @@ func (a *guiApp) syncAutoPotSettings() {
 		// If neither HP nor SP keys are bound, stop the runner
 		// instead of letting it spin doing nothing.
 		if !cfg.HPEnabled && !cfg.SPEnabled {
-			// Nil the runner immediately so isStarted() and
-			// subsequent sync calls see a stopped state.
 			a.mu.Lock()
 			a.autopotRunner = nil
 			a.mu.Unlock()
-			// Stop+Wait on a background goroutine: calling
-			// r.Wait() on the GUI thread would deadlock if
-			// the runner goroutine is in a Synchronize call
-			// (logging, status, mode switch).
 			go func(old *runner.AutoPotRunner) {
 				old.Stop()
 				old.Wait()
@@ -323,6 +547,13 @@ func (a *guiApp) setAutoPotConfigEnabled(enabled bool) {
 	a.hpClearBtn.SetEnabled(enabled)
 	a.spBindBtn.SetEnabled(enabled)
 	a.spClearBtn.SetEnabled(enabled)
+	a.autopotVisualRB.SetEnabled(enabled)
+	a.autopotAddressRB.SetEnabled(enabled)
+	// Address-mode sub-controls follow the mode+enabled state.
+	isAddress := a.isAutoPotAddressMode()
+	a.processCB.SetEnabled(enabled && isAddress)
+	a.processRefreshBtn.SetEnabled(enabled && isAddress)
+	a.profileCB.SetEnabled(enabled && isAddress)
 }
 
 func (a *guiApp) onClearHPKey() {
@@ -399,6 +630,10 @@ func (a *guiApp) bindAutoPotKey(hp bool) {
 	a.bindKeyFlow(
 		func() bool {
 			if !a.isViiperReady() || a.bindingActive {
+				return false
+			}
+			if a.isAutoPotAddressMode() && a.processCB.CurrentIndex() < 0 {
+				a.appendLog("Cannot bind — select a game process first for Address Reading mode")
 				return false
 			}
 			a.bindingActive = true

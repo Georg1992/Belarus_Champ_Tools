@@ -62,6 +62,13 @@ type guiApp struct {
 	hpClearBtn      *walk.PushButton
 	spBindBtn       *walk.PushButton
 	spClearBtn      *walk.PushButton
+	// AutoPot mode & memory reading
+	autopotVisualRB   *walk.RadioButton // Visual mode (pixel/OCR)
+	autopotAddressRB  *walk.RadioButton // Address-reading mode
+	processCB         *walk.ComboBox     // game process selector
+	processRefreshBtn *walk.PushButton   // refresh process list
+	profileCB         *walk.ComboBox     // server memory profile
+	processHandle     uintptr            // handle to the selected game process, 0 = none
 
 	// KeyChain tab
 	keyChainSlots       [runner.KeyChainSlotCount]keyChainSlotWidgets
@@ -92,8 +99,9 @@ type guiApp struct {
 	spKeyVK        int32
 	hpThreshold    int
 	spThreshold    int
-	overlay        *statusOverlay
-	viiperMonitor  *viiperMonitor
+	overlay         *statusOverlay
+	viiperMonitor   *viiperMonitor
+	isRefreshingProcesses bool // guard: suppress key-clearing during process list refresh
 }
 
 func main() {
@@ -173,6 +181,9 @@ func (a *guiApp) shutdown() {
 			a.overlay.Destroy()
 			a.overlay = nil
 		}
+
+		// Close the game process handle if one is open.
+		a.closeProcessHandle()
 	})
 }
 
