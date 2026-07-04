@@ -65,7 +65,7 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 		return err
 	}
 
-	// Address-mode sub-controls (process selector + profile).
+	// Address-mode sub-controls (window selector + profile).
 	addrRow, err := walk.NewComposite(modeGB)
 	if err != nil {
 		return err
@@ -76,27 +76,27 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 		return err
 	}
 
-	procLabel, err := walk.NewLabel(addrRow)
+	winLabel, err := walk.NewLabel(addrRow)
 	if err != nil {
 		return err
 	}
-	if err := procLabel.SetText("Game process:"); err != nil {
+	if err := winLabel.SetText("Game window:"); err != nil {
 		return err
 	}
 
-	a.processCB, err = walk.NewComboBox(addrRow)
+	a.windowCB, err = walk.NewComboBox(addrRow)
 	if err != nil {
 		return err
 	}
-	if err := a.processCB.SetMinMaxSize(walk.Size{Width: 260, Height: 0}, walk.Size{Width: 260, Height: 0}); err != nil {
+	if err := a.windowCB.SetMinMaxSize(walk.Size{Width: 260, Height: 0}, walk.Size{Width: 260, Height: 0}); err != nil {
 		return err
 	}
 
-	a.processRefreshBtn, err = walk.NewPushButton(addrRow)
+	a.windowRefreshBtn, err = walk.NewPushButton(addrRow)
 	if err != nil {
 		return err
 	}
-	if err := a.processRefreshBtn.SetText("Refresh"); err != nil {
+	if err := a.windowRefreshBtn.SetText("Refresh"); err != nil {
 		return err
 	}
 
@@ -134,7 +134,7 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 		isAddress := a.autopotAddressRB.Checked()
 		a.setAutoPotAddressModeEnabled(isAddress)
 		if isAddress {
-			a.appendLog("AutoPot mode: Address reading — select a game process and bind potion keys")
+			a.appendLog("AutoPot mode: Address reading — select a game window and bind potion keys")
 		}
 	})
 	a.autopotAddressRB.CheckedChanged().Attach(func() {
@@ -142,18 +142,18 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 		a.setAutoPotAddressModeEnabled(isAddress)
 	})
 
-	// Wire process selection: when the user selects a process, open a handle.
+	// Wire window selection: when the user selects a window, open a handle.
 	// When the selection is cleared, close the handle and clear keys.
-	a.processCB.CurrentIndexChanged().Attach(func() {
-		if a.isRefreshingProcesses {
+	a.windowCB.CurrentIndexChanged().Attach(func() {
+		if a.isRefreshingWindows {
 			return
 		}
-		if a.processCB.CurrentIndex() < 0 {
+		if a.windowCB.CurrentIndex() < 0 {
 			a.closeProcessHandle()
 			a.clearAutoPotKeys()
-			a.appendLog("Game process cleared — potion keys reset")
+			a.appendLog("Game window cleared — potion keys reset")
 		} else {
-			// Open handle to the newly selected process.
+			// Open handle to the selected window's process.
 			if err := a.openSelectedProcessHandle(); err != nil {
 				a.appendLog(fmt.Sprintf("Failed to open process: %v", err))
 			}
@@ -161,12 +161,14 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 	})
 
 	// Wire refresh button.
-	a.processRefreshBtn.Clicked().Attach(func() {
-		a.isRefreshingProcesses = true
-		if _, err := populateProcessComboBox(a.processCB); err != nil {
-			a.appendLog(fmt.Sprintf("Process list refresh failed: %v", err))
+	a.windowRefreshBtn.Clicked().Attach(func() {
+		a.isRefreshingWindows = true
+		windows, err := populateWindowComboBox(a.windowCB)
+		if err != nil {
+			a.appendLog(fmt.Sprintf("Window list refresh failed: %v", err))
 		}
-		a.isRefreshingProcesses = false
+		a.windowList = windows
+		a.isRefreshingWindows = false
 	})
 
 	// ---- HP potion ----
@@ -357,11 +359,11 @@ func (a *guiApp) isAutoPotAddressMode() bool {
 }
 
 // setAutoPotAddressModeEnabled enables or disables the address-mode
-// UI elements (process selector, profile). When switching to/from
+// UI elements (window selector, profile). When switching to/from
 // address mode, closes the process handle and clears all potion keys.
 func (a *guiApp) setAutoPotAddressModeEnabled(enabled bool) {
-	a.processCB.SetEnabled(enabled)
-	a.processRefreshBtn.SetEnabled(enabled)
+	a.windowCB.SetEnabled(enabled)
+	a.windowRefreshBtn.SetEnabled(enabled)
 	a.profileCB.SetEnabled(enabled)
 	if !enabled {
 		a.closeProcessHandle()
@@ -389,28 +391,23 @@ func (a *guiApp) selectedProfile() profiles.Profile {
 	return profiles.Default()
 }
 
-// openSelectedProcessHandle opens a handle to the currently selected
-// process from the combo box. Closes any previous handle first.
+// openSelectedProcessHandle opens a handle to the selected window's
+// process by looking up the PID from the stored window list.
 func (a *guiApp) openSelectedProcessHandle() error {
-	// Close any previous handle first.
 	a.closeProcessHandle()
 
-	items, err := listProcesses()
-	if err != nil {
-		return fmt.Errorf("list processes: %w", err)
-	}
-	idx := a.processCB.CurrentIndex()
-	if idx < 0 || idx >= len(items) {
+	idx := a.windowCB.CurrentIndex()
+	if idx < 0 || idx >= len(a.windowList) {
 		return nil // nothing selected
 	}
 
-	pid := items[idx].PID
-	handle, err := runner.OpenGameProcess(pid)
+	win := a.windowList[idx]
+	handle, err := runner.OpenGameProcess(win.pid)
 	if err != nil {
-		return fmt.Errorf("open PID %d: %w", pid, err)
+		return fmt.Errorf("open PID %d: %w", win.pid, err)
 	}
 	a.processHandle = handle
-	a.appendLog(fmt.Sprintf("Opened handle to %s (PID %d)", items[idx].Name, pid))
+	a.appendLog(fmt.Sprintf("Opened handle to %q (PID %d)", win.title, win.pid))
 	return nil
 }
 
@@ -551,8 +548,8 @@ func (a *guiApp) setAutoPotConfigEnabled(enabled bool) {
 	a.autopotAddressRB.SetEnabled(enabled)
 	// Address-mode sub-controls follow the mode+enabled state.
 	isAddress := a.isAutoPotAddressMode()
-	a.processCB.SetEnabled(enabled && isAddress)
-	a.processRefreshBtn.SetEnabled(enabled && isAddress)
+	a.windowCB.SetEnabled(enabled && isAddress)
+	a.windowRefreshBtn.SetEnabled(enabled && isAddress)
 	a.profileCB.SetEnabled(enabled && isAddress)
 }
 
@@ -632,8 +629,8 @@ func (a *guiApp) bindAutoPotKey(hp bool) {
 			if !a.isViiperReady() || a.bindingActive {
 				return false
 			}
-			if a.isAutoPotAddressMode() && a.processCB.CurrentIndex() < 0 {
-				a.appendLog("Cannot bind — select a game process first for Address Reading mode")
+			if a.isAutoPotAddressMode() && a.windowCB.CurrentIndex() < 0 {
+				a.appendLog("Cannot bind — select a game window first for Address Reading mode")
 				return false
 			}
 			a.bindingActive = true

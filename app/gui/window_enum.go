@@ -1,0 +1,114 @@
+//go:build windows
+
+package main
+
+import (
+	"sort"
+	"sync"
+	"syscall"
+	"unsafe"
+
+	"github.com/lxn/walk"
+	"github.com/lxn/win"
+	"golang.org/x/sys/windows"
+)
+
+var (
+	enumUser32                  = windows.NewLazySystemDLL("user32.dll")
+	procEnumWindows             = enumUser32.NewProc("EnumWindows")
+	procGetWindowTextW          = enumUser32.NewProc("GetWindowTextW")
+	procGetWindowTextLengthW    = enumUser32.NewProc("GetWindowTextLengthW")
+	procIsWindowVisible         = enumUser32.NewProc("IsWindowVisible")
+	procGetWindowThreadProcessId = enumUser32.NewProc("GetWindowThreadProcessId")
+)
+
+// windowInfo holds the handle, title, and owning PID of a top-level window.
+type windowInfo struct {
+	hwnd  win.HWND
+	title string
+	pid   uint32
+}
+
+// enumWindowsCallback is the callback for EnumWindows.
+var enumWindowsCallback uintptr
+
+// enumWindowsOnce ensures the callback is registered once.
+var enumWindowsOnce sync.Once
+
+// listVisibleWindows returns all visible top-level windows with
+// non-empty titles, sorted alphabetically, along with each window's PID.
+func listVisibleWindows() []windowInfo {
+	enumWindowsOnce.Do(func() {
+		enumWindowsCallback = syscall.NewCallback(func(hwnd, lParam uintptr) uintptr {
+			ptr := (*[]windowInfo)(unsafe.Pointer(lParam))
+
+			visible, _, _ := procIsWindowVisible.Call(hwnd)
+			if visible == 0 {
+				return 1 // continue enumeration
+			}
+
+			length, _, _ := procGetWindowTextLengthW.Call(hwnd)
+			if length == 0 {
+				return 1
+			}
+
+			buf := make([]uint16, length+1)
+			procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), uintptr(length+1))
+			title := syscall.UTF16ToString(buf)
+			if title == "" {
+				return 1
+			}
+
+			// Get the PID of the process that owns this window.
+			var pid uint32
+			procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+
+			*ptr = append(*ptr, windowInfo{hwnd: win.HWND(hwnd), title: title, pid: pid})
+			return 1 // continue enumeration
+		})
+	})
+
+	var windows []windowInfo
+	procEnumWindows.Call(enumWindowsCallback, uintptr(unsafe.Pointer(&windows)))
+
+	sort.Slice(windows, func(i, j int) bool {
+		return windows[i].title < windows[j].title
+	})
+
+	return windows
+}
+
+// populateWindowComboBox fills a walk ComboBox with visible window titles.
+// Returns the full window info list so the caller can map selection to PID.
+func populateWindowComboBox(cb *walk.ComboBox) ([]windowInfo, error) {
+	items := listVisibleWindows()
+
+	// Save current selection to restore if the same title still exists.
+	selIdx := cb.CurrentIndex()
+	selTitle := ""
+	if selIdx >= 0 {
+		selTitle = cb.Text()
+	}
+
+	// Clear and repopulate.
+	cb.SetModel(nil)
+	titles := make([]string, 0, len(items))
+	for _, w := range items {
+		titles = append(titles, w.title)
+	}
+	if err := cb.SetModel(titles); err != nil {
+		return nil, err
+	}
+
+	// Restore selection if the same window title still exists.
+	if selTitle != "" {
+		for i, t := range titles {
+			if t == selTitle {
+				cb.SetCurrentIndex(i)
+				break
+			}
+		}
+	}
+
+	return items, nil
+}

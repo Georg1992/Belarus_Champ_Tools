@@ -65,10 +65,11 @@ type guiApp struct {
 	// AutoPot mode & memory reading
 	autopotVisualRB   *walk.RadioButton // Visual mode (pixel/OCR)
 	autopotAddressRB  *walk.RadioButton // Address-reading mode
-	processCB         *walk.ComboBox     // game process selector
-	processRefreshBtn *walk.PushButton   // refresh process list
+	windowCB          *walk.ComboBox     // game window selector
+	windowRefreshBtn  *walk.PushButton   // refresh window list
 	profileCB         *walk.ComboBox     // server memory profile
 	processHandle     uintptr            // handle to the selected game process, 0 = none
+	windowList        []windowInfo       // cached window list for PID lookup
 
 	// KeyChain tab
 	keyChainSlots       [runner.KeyChainSlotCount]keyChainSlotWidgets
@@ -101,7 +102,7 @@ type guiApp struct {
 	spThreshold    int
 	overlay         *statusOverlay
 	viiperMonitor   *viiperMonitor
-	isRefreshingProcesses bool // guard: suppress key-clearing during process list refresh
+	isRefreshingWindows bool // guard: suppress key-clearing during window list refresh
 }
 
 func main() {
