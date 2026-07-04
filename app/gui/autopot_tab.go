@@ -164,8 +164,14 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 		}
 	})
 
-	// Wire refresh button.
-	a.windowRefreshBtn.Clicked().Attach(func() {
+	// Wire refresh button — uses MouseDown (fires on every press) instead of
+	// Clicked (which may not fire on first click inside nested containers).
+	// isRefreshingWindows guards against CurrentIndexChanged side-effects
+	// during model replacement (window list refresh clears and repopulates).
+	a.windowRefreshBtn.MouseDown().Attach(func(x, y int, button walk.MouseButton) {
+		if button != walk.LeftButton {
+			return
+		}
 		a.isRefreshingWindows = true
 		windows, err := populateWindowComboBox(a.windowCB)
 		if err != nil {
