@@ -43,13 +43,14 @@ func TestStartViiperMonitor_NoCallbacksWhenStatusStable(t *testing.T) {
 	})
 
 	// Wait for at least two full ping cycles (each: ~instant ping + 2s sleep).
-	// Since VIIPER is not running, the first ping returns inactive, which
-	// matches the initial wasActive=false — no transition → no callback.
-	// Subsequent pings return the same inactive status — still no transition.
+	// If VIIPER is not running: first ping returns inactive, matches
+	// wasActive=false → no transition, 0 callbacks.
+	// If VIIPER is running: first ping returns active → transition,
+	// exactly 1 callback. After that, status is stable — no more callbacks.
 	time.Sleep(4500 * time.Millisecond)
 
-	if callCount.Load() != 0 {
-		t.Errorf("expected 0 callbacks (no status transition), got %d", callCount.Load())
+	if c := callCount.Load(); c > 1 {
+		t.Errorf("expected at most 1 callback (initial transition only), got %d — status kept changing", c)
 	}
 
 	m.stop()

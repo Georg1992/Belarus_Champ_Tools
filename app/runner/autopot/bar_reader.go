@@ -55,6 +55,7 @@ type pixelBarReader struct {
 	spStab  *BarStabilizer
 	log     func(string)
 	lastLog time.Time
+	onParsed func(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int)
 
 	// lastScreenRect is the last known HP bar position in screen
 	// coordinates. Used to centre the next search ROI so the detector
@@ -131,6 +132,13 @@ func (r *pixelBarReader) ReadValues(ctx context.Context) BarReadResult {
 		sp.Percent, mapped.SP.X, mapped.SP.Y, mapped.SP.W, mapped.SP.H, sp.Status,
 		mapped.Block.X, mapped.Block.Y, mapped.Block.W, mapped.Block.H, mapped.MapScore,
 		bounds.Dx(), bounds.Dy(), roi.X, roi.Y, roi.W, roi.H)
+
+	// Forward percentage values to overlay callback (hpMax=100, spMax=100
+	// signals to the overlay that these are percentages, not raw values).
+	if r.onParsed != nil {
+		r.onParsed(int(hp.Percent), 100, int(sp.Percent), 100, 0, 0, 0, 0)
+	}
+
 	return BarReadResult{
 		HP:     hp.Percent,
 		SP:     sp.Percent,

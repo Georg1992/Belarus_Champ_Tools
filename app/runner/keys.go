@@ -91,19 +91,49 @@ func VKToHID(vk int32) (uint8, bool) {
 	return hid, ok
 }
 
-// WaitForKeyPress polls physical key state for up to timeout and returns the
-// virtual-key code of the first key that becomes pressed. Returns ok=false on
+// WaitForKeyPress waits for the user to press AND release a key (a complete
+// tap), and returns the virtual-key code of that key. Returns ok=false on
 // timeout.
+//
+// The two-phase approach (press → wait for release → return) prevents a
+// running clicker from immediately triggering when the bound key is added
+// to the runner while the user is still holding it. The binding only takes
+// effect after the key is released.
+//
+// Phase 1 — detect a rising edge (key transitions from not-pressed to
+// pressed), ignoring any keys already held down when the function started.
+// Phase 2 — wait for that specific key to be released.
 func WaitForKeyPress(timeout time.Duration) (int32, bool) {
 	deadline := time.Now().Add(timeout)
+
+	// Track the previous state of each key so we can detect rising edges.
+	prev := make(map[int32]bool, len(keyNames))
+	for vk := range keyNames {
+		if windows.PhysicalKeyDown(vk) {
+			prev[vk] = true
+		}
+	}
+
+	// Phase 1: wait for any rising edge (new key press).
 	for {
 		if time.Now().After(deadline) {
 			return 0, false
 		}
 		for vk := range keyNames {
-			if windows.PhysicalKeyDown(vk) {
+			nowDown := windows.PhysicalKeyDown(vk)
+			if nowDown && !prev[vk] {
+				// Found a new key press. Phase 2: wait for its release
+				// before returning, so the binder doesn't sync the runner
+				// while the key is still held down.
+				for windows.PhysicalKeyDown(vk) {
+					if time.Now().After(deadline) {
+						return 0, false
+					}
+					time.Sleep(timing.PollInterval)
+				}
 				return vk, true
 			}
+			prev[vk] = nowDown
 		}
 		time.Sleep(timing.PollInterval)
 	}

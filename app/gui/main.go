@@ -100,9 +100,10 @@ type guiApp struct {
 	spKeyVK        int32
 	hpThreshold    int
 	spThreshold    int
-	overlay         *statusOverlay
-	viiperMonitor   *viiperMonitor
-	isRefreshingWindows bool // guard: suppress key-clearing during window list refresh
+	overlay              *statusOverlay
+	viiperMonitor        *viiperMonitor
+	isRefreshingWindows    bool // guard: suppress key-clearing during window list refresh
+	prevAutoPotAddressMode bool // tracks previous AddressMode to detect changes while running
 }
 
 func main() {
@@ -197,6 +198,10 @@ func (a *guiApp) createWindow() error {
 	// Create the HP/SP overlay window (hidden until autopot produces values).
 	if ovl, ovlErr := newStatusOverlay(); ovlErr == nil {
 		a.overlay = ovl
+	}
+
+	if err := a.setupLogLimit(); err != nil {
+		return err
 	}
 
 	if err := mw.SetTitle("BELARUS CHAMP TOOLS"); err != nil {
@@ -340,7 +345,7 @@ func (a *guiApp) createWindow() error {
 	if err := a.logList.SetMinMaxSize(walk.Size{Width: 0, Height: 140}, walk.Size{}); err != nil {
 		return err
 	}
-	a.logItems = []string{}
+	a.logItems = make([]string, 0, maxLogItems)
 	if err := a.logList.SetModel(a.logItems); err != nil {
 		return err
 	}
@@ -373,6 +378,34 @@ func (a *guiApp) isViiperReady() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.inputSession != nil
+}
+// maxLogItems is the maximum number of log entries kept in memory to
+// prevent unbounded memory growth during long sessions.
+const maxLogItems = 500
+
+// setupLogLimit attaches a timer that trims the log items slice on the
+// GUI thread every 30 seconds, ensuring old entries are dropped when the
+// log exceeds maxLogItems. This prevents the in-memory log from growing
+// unboundedly over hours of use.
+func (a *guiApp) setupLogLimit() error {
+	t := time.NewTicker(30 * time.Second)
+	go func() {
+		defer t.Stop()
+		for range t.C {
+			if a.logList == nil {
+				continue
+			}
+			a.mainWindow.Synchronize(func() {
+				if len(a.logItems) > maxLogItems {
+					excess := len(a.logItems) - maxLogItems
+					a.logItems = a.logItems[excess:]
+					_ = a.logList.SetModel(a.logItems)
+					_ = a.logList.SetCurrentIndex(len(a.logItems) - 1)
+				}
+			})
+		}
+	}()
+	return nil
 }
 
 func (a *guiApp) appendLog(line string) {
@@ -612,7 +645,18 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 	keyChainCfg.Session = session
 	keyChainCfg.Log = logFn
 
+	a.prevAutoPotAddressMode = autopotCfg.AddressMode
 	a.startAutoPotRunner(autopotCfg, logFn)
+
+	// If no autopot keys are bound, show "AutoPot off" instead of a stale mode.
+	if !autopotCfg.HPEnabled && !autopotCfg.SPEnabled {
+		a.mainWindow.Synchronize(func() {
+			if a.overlay != nil {
+				a.overlay.SetMode("AutoPot off")
+			}
+		})
+	}
+
 	a.startTimerKeyRunner(timerCfg, logFn)
 	a.startKeyChainRunner(keyChainCfg, logFn)
 
@@ -622,7 +666,6 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 	if wasStarting == 0 {
 		return // onStop already cleared starting before we could finish
 	}
-
 
 	a.mainWindow.Synchronize(func() { a.setToolsStarted(true) })
 	logFn("Tools started")

@@ -157,6 +157,10 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 			if err := a.openSelectedProcessHandle(); err != nil {
 				a.appendLog(fmt.Sprintf("Failed to open process: %v", err))
 			}
+			// Sync after PID change so the runner picks up the new
+			// AddressMode=true config (if Address radio is checked).
+			// In Visual mode this is a harmless no-op.
+			a.syncAutoPotSettings()
 		}
 	})
 
@@ -166,6 +170,8 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 		windows, err := populateWindowComboBox(a.windowCB)
 		if err != nil {
 			a.appendLog(fmt.Sprintf("Window list refresh failed: %v", err))
+		} else if len(windows) == 0 {
+			a.appendLog("Window list refresh found no visible windows")
 		}
 		a.windowList = windows
 		a.isRefreshingWindows = false
@@ -359,8 +365,9 @@ func (a *guiApp) isAutoPotAddressMode() bool {
 }
 
 // setAutoPotAddressModeEnabled enables or disables the address-mode
-// UI elements (window selector, profile). When switching to/from
-// address mode, clears the PID and all potion keys.
+// UI elements (window selector, profile). When switching away from
+// address mode (back to Visual), clears the PID so the old handle
+// isn't reused. Potion keys are preserved — they work for both modes.
 func (a *guiApp) setAutoPotAddressModeEnabled(enabled bool) {
 	a.windowCB.SetEnabled(enabled)
 	a.windowRefreshBtn.SetEnabled(enabled)
@@ -368,7 +375,7 @@ func (a *guiApp) setAutoPotAddressModeEnabled(enabled bool) {
 	if !enabled {
 		a.processPID = 0
 	}
-	a.clearAutoPotKeys()
+	a.syncAutoPotSettings()
 }
 
 // clearAutoPotKeys resets both HP and SP key bindings and logs it.
@@ -391,6 +398,16 @@ func (a *guiApp) selectedProfile() profiles.Profile {
 	return profiles.Default()
 }
 
+// selectedWindowTitle returns the title of the currently selected window,
+// or empty string if nothing is selected.
+func (a *guiApp) selectedWindowTitle() string {
+	idx := a.windowCB.CurrentIndex()
+	if idx < 0 || idx >= len(a.windowList) {
+		return ""
+	}
+	return a.windowList[idx].title
+}
+
 // openSelectedProcessHandle stores the selected window's PID for
 // use by the address reader (which opens/closes handles per read).
 func (a *guiApp) openSelectedProcessHandle() error {
@@ -400,8 +417,12 @@ func (a *guiApp) openSelectedProcessHandle() error {
 	}
 
 	win := a.windowList[idx]
-	a.processPID = win.pid
-	a.appendLog(fmt.Sprintf("Selected %q (PID %d)", win.title, win.pid))
+	// Only log and update PID if it actually changed (guards against
+	// spurious CurrentIndexChanged firings from Walk's combo box).
+	if a.processPID != win.pid {
+		a.processPID = win.pid
+		a.appendLog(fmt.Sprintf("Selected %q (PID %d)", win.title, win.pid))
+	}
 	return nil
 }
 
@@ -423,6 +444,18 @@ func (a *guiApp) autopotConfig() runner.AutoPotConfig {
 		})
 	}
 
+	statusFn := func(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int) {
+		if a.overlay == nil {
+			return
+		}
+		a.mainWindow.Synchronize(func() {
+			a.overlay.SetValues(hp, hpMax, sp, spMax)
+			if stripW > 0 && stripH > 0 {
+				a.overlay.SetPanelRect(stripX, stripY, stripW, stripH)
+			}
+		})
+	}
+
 	isAddress := a.isAutoPotAddressMode()
 	profile := a.selectedProfile()
 	return runner.AutoPotConfig{
@@ -435,28 +468,14 @@ func (a *guiApp) autopotConfig() runner.AutoPotConfig {
 		HPEnabled:      a.hpEnabledCB.Checked(),
 		SPEnabled:      a.spEnabledCB.Checked(),
 		Log:            a.appendLog,
-		OnStatusParsed: func(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int) {
-			a.mainWindow.Synchronize(func() {
-				a.onStatusParsed(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH)
-			})
-		},
+		OnStatusParsed: statusFn,
 		OnStatusUIMode: modeFn,
 		// Address reading fields.
-		AddressMode: isAddress && a.processPID != 0,
-		ProcessPID:  a.processPID,
-		Profile:     profile,
+		AddressMode:  isAddress && a.processPID != 0,
+		ProcessPID:   a.processPID,
+		ProcessTitle: a.selectedWindowTitle(),
+		Profile:      profile,
 	}
-}
-
-// onStatusParsed is called from the autopot goroutine whenever new HP/SP
-// values are parsed. It forwards the values to the overlay window.
-// The caller (autopotConfig) already wraps this in mainWindow.Synchronize,
-// so this method can access walk UI directly.
-func (a *guiApp) onStatusParsed(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int) {
-	if a.overlay == nil {
-		return
-	}
-	a.overlay.Update(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH)
 }
 
 func (a *guiApp) commitHPThresholdEdit() {
@@ -508,8 +527,33 @@ func (a *guiApp) syncAutoPotSettings() {
 				old.Stop()
 				old.Wait()
 			}(r)
+			if a.overlay != nil {
+				a.overlay.SetMode("AutoPot off")
+			}
 			return
 		}
+
+		// If AddressMode changed (Visual→Address or Address→Visual),
+		// we must stop the runner and start a new one. The reader
+		// (addressReader / statusUIReader / pixelBarReader) is created
+		// once inside run() — UpdateSettings only changes the config,
+		// it doesn't recreate the reader.
+		if cfg.AddressMode != a.prevAutoPotAddressMode {
+			a.prevAutoPotAddressMode = cfg.AddressMode
+			a.mu.Lock()
+			a.autopotRunner = nil
+			a.mu.Unlock()
+			// Stop synchronously (fast — just sets the stop flag) so
+			// the new runner doesn't overlap with the old one on the
+			// same InputSession (VIIPER connection).
+			r.Stop()
+			go func(old *runner.AutoPotRunner) {
+				old.Wait()
+			}(r)
+			a.startAutoPotRunner(cfg, a.appendLog)
+			return
+		}
+
 		r.UpdateSettings(cfg)
 		return
 	}
@@ -518,6 +562,7 @@ func (a *guiApp) syncAutoPotSettings() {
 		return
 	}
 
+	a.prevAutoPotAddressMode = cfg.AddressMode
 	a.startAutoPotRunner(cfg, a.appendLog)
 }
 

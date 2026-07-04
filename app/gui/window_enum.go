@@ -83,6 +83,16 @@ func listVisibleWindows() []windowInfo {
 func populateWindowComboBox(cb *walk.ComboBox) ([]windowInfo, error) {
 	items := listVisibleWindows()
 
+	if len(items) == 0 {
+		// No windows found — this is unusual on a running Windows desktop
+		// and may indicate that the EnumWindows call failed or all windows
+		// have empty titles (e.g. during a fast user switch / lock screen).
+		// Leave the old model intact so the user doesn't lose their selection.
+		// Since we don't have the logger reference here, the caller (Refresh button)
+		// can detect this via the returned empty slice and log accordingly.
+		return items, nil
+	}
+
 	// Save current selection to restore if the same title still exists.
 	selIdx := cb.CurrentIndex()
 	selTitle := ""

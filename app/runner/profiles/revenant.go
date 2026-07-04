@@ -2,26 +2,27 @@ package profiles
 
 // Revenant returns the memory profile for the Revenant server.
 //
-// Addresses are absolute virtual addresses (they include the process
-// base), so ReadProcessMemory should use baseAddr=0.
+// Addresses are module-relative offsets (from the exe base address).
+// The address reader adds the process base address at runtime so
+// ASLR doesn't break them.
 func Revenant() Profile {
 	return Profile{
 		Name: "Revenant",
 
-		CurrentHPAddr: 0x015FF908,
-		MaxHPAddr:     0x015FF90C,
-		CurrentSPAddr: 0x015FF910,
-		MaxSPAddr:     0x015FF914,
+		CurrentHPAddr: 0x011FF908,
+		MaxHPAddr:     0x011FF90C,
+		CurrentSPAddr: 0x011FF910,
+		MaxSPAddr:     0x011FF914,
 
-		ZenyAddr:    0x015FBA90,
-		CoordXAddr:  0x015E8184,
-		CoordYAddr:  0x015E8188,
-		NameAddr:    0x01602568,
+		ZenyAddr:    0x011FBA90,
+		CoordXAddr:  0x011E8184,
+		CoordYAddr:  0x011E8188,
+		NameAddr:    0x01202568,
 
-		MaxWeightAddr:     0x015FBA9C,
-		CurrentWeightAddr: 0x015FBAA0,
-		InventorySizeAddr: 0x015FBAB4,
+		MaxWeightAddr:     0x011FBA9C,
+		CurrentWeightAddr: 0x011FBAA0,
+		InventorySizeAddr: 0x011FBAB4,
 
-		MapNameAddr: 0x015FB9AC,
+		MapNameAddr: 0x011FB9AC,
 	}
 }

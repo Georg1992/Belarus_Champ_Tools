@@ -25,6 +25,8 @@ import (
 	"belarus-champ-tools/runner/autopot/statusui"
 	"belarus-champ-tools/runner/profiles"
 
+	win "belarus-champ-tools/runner/platform/windows"
+
 	"belarus-champ-tools/runner/internal/lifecycle"
 	"belarus-champ-tools/runner/internal/session"
 	"belarus-champ-tools/runner/internal/timing"
@@ -47,9 +49,10 @@ type AutoPotConfig struct {
 
 	// Address reading mode — reads HP/SP directly from game process memory.
 	// Following the AHK pattern: opens handle on each read, reads, closes.
-	AddressMode bool
-	ProcessPID  uint32 // game process PID; 0 = not selected
-	Profile     profiles.Profile
+	AddressMode  bool
+	ProcessPID   uint32 // game process PID; 0 = not selected
+	ProcessTitle string // game window title for auto-reconnect on error
+	Profile      profiles.Profile
 }
 
 // AutoPotRunner heals HP/SP based on readings from the active BarReader.
@@ -152,28 +155,59 @@ const (
 func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 	defer a.resetStabilizers()
 
+	// Close the persistent process handle when exiting the run loop.
+	var address *addressReader
+	defer func() {
+		if address != nil {
+			address.Close()
+		}
+	}()
+
 	// Determine which reader to use based on the config.
 	// Address mode takes priority when a valid process handle is provided.
 	var reader BarReader
 	var pixel *pixelBarReader
 	var ocr *statusUIReader
-	var address *addressReader
 
 	if cfg.AddressMode && cfg.ProcessPID != 0 {
-		address = &addressReader{
-			pid:        cfg.ProcessPID,
-			profile:    cfg.Profile,
-			log:        cfg.Log,
-			liveConfig: a.settings,
-			onParsed:   cfg.OnStatusParsed,
+		// Resolve the exe base address so module-relative offsets from
+		// the profile work even with ASLR.
+		baseAddr, baseErr := win.GetProcessBaseAddr(cfg.ProcessPID)
+		if baseErr != nil {
+			cfg.Log(fmt.Sprintf("address: cannot resolve module base for PID %d: %v — falling back to Visual mode", cfg.ProcessPID, baseErr))
+		} else {
+			// Open a persistent process handle for the game process.
+			// This handle is reused for all memory reads and closed
+			// on cleanup in the deferred block below.
+			handle, hErr := win.OpenProcessHandle(cfg.ProcessPID)
+			if hErr != nil {
+				cfg.Log(fmt.Sprintf("address: OpenProcess(%d) failed: %v — falling back to Visual mode", cfg.ProcessPID, hErr))
+			} else {
+				address = &addressReader{
+					pid:          cfg.ProcessPID,
+					procHandle:   handle,
+					profile:      cfg.Profile,
+					processTitle: cfg.ProcessTitle,
+					moduleBase:   baseAddr,
+					log:          cfg.Log,
+					liveConfig:   a.settings,
+					onParsed:     cfg.OnStatusParsed,
+					onModeChange: cfg.OnStatusUIMode,
+				}
+				reader = address
+				setMode(cfg.OnStatusUIMode, "Address reading")
+			}
 		}
-		reader = address
-		setMode(cfg.OnStatusUIMode, "Address")
-	} else {
+	}
+
+	// Fall through to pixel/OCR if address reader wasn't created
+	// (either AddressMode disabled, or base resolution failed).
+	if reader == nil {
 		pixel = &pixelBarReader{
-			hpStab: a.hpStabilizer,
-			spStab: a.spStabilizer,
-			log:    cfg.Log,
+			hpStab:   a.hpStabilizer,
+			spStab:   a.spStabilizer,
+			log:      cfg.Log,
+			onParsed: cfg.OnStatusParsed,
 		}
 
 		pipeline, err := statusui.NewDefaultPipeline()
@@ -259,8 +293,12 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 			continue
 		}
 
-		timing.Sleep(ctx, timing.CaptureRetryDelay)
+	if reader == address {
+		timing.Sleep(ctx, timing.PollInterval) // 10ms for address mode
+	} else {
+		timing.Sleep(ctx, timing.CaptureRetryDelay) // 50ms for pixel/OCR
 	}
+}
 }
 
 // handleDead handles the StatusDead case. Returns true if the iteration was
@@ -294,7 +332,7 @@ func (a *AutoPotRunner) handleOCR(cfg AutoPotConfig, reader *BarReader, pixel Ba
 	// OCR reader failed — switch to pixel-bar fallback.
 	cfg.Log(fmt.Sprintf("autopot: statusui issue, switching to pixel-bar: %v", result.Err))
 	*reader = pixel
-	setMode(cfg.OnStatusUIMode, "Pixel-bar")
+	setMode(cfg.OnStatusUIMode, "Pixelsearch")
 	if cfg.OnStatusParsed != nil {
 		cfg.OnStatusParsed(pixelModeSentinel, 0, pixelModeSentinel, 0, 0, 0, 0, 0)
 	}

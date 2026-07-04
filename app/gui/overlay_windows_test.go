@@ -6,164 +6,109 @@ import (
 	"testing"
 )
 
-func TestOverlayUpdate_Sentinel(t *testing.T) {
+func TestOverlayShowStopped(t *testing.T) {
 	ovl, err := newStatusOverlay()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ovl.Destroy()
 
-	ovl.Update(-1, 0, -1, 0, 0, 0, 0, 0)
+	ovl.ShowStopped()
 
 	ovl.mu.Lock()
-	got := ovl.text
+	running := ovl.running
+	mode := ovl.mode
+	hp := ovl.valuesHP
+	sp := ovl.valuesSP
 	ovl.mu.Unlock()
 
-	want := "error: Pixelsearch is used"
-	if got != want {
-		t.Errorf("Update(-1,0,-1,0) text = %q; want %q", got, want)
+	if running {
+		t.Errorf("ShowStopped() running = true; want false")
+	}
+	if mode != "Stopped" {
+		t.Errorf("ShowStopped() mode = %q; want %q", mode, "Stopped")
+	}
+	if hp != 0 || sp != 0 {
+		t.Errorf("ShowStopped() values not cleared: HP=%d SP=%d", hp, sp)
 	}
 }
 
-func TestOverlayUpdate_FullValues(t *testing.T) {
-	ovl, err := newStatusOverlay()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ovl.Destroy()
-
-	ovl.Update(750, 1290, 100, 200, 0, 0, 0, 0)
-
-	ovl.mu.Lock()
-	got := ovl.text
-	ovl.mu.Unlock()
-
-	want := "HP 750/1290  SP 100/200"
+func TestOverlayShowStopped_RunningText(t *testing.T) {
+	got := runningText(true)
+	want := "● Tools ON"
 	if got != want {
-		t.Errorf("Update(750,1290,100,200) text = %q; want %q", got, want)
+		t.Errorf("runningText(true) = %q; want %q", got, want)
+	}
+
+	got = runningText(false)
+	want = "● Tools OFF"
+	if got != want {
+		t.Errorf("runningText(false) = %q; want %q", got, want)
 	}
 }
 
-func TestOverlayUpdate_OnlyHPMax(t *testing.T) {
+func TestOverlaySetMode_AddressReading(t *testing.T) {
 	ovl, err := newStatusOverlay()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ovl.Destroy()
 
-	ovl.Update(500, 1000, 60, 0, 0, 0, 0, 0)
+	ovl.SetMode("Address reading")
 
 	ovl.mu.Lock()
-	got := ovl.text
+	running := ovl.running
+	mode := ovl.mode
 	ovl.mu.Unlock()
 
-	want := "HP 500/1000"
-	if got != want {
-		t.Errorf("Update(500,1000,60,0) text = %q; want %q", got, want)
+	if !running {
+		t.Errorf("SetMode('Address reading') running = false; want true")
+	}
+	if mode != "Address reading" {
+		t.Errorf("SetMode('Address reading') mode = %q; want %q", mode, "Address reading")
 	}
 }
 
-func TestOverlayUpdate_NoMax(t *testing.T) {
+func TestOverlaySetMode_Pixelsearch(t *testing.T) {
 	ovl, err := newStatusOverlay()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ovl.Destroy()
 
-	ovl.Update(80, 0, 30, 0, 0, 0, 0, 0)
-
-	ovl.mu.Lock()
-	got := ovl.text
-	ovl.mu.Unlock()
-
-	want := "HP 80  SP 30"
-	if got != want {
-		t.Errorf("Update(80,0,30,0) text = %q; want %q", got, want)
-	}
-}
-
-func TestOverlayUpdate_Reposition(t *testing.T) {
-	ovl, err := newStatusOverlay()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ovl.Destroy()
-
-	// stripW>0, stripH>0 → SetWindowPos is called with these strip coords.
-	// We can't easily verify the HWND position from here, but we can verify
-	// the text was set correctly (the reposition path doesn't affect text).
-	ovl.Update(750, 1290, 100, 200, 100, 500, 218, 58)
-
-	ovl.mu.Lock()
-	got := ovl.text
-	ovl.mu.Unlock()
-
-	want := "HP 750/1290  SP 100/200"
-	if got != want {
-		t.Errorf("Update with strip text = %q; want %q", got, want)
-	}
-}
-
-func TestOverlayUpdate_ZeroValues(t *testing.T) {
-	ovl, err := newStatusOverlay()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ovl.Destroy()
-
-	// Zero HP/SP — not a sentinel, should show "HP 0 SP 0".
-	ovl.Update(0, 0, 0, 0, 0, 0, 0, 0)
-
-	ovl.mu.Lock()
-	got := ovl.text
-	ovl.mu.Unlock()
-
-	want := "HP 0  SP 0"
-	if got != want {
-		t.Errorf("Update(0,0,0,0) text = %q; want %q", got, want)
-	}
-}
-
-func TestOverlayUpdate_OnlyOneNegative(t *testing.T) {
-	ovl, err := newStatusOverlay()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ovl.Destroy()
-
-	// hp=-1 only — should still trigger sentinel (hp < 0).
-	ovl.Update(-1, 0, 50, 100, 0, 0, 0, 0)
-
-	ovl.mu.Lock()
-	got := ovl.text
-	ovl.mu.Unlock()
-
-	want := "error: Pixelsearch is used"
-	if got != want {
-		t.Errorf("Update(-1,0,50,100) text = %q; want %q", got, want)
-	}
-}
-
-func TestOverlaySetMode(t *testing.T) {
-	ovl, err := newStatusOverlay()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ovl.Destroy()
-
-	ovl.SetMode("Pixel-bar")
+	ovl.SetMode("Pixelsearch")
 
 	ovl.mu.Lock()
 	got := ovl.mode
 	ovl.mu.Unlock()
 
-	want := "Pixel-bar"
+	want := "Pixelsearch"
 	if got != want {
-		t.Errorf("SetMode('Pixel-bar') mode = %q; want %q", got, want)
+		t.Errorf("SetMode('Pixelsearch') mode = %q; want %q", got, want)
 	}
 }
 
-func TestOverlayUpdate_PreservesMode(t *testing.T) {
+func TestOverlaySetMode_Replaces(t *testing.T) {
+	ovl, err := newStatusOverlay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ovl.Destroy()
+
+	ovl.SetMode("Address reading")
+	ovl.SetMode("Pixelsearch")
+
+	ovl.mu.Lock()
+	got := ovl.mode
+	ovl.mu.Unlock()
+
+	want := "Pixelsearch"
+	if got != want {
+		t.Errorf("SetMode Address→Pixelsearch mode = %q; want %q", got, want)
+	}
+}
+
+func TestOverlaySetMode_KeepsRunning(t *testing.T) {
 	ovl, err := newStatusOverlay()
 	if err != nil {
 		t.Fatal(err)
@@ -171,18 +116,46 @@ func TestOverlayUpdate_PreservesMode(t *testing.T) {
 	defer ovl.Destroy()
 
 	ovl.SetMode("OCR")
-	ovl.Update(-1, 0, -1, 0, 0, 0, 0, 0)
+	ovl.SetMode("Pixelsearch")
 
 	ovl.mu.Lock()
-	mode := ovl.mode
-	text := ovl.text
+	running := ovl.running
 	ovl.mu.Unlock()
 
-	if mode != "OCR" {
-		t.Errorf("mode after sentinel = %q; want %q", mode, "OCR")
+	if !running {
+		t.Errorf("running after two SetMode calls = false; want true")
 	}
-	if text != "error: Pixelsearch is used" {
-		t.Errorf("text after sentinel = %q; want %q", text, "error: Pixelsearch is used")
+}
+
+func TestOverlayShowStopped_ClearsRunning(t *testing.T) {
+	ovl, err := newStatusOverlay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ovl.Destroy()
+
+	ovl.SetMode("Address reading")
+	ovl.SetValues(5000, 10000, 3000, 6000)
+	ovl.ShowStopped()
+
+	ovl.mu.Lock()
+	running := ovl.running
+	mode := ovl.mode
+	hp := ovl.valuesHP
+	sp := ovl.valuesSP
+	ovl.mu.Unlock()
+
+	if running {
+		t.Errorf("ShowStopped after SetMode: running = true; want false")
+	}
+	if mode != "Stopped" {
+		t.Errorf("ShowStopped after SetMode: mode = %q; want %q", mode, "Stopped")
+	}
+	if hp != 0 {
+		t.Errorf("ShowStopped after SetValues: HP = %d; want 0", hp)
+	}
+	if sp != 0 {
+		t.Errorf("ShowStopped after SetValues: SP = %d; want 0", sp)
 	}
 }
 
@@ -197,14 +170,18 @@ func TestOverlaySetMode_Empty(t *testing.T) {
 
 	ovl.mu.Lock()
 	got := ovl.mode
+	running := ovl.running
 	ovl.mu.Unlock()
 
 	if got != "" {
 		t.Errorf("SetMode('') mode = %q; want empty", got)
 	}
+	if !running {
+		t.Errorf("SetMode('') running = false; want true")
+	}
 }
 
-func TestOverlaySetMode_Replaces(t *testing.T) {
+func TestOverlaySetValues_OcrStoresRaw(t *testing.T) {
 	ovl, err := newStatusOverlay()
 	if err != nil {
 		t.Fatal(err)
@@ -212,112 +189,95 @@ func TestOverlaySetMode_Replaces(t *testing.T) {
 	defer ovl.Destroy()
 
 	ovl.SetMode("OCR")
-	ovl.SetMode("Pixel-bar")
+	ovl.SetValues(5000, 10000, 3000, 6000) // raw values stored as-is
 
 	ovl.mu.Lock()
-	got := ovl.mode
+	hp := ovl.valuesHP
+	hpMax := ovl.valuesHPMax
+	sp := ovl.valuesSP
+	spMax := ovl.valuesSPMax
 	ovl.mu.Unlock()
 
-	want := "Pixel-bar"
-	if got != want {
-		t.Errorf("SetMode OCR→Pixel-bar mode = %q; want %q", got, want)
+	if hp != 5000 || hpMax != 10000 {
+		t.Errorf("OCR SetValues: HP = %d/%d; want 5000/10000", hp, hpMax)
+	}
+	if sp != 3000 || spMax != 6000 {
+		t.Errorf("OCR SetValues: SP = %d/%d; want 3000/6000", sp, spMax)
 	}
 }
 
-func TestOverlaySetMode_DeadAlert(t *testing.T) {
+func TestOverlaySetValues_PixelStoresPercent(t *testing.T) {
 	ovl, err := newStatusOverlay()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ovl.Destroy()
 
-	ovl.Update(1, 1290, 0, 201, 100, 500, 218, 58)
-	ovl.SetMode("Dead")
+	ovl.SetMode("Pixelsearch")
+	ovl.SetValues(50, 100, 30, 100) // percentages stored as-is
 
 	ovl.mu.Lock()
-	gotMode := ovl.mode
-	gotText := ovl.text
+	hp := ovl.valuesHP
+	hpMax := ovl.valuesHPMax
+	sp := ovl.valuesSP
+	spMax := ovl.valuesSPMax
 	ovl.mu.Unlock()
 
-	if gotMode != "Dead" {
-		t.Errorf("SetMode('Dead') mode = %q; want %q", gotMode, "Dead")
+	if hp != 50 || hpMax != 100 {
+		t.Errorf("Pixelsearch SetValues: HP = %d/%d; want 50/100", hp, hpMax)
 	}
-	if gotText != "HP 1/1290  SP 0/201" {
-		t.Errorf("text after SetMode('Dead') = %q; want %q", gotText, "HP 1/1290  SP 0/201")
+	if sp != 30 || spMax != 100 {
+		t.Errorf("Pixelsearch SetValues: SP = %d/%d; want 30/100", sp, spMax)
 	}
 }
 
-func TestOverlaySetMode_PotsEnded(t *testing.T) {
+func TestOverlaySetValues_ZeroMax(t *testing.T) {
 	ovl, err := newStatusOverlay()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ovl.Destroy()
 
-	ovl.Update(350, 1290, 107, 201, 100, 500, 218, 58)
-	ovl.SetMode("HP pots ended on F9")
+	ovl.SetValues(5000, 0, 3000, 0) // zero max → stored as-is, onPaint hides
 
 	ovl.mu.Lock()
-	gotMode := ovl.mode
-	gotText := ovl.text
+	hp := ovl.valuesHP
+	hpMax := ovl.valuesHPMax
+	sp := ovl.valuesSP
+	spMax := ovl.valuesSPMax
 	ovl.mu.Unlock()
 
-	if gotMode != "HP pots ended on F9" {
-		t.Errorf("SetMode('HP pots ended on F9') mode = %q; want %q", gotMode, "HP pots ended on F9")
+	if hp != 5000 {
+		t.Errorf("SetValues(5000,0): HP = %d; want 5000", hp)
 	}
-	if gotText != "HP 350/1290  SP 107/201" {
-		t.Errorf("text after pots-ended = %q; want %q", gotText, "HP 350/1290  SP 107/201")
+	if hpMax != 0 {
+		t.Errorf("SetValues(5000,0): HP max = %d; want 0", hpMax)
+	}
+	if sp != 3000 {
+		t.Errorf("SetValues(3000,0): SP = %d; want 3000", sp)
+	}
+	if spMax != 0 {
+		t.Errorf("SetValues(3000,0): SP max = %d; want 0", spMax)
 	}
 }
 
-func TestOverlayShowStopped(t *testing.T) {
+func TestOverlayClearValues(t *testing.T) {
 	ovl, err := newStatusOverlay()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ovl.Destroy()
 
-	// Set some values first.
-	ovl.Update(750, 1290, 100, 200, 0, 0, 0, 0)
-	ovl.SetMode("OCR")
-
-	// Now show stopped.
-	ovl.ShowStopped()
+	ovl.SetValues(5000, 10000, 3000, 6000)
+	ovl.ClearValues()
 
 	ovl.mu.Lock()
-	gotMode := ovl.mode
-	gotText := ovl.text
+	hp := ovl.valuesHP
+	sp := ovl.valuesSP
 	ovl.mu.Unlock()
 
-	if gotMode != "Stopped" {
-		t.Errorf("ShowStopped() mode = %q; want %q", gotMode, "Stopped")
-	}
-	if gotText != "" {
-		t.Errorf("ShowStopped() text = %q; want empty", gotText)
-	}
-}
-
-func TestOverlayShowStopped_ThenUpdateRestoresText(t *testing.T) {
-	ovl, err := newStatusOverlay()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ovl.Destroy()
-
-	ovl.ShowStopped()
-	ovl.Update(750, 1290, 100, 200, 0, 0, 0, 0)
-
-	ovl.mu.Lock()
-	gotText := ovl.text
-	gotMode := ovl.mode
-	ovl.mu.Unlock()
-
-	if gotText != "HP 750/1290  SP 100/200" {
-		t.Errorf("Update after ShowStopped text = %q; want %q", gotText, "HP 750/1290  SP 100/200")
-	}
-	// Update does NOT clear mode.
-	if gotMode != "Stopped" {
-		t.Errorf("mode after Update = %q; want %q", gotMode, "Stopped")
+	if hp != 0 || sp != 0 {
+		t.Errorf("ClearValues: HP=%d SP=%d; want 0 0", hp, sp)
 	}
 }
 
@@ -328,6 +288,6 @@ func TestOverlayHide(t *testing.T) {
 	}
 	defer ovl.Destroy()
 
-	// Just ensure it doesn't panic — no return value to assert.
+	// Just ensure it doesn't panic.
 	ovl.Hide()
 }

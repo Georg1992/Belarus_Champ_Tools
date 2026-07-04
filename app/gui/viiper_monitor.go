@@ -33,6 +33,8 @@ func startViiperMonitor(ctx context.Context, onStatusChange func(active bool)) *
 		addr := runner.DefaultAPIAddr
 		api := viiperclient.New(addr)
 		wasActive := false
+		pollTimer := time.NewTimer(2 * time.Second)
+		defer pollTimer.Stop()
 
 		for monitorCtx.Err() == nil {
 			pingCtx, pingCancel := context.WithTimeout(monitorCtx, 2*time.Second)
@@ -45,10 +47,22 @@ func startViiperMonitor(ctx context.Context, onStatusChange func(active bool)) *
 				onStatusChange(active)
 			}
 
+			// Drain the timer channel before Reset to avoid a documented
+			// race: if the timer fired between PingCtx return and Stop(),
+			// Reset without drain causes the select to read a stale value
+			// immediately instead of waiting 2 seconds.
+			if !pollTimer.Stop() {
+				select {
+				case <-pollTimer.C:
+				default:
+				}
+			}
+			pollTimer.Reset(2 * time.Second)
+
 			select {
 			case <-monitorCtx.Done():
 				return
-			case <-time.After(2 * time.Second):
+			case <-pollTimer.C:
 			}
 		}
 	}()

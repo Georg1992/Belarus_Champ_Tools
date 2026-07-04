@@ -10,9 +10,13 @@ package profiles
 
 import "fmt"
 
-// Profile holds the virtual memory addresses for a specific server's
-// client memory layout. These are absolute addresses (they include
-// the process base address), so ReadProcessMemory should use baseAddr=0.
+// Profile holds module-relative memory offsets for a specific server's
+// client memory layout. The address reader adds the process base address
+// at runtime so ASLR doesn't break them.
+//
+// To find these offsets: use Cheat Engine or a memory scanner to locate
+// the HP/SP addresses in the client process, then subtract the exe base
+// address to get the module-relative offset.
 type Profile struct {
 	Name string
 

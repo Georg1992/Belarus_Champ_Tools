@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/lxn/win"
@@ -33,7 +34,7 @@ const (
 )
 
 // overlayClassName is the Win32 window class name for the overlay.
-const overlayClassName = "HPSPStatusOverlay"
+const overlayClassName = "ToolsStatusOverlay"
 
 // overlayInstances maps HWND → *statusOverlay so the WndProc can access it.
 var overlayInstances sync.Map
@@ -45,14 +46,24 @@ var ovlWndProcFn uintptr
 var ovlRegisterOnce sync.Once
 
 // statusOverlay is a small semi-transparent click-through window that floats
-// above the game and displays the last parsed HP/SP values and current mode.
+// above the game and displays a green/red running indicator + current mode
+// + HP/SP values when available.
 type statusOverlay struct {
 	hwnd win.HWND
 	font win.HFONT
 
-	mu   sync.Mutex
-	text string
-	mode string // "OCR", "Pixel-bar", or ""
+	mu      sync.Mutex
+	running bool   // true = green "Tools ON", false = red "Tools OFF"
+	mode    string // e.g. "Pixelsearch", "OCR", "Address reading", "Stopped"
+
+	// HP/SP values shown next to the running indicator.
+	// For OCR and Address reading: raw values (hp/hpMax, sp/spMax).
+	// For Pixelsearch: percentages (hp=50, hpMax=100, sp=30, spMax=100).
+	valuesHP         int
+	valuesHPMax      int
+	valuesSP         int
+	valuesSPMax      int
+	valuesLastPaint  time.Time // last InvalidateRect from SetValues; rate-limited to ~5 fps
 }
 
 // newStatusOverlay creates and returns a hidden overlay window.
@@ -103,7 +114,7 @@ func newStatusOverlay() (*statusOverlay, error) {
 	hwnd := win.CreateWindowEx(
 		exStyle, clsName, title,
 		win.WS_POPUP,
-		5, 60, 195, 32, // compact: 2 rows + small padding
+		5, 60, 230, 32, // 230px — wider to avoid clipping HP/SP values
 		0, 0,
 		win.HINSTANCE(hInst),
 		nil,
@@ -118,8 +129,8 @@ func newStatusOverlay() (*statusOverlay, error) {
 	o.hwnd = hwnd
 	overlayInstances.Store(hwnd, o)
 
-	// Bold Consolas 10pt — smaller, less obtrusive.
-	lf := win.LOGFONT{LfHeight: -11, LfWeight: ovlFwBold}
+	// Bold Consolas 8pt.
+	lf := win.LOGFONT{LfHeight: -9, LfWeight: ovlFwBold}
 	faceUTF16 := windows.StringToUTF16("Consolas")
 	copy(lf.LfFaceName[:], faceUTF16)
 	o.font = win.CreateFontIndirect(&lf)
@@ -130,8 +141,9 @@ func newStatusOverlay() (*statusOverlay, error) {
 // onPaint is called from the WndProc on WM_PAINT.
 func (o *statusOverlay) onPaint(hwnd win.HWND) {
 	o.mu.Lock()
-	text := o.text
+	running := o.running
 	mode := o.mode
+	hp, hpMax, sp, spMax := o.valuesHP, o.valuesHPMax, o.valuesSP, o.valuesSPMax
 	o.mu.Unlock()
 
 	var ps win.PAINTSTRUCT
@@ -149,97 +161,132 @@ func (o *statusOverlay) onPaint(hwnd win.HWND) {
 	procFillRect.Call(uintptr(hdc), uintptr(unsafe.Pointer(&rc)), bgBrush)
 	win.DeleteObject(win.HGDIOBJ(bgBrush))
 
-	if text == "" && mode == "" {
-		return
-	}
-
 	oldFont := win.SelectObject(hdc, win.HGDIOBJ(o.font))
+	defer win.SelectObject(hdc, oldFont)
 	win.SetBkMode(hdc, 1) // TRANSPARENT
 
-	// Row 1: HP/SP values (white), compact top.
-	if text != "" {
-		win.SetTextColor(hdc, win.RGB(240, 240, 240))
-		textUTF16, _ := syscall.UTF16PtrFromString(text)
-		textLen := int32(len([]rune(text)))
-		win.TextOut(hdc, 4, 2, textUTF16, textLen)
+	// Row 1: ● Tools ON (green) / ● Tools OFF (red) + HP/SP values
+	titleText := runningText(running)
+
+	// Format values based on mode:
+	// - Pixelsearch: percentages (HP:50% SP:30%)
+	// - OCR / Address reading: raw values (HP:5000/10000 SP:3000/6000)
+	valuesText := ""
+	if hpMax > 0 && spMax > 0 && running {
+		if mode == "Pixelsearch" {
+			valuesText = fmt.Sprintf(" HP:%d%% SP:%d%%", hp, sp)
+		} else {
+			valuesText = fmt.Sprintf(" HP:%d/%d SP:%d/%d", hp, hpMax, sp, spMax)
+		}
 	}
 
-	// Row 2: mode message, compact below the values.
-	// Alert modes (Dead, pots-ended) highlighted in orange; normal modes in dim grey.
+	fullText := titleText + valuesText
+	if running {
+		win.SetTextColor(hdc, win.RGB(80, 220, 100)) // green
+	} else {
+		win.SetTextColor(hdc, win.RGB(255, 80, 80)) // red
+	}
+	fullUTF16, _ := syscall.UTF16PtrFromString(fullText)
+	fullLen := int32(len([]rune(fullText)))
+	win.TextOut(hdc, 4, 2, fullUTF16, fullLen)
+
+	// Row 2: mode label in brackets, e.g. [Address reading], [Pixelsearch]
 	if mode != "" {
 		modeText := "[" + mode + "]"
-		isAlert := mode != "OCR" && mode != "Pixel-bar" && mode != "Searching..." && mode != "Stopped"
+		isAlert := mode != "OCR" && mode != "Pixelsearch" && mode != "Address reading" && mode != "Searching..." && mode != "Stopped"
 		if isAlert {
-			win.SetTextColor(hdc, win.RGB(255, 160, 70))
+			win.SetTextColor(hdc, win.RGB(255, 160, 70)) // orange for alerts
 		} else {
-			win.SetTextColor(hdc, win.RGB(180, 180, 190))
+			win.SetTextColor(hdc, win.RGB(180, 180, 190)) // dim grey for normal
 		}
 		modeUTF16, _ := syscall.UTF16PtrFromString(modeText)
 		modeLen := int32(len([]rune(modeText)))
 		win.TextOut(hdc, 4, 17, modeUTF16, modeLen)
 	}
-
-	win.SelectObject(hdc, oldFont)
 }
 
-// Update stores the latest HP/SP values and repositions the window just below
-// the status panel. Safe to call from any goroutine.
-//
-// Sentinel: when hp < 0 or sp < 0 the overlay shows an error message
-// (pixel-bar fallback is active, no OCR data available).
-//
-// Otherwise, hpMax > 0 means OCR absolute values (HP/nnn); hpMax == 0
-// is a bare fallback with no max known.
-//
-// The last 4 params are panelX, panelY, panelW, panelH from OCR detection.
-// The overlay is positioned below the full panel (panelY+panelH+3).
-func (o *statusOverlay) Update(hp, hpMax, sp, spMax, panelX, panelY, panelW, panelH int) {
-	var text string
-	if hp < 0 || sp < 0 {
-		text = "error: Pixelsearch is used"
-	} else if hpMax > 0 && spMax > 0 {
-		text = fmt.Sprintf("HP %d/%d  SP %d/%d", hp, hpMax, sp, spMax)
-	} else if hpMax > 0 {
-		text = fmt.Sprintf("HP %d/%d", hp, hpMax)
-	} else {
-		text = fmt.Sprintf("HP %d  SP %d", hp, sp)
+func runningText(running bool) string {
+	if running {
+		return "● Tools ON"
 	}
-
-	o.mu.Lock()
-	o.text = text
-	o.mu.Unlock()
-
-	// Reposition only when we have valid panel coordinates (OCR reader).
-	// Pixel-bar reader passes zeros — skip repositioning, just repaint.
-	if panelW > 0 && panelH > 0 {
-		// Compact overlay below the panel: fixed width (195px) fits all text,
-		// fixed height (32px) for 2 rows + small padding.
-		win.SetWindowPos(
-			o.hwnd, win.HWND_TOPMOST,
-			int32(panelX), int32(panelY+panelH+3),
-			195, 32,
-			ovlSwpNoActivate|ovlSwpShowWindow,
-		)
-	}
-	win.InvalidateRect(o.hwnd, nil, true)
+	return "● Tools OFF"
 }
 
-// SetMode updates the mode label shown in the overlay (e.g. "OCR" or
-// "Pixel-bar"). Pass "" to hide the label. Safe from any goroutine.
+// SetMode updates the mode label shown in the overlay (e.g. "Pixelsearch", "OCR",
+// "Address reading"). Sets running=true. Shows the overlay and repaints immediately.
+// Pass "" to hide the label. Safe from any goroutine.
 func (o *statusOverlay) SetMode(mode string) {
 	o.mu.Lock()
+	o.running = true
 	o.mode = mode
+	o.mu.Unlock()
+	win.ShowWindow(o.hwnd, win.SW_SHOWNOACTIVATE)
+	win.InvalidateRect(o.hwnd, nil, true)
+}
+
+// SetValues stores HP/SP values to display next to the running indicator.
+// Values are stored as-is — onPaint formats them based on the current mode:
+// - Pixelsearch: hp=50 hpMax=100 → "HP:50% SP:30%"
+// - OCR/Address: hp=5000 hpMax=10000 → "HP:5000/10000 SP:3000/6000"
+// Safe from any goroutine.
+//
+// InvalidateRect is rate-limited to ~5 fps (once per 200ms) to prevent
+// flickering from rapid address-mode polling (10ms per tick). When the
+// game window is focused, Windows processes WM_PAINT at full speed and
+// 100 fps repaints cause visible text flicker in the overlay.
+func (o *statusOverlay) SetValues(hp, hpMax, sp, spMax int) {
+	o.mu.Lock()
+	o.valuesHP = hp
+	o.valuesHPMax = hpMax
+	o.valuesSP = sp
+	o.valuesSPMax = spMax
+	now := time.Now()
+	if now.Sub(o.valuesLastPaint) < 200*time.Millisecond {
+		o.mu.Unlock()
+		return
+	}
+	o.valuesLastPaint = now
 	o.mu.Unlock()
 	win.InvalidateRect(o.hwnd, nil, true)
 }
 
-// ShowStopped clears the HP/SP text and sets the mode label to "Stopped"
-// so the overlay displays just "[Stopped]" without stale values.
+// ClearValues resets the HP/SP display.
+func (o *statusOverlay) ClearValues() {
+	o.mu.Lock()
+	o.valuesHP = 0
+	o.valuesHPMax = 0
+	o.valuesSP = 0
+	o.valuesSPMax = 0
+	o.mu.Unlock()
+	win.InvalidateRect(o.hwnd, nil, true)
+}
+
+// SetPanelRect repositions the overlay directly below the given panel rect
+// (x, y, w, h) with a 3px gap. When panel is empty (w==0), the overlay
+// stays at its current position. Safe from any goroutine.
+func (o *statusOverlay) SetPanelRect(x, y, w, h int) {
+	if w == 0 || h == 0 {
+		return
+	}
+	// Position directly below the panel with a 12px gap to avoid overlapping
+	// the in-game status panel.
+	newY := int32(y + h + 12)
+	win.SetWindowPos(o.hwnd, 0, int32(x), newY, 230, 32, win.SWP_NOACTIVATE|win.SWP_NOZORDER|win.SWP_SHOWWINDOW)
+}
+
+// ShowStopped sets running=false and mode="Stopped" so the overlay displays
+// "● Tools OFF" in red with "[Stopped]" below. Shows the overlay and repaints
+// immediately.
 func (o *statusOverlay) ShowStopped() {
 	o.mu.Lock()
-	o.text = ""
+	o.running = false
 	o.mode = "Stopped"
+	o.valuesHP = 0
+	o.valuesHPMax = 0
+	o.valuesSP = 0
+	o.valuesSPMax = 0
 	o.mu.Unlock()
+	win.ShowWindow(o.hwnd, win.SW_SHOWNOACTIVATE)
 	win.InvalidateRect(o.hwnd, nil, true)
 }
 
