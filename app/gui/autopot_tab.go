@@ -149,7 +149,7 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 			return
 		}
 		if a.windowCB.CurrentIndex() < 0 {
-			a.closeProcessHandle()
+			a.processPID = 0
 			a.clearAutoPotKeys()
 			a.appendLog("Game window cleared — potion keys reset")
 		} else {
@@ -360,13 +360,13 @@ func (a *guiApp) isAutoPotAddressMode() bool {
 
 // setAutoPotAddressModeEnabled enables or disables the address-mode
 // UI elements (window selector, profile). When switching to/from
-// address mode, closes the process handle and clears all potion keys.
+// address mode, clears the PID and all potion keys.
 func (a *guiApp) setAutoPotAddressModeEnabled(enabled bool) {
 	a.windowCB.SetEnabled(enabled)
 	a.windowRefreshBtn.SetEnabled(enabled)
 	a.profileCB.SetEnabled(enabled)
 	if !enabled {
-		a.closeProcessHandle()
+		a.processPID = 0
 	}
 	a.clearAutoPotKeys()
 }
@@ -391,32 +391,18 @@ func (a *guiApp) selectedProfile() profiles.Profile {
 	return profiles.Default()
 }
 
-// openSelectedProcessHandle opens a handle to the selected window's
-// process by looking up the PID from the stored window list.
+// openSelectedProcessHandle stores the selected window's PID for
+// use by the address reader (which opens/closes handles per read).
 func (a *guiApp) openSelectedProcessHandle() error {
-	a.closeProcessHandle()
-
 	idx := a.windowCB.CurrentIndex()
 	if idx < 0 || idx >= len(a.windowList) {
 		return nil // nothing selected
 	}
 
 	win := a.windowList[idx]
-	handle, err := runner.OpenGameProcess(win.pid)
-	if err != nil {
-		return fmt.Errorf("open PID %d: %w", win.pid, err)
-	}
-	a.processHandle = handle
-	a.appendLog(fmt.Sprintf("Opened handle to %q (PID %d)", win.title, win.pid))
+	a.processPID = win.pid
+	a.appendLog(fmt.Sprintf("Selected %q (PID %d)", win.title, win.pid))
 	return nil
-}
-
-// closeProcessHandle closes the current process handle, if any.
-func (a *guiApp) closeProcessHandle() {
-	if a.processHandle != 0 {
-		runner.CloseGameProcess(a.processHandle)
-		a.processHandle = 0
-	}
 }
 
 func (a *guiApp) autopotConfig() runner.AutoPotConfig {
@@ -456,9 +442,9 @@ func (a *guiApp) autopotConfig() runner.AutoPotConfig {
 		},
 		OnStatusUIMode: modeFn,
 		// Address reading fields.
-		AddressMode:   isAddress && a.processHandle != 0,
-		ProcessHandle: a.processHandle,
-		Profile:       profile,
+		AddressMode: isAddress && a.processPID != 0,
+		ProcessPID:  a.processPID,
+		Profile:     profile,
 	}
 }
 

@@ -28,8 +28,7 @@ var (
 
 const (
 	th32csSnapProcess  = 0x00000002
-	processVMRead      = 0x0010
-	processQueryInformation = 0x0400
+	processVMRead = 0x0010
 )
 
 type processEntry32 struct {
@@ -86,14 +85,10 @@ func ListProcesses() ([]ProcessInfo, error) {
 }
 
 // OpenProcessHandle opens a handle to the process with the given PID
-// for memory reading (PROCESS_VM_READ | PROCESS_QUERY_INFORMATION).
-// Returns windows.InvalidHandle on failure.
+// for memory reading (PROCESS_VM_READ only). The handle must be closed
+// with CloseProcessHandle when no longer needed.
 func OpenProcessHandle(pid uint32) (windows.Handle, error) {
-	h, _, err := procOpenProcess.Call(
-		processVMRead|processQueryInformation,
-		0,            // bInheritHandle = false
-		uintptr(pid),
-	)
+	h, _, err := procOpenProcess.Call(processVMRead, 0, uintptr(pid))
 	if h == 0 {
 		return windows.InvalidHandle, fmt.Errorf("OpenProcess(%d) failed: %w", pid, err)
 	}
@@ -107,18 +102,23 @@ func CloseProcessHandle(h windows.Handle) {
 	}
 }
 
-// ReadProcessUint32 reads a 32-bit unsigned integer from the process
-// at the given base address + offset. Returns 0 and an error if the
-// read fails (e.g. the process has exited).
-func ReadProcessUint32(h windows.Handle, baseAddr uintptr, offset uintptr) (uint32, error) {
-	addr := baseAddr + offset
+// ReadProcessUint32ByPID opens a handle to the process, reads a 32-bit
+// value at addr, and closes the handle. This matches the pattern used in
+// the user's AutoHotKey script and avoids stale-handle issues.
+func ReadProcessUint32ByPID(pid uint32, addr uintptr) (uint32, error) {
+	h, _, err := procOpenProcess.Call(processVMRead, 0, uintptr(pid))
+	if h == 0 {
+		return 0, fmt.Errorf("OpenProcess(%d) failed: %w", pid, err)
+	}
+	defer procCloseHandle.Call(h)
+
 	var val uint32
 	var nBytes uintptr
 	ret, _, err := procReadProcessMemory.Call(
-		uintptr(h),
+		h,
 		addr,
 		uintptr(unsafe.Pointer(&val)),
-		4, // sizeof(uint32)
+		4,
 		uintptr(unsafe.Pointer(&nBytes)),
 	)
 	if ret == 0 {
@@ -129,5 +129,3 @@ func ReadProcessUint32(h windows.Handle, baseAddr uintptr, offset uintptr) (uint
 	}
 	return val, nil
 }
-
-

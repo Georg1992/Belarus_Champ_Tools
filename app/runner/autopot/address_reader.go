@@ -7,32 +7,23 @@ import (
 
 	win "belarus-champ-tools/runner/platform/windows"
 	"belarus-champ-tools/runner/profiles"
-
-	"golang.org/x/sys/windows"
 )
 
 // addressReader is a BarReader that reads HP/SP values from a game
 // process's memory at the offsets defined by a server profile.
 //
-// The process handle must be opened externally and remain valid for
-// the reader's lifetime. ReadValues returns StatusInvalid if the
-// handle is invalid or the process has exited.
+// Following the user's AHK pattern: opens a handle, reads, and closes
+// on every ReadValues call. This avoids stale-handle issues entirely.
 type addressReader struct {
-	handle  windows.Handle
+	pid     uint32
 	profile profiles.Profile
 
-	// liveConfig returns the current AutoPotConfig so the reader can
-	// compute HPLow/SPLow against the latest threshold values.
 	liveConfig func() AutoPotConfig
-
-	// onParsed forwards the raw HP/SP values to the overlay, matching
-	// the signature used by the OCR reader for the same purpose.
-	// strip coordinates are set to 0 since address mode has no screen panel.
-	onParsed func(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int)
+	onParsed   func(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int)
 
 	lastLog  time.Time
 	log      func(string)
-	loggedFirstFail bool // logs the first failure clearly, then rate-limits
+	loggedFirstFail bool
 }
 
 func (r *addressReader) Name() string { return "Address" }
@@ -41,31 +32,34 @@ func (r *addressReader) ReadValues(ctx context.Context) BarReadResult {
 	if ctx.Err() != nil {
 		return BarReadResult{Status: StatusInvalid, Err: ctx.Err()}
 	}
-	if r.handle == windows.InvalidHandle || r.handle == 0 {
-		return BarReadResult{Status: StatusInvalid, Err: fmt.Errorf("address reader: invalid process handle")}
+	if r.pid == 0 {
+		return BarReadResult{Status: StatusInvalid, Err: fmt.Errorf("address reader: no process selected (PID=0)")}
 	}
 
-	// Read HP values.
-	curHP, err := win.ReadProcessUint32(r.handle, 0, r.profile.CurrentHPAddr)
+	// Read HP values — opens handle, reads, closes on each call (like AHK pattern).
+	curHP, err := win.ReadProcessUint32ByPID(r.pid, r.profile.CurrentHPAddr)
 	if err != nil {
 		r.logFirstFail("address: %v", err)
 		return BarReadResult{Status: StatusInvalid, Err: err}
 	}
-	maxHP, err := win.ReadProcessUint32(r.handle, 0, r.profile.MaxHPAddr)
+	maxHP, err := win.ReadProcessUint32ByPID(r.pid, r.profile.MaxHPAddr)
 	if err != nil {
-		r.debugf("address: read MaxHP failed: %v", err)
+		r.resetFirstFail()
+		r.logFirstFail("address: %v", err)
 		return BarReadResult{Status: StatusInvalid, Err: err}
 	}
 
 	// Read SP values.
-	curSP, err := win.ReadProcessUint32(r.handle, 0, r.profile.CurrentSPAddr)
+	curSP, err := win.ReadProcessUint32ByPID(r.pid, r.profile.CurrentSPAddr)
 	if err != nil {
-		r.debugf("address: read SP failed: %v", err)
+		r.resetFirstFail()
+		r.logFirstFail("address: %v", err)
 		return BarReadResult{Status: StatusInvalid, Err: err}
 	}
-	maxSP, err := win.ReadProcessUint32(r.handle, 0, r.profile.MaxSPAddr)
+	maxSP, err := win.ReadProcessUint32ByPID(r.pid, r.profile.MaxSPAddr)
 	if err != nil {
-		r.debugf("address: read MaxSP failed: %v", err)
+		r.resetFirstFail()
+		r.logFirstFail("address: %v", err)
 		return BarReadResult{Status: StatusInvalid, Err: err}
 	}
 
@@ -123,10 +117,16 @@ func (r *addressReader) logFirstFail(format string, args ...interface{}) {
 	}
 	now := time.Now()
 	if !r.loggedFirstFail || now.Sub(r.lastLog) > 10*time.Second {
-		r.logger(format, args...)
+		r.log(fmt.Sprintf(format, args...))
 		r.loggedFirstFail = true
 		r.lastLog = now
 	}
+}
+
+// resetFirstFail allows the next failure to log immediately (used after
+// a successful read followed by a new failure).
+func (r *addressReader) resetFirstFail() {
+	r.loggedFirstFail = false
 }
 
 // debugf logs at most once per 2 seconds (kept for non-critical messages).
@@ -139,9 +139,5 @@ func (r *addressReader) debugf(format string, args ...interface{}) {
 		return
 	}
 	r.lastLog = now
-	r.log(fmt.Sprintf(format, args...))
-}
-
-func (r *addressReader) logger(format string, args ...interface{}) {
 	r.log(fmt.Sprintf(format, args...))
 }

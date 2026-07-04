@@ -68,7 +68,7 @@ type guiApp struct {
 	windowCB          *walk.ComboBox     // game window selector
 	windowRefreshBtn  *walk.PushButton   // refresh window list
 	profileCB         *walk.ComboBox     // server memory profile
-	processHandle     uintptr            // handle to the selected game process, 0 = none
+	processPID        uint32             // selected game process PID; 0 = none
 	windowList        []windowInfo       // cached window list for PID lookup
 
 	// KeyChain tab
@@ -183,8 +183,7 @@ func (a *guiApp) shutdown() {
 			a.overlay = nil
 		}
 
-		// Close the game process handle if one is open.
-		a.closeProcessHandle()
+
 	})
 }
 

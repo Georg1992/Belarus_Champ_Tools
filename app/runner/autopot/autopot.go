@@ -28,8 +28,6 @@ import (
 	"belarus-champ-tools/runner/internal/lifecycle"
 	"belarus-champ-tools/runner/internal/session"
 	"belarus-champ-tools/runner/internal/timing"
-
-	"golang.org/x/sys/windows"
 )
 
 // AutoPotConfig is what gui/main.go passes to NewAutoPot.
@@ -48,9 +46,10 @@ type AutoPotConfig struct {
 	OnStatusUIMode func(mode string)
 
 	// Address reading mode — reads HP/SP directly from game process memory.
-	AddressMode   bool
-	ProcessHandle uintptr // from OpenProcess; 0 = invalid
-	Profile       profiles.Profile
+	// Following the AHK pattern: opens handle on each read, reads, closes.
+	AddressMode bool
+	ProcessPID  uint32 // game process PID; 0 = not selected
+	Profile     profiles.Profile
 }
 
 // AutoPotRunner heals HP/SP based on readings from the active BarReader.
@@ -160,9 +159,9 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 	var ocr *statusUIReader
 	var address *addressReader
 
-	if cfg.AddressMode && cfg.ProcessHandle != 0 {
+	if cfg.AddressMode && cfg.ProcessPID != 0 {
 		address = &addressReader{
-			handle:     windows.Handle(cfg.ProcessHandle),
+			pid:        cfg.ProcessPID,
 			profile:    cfg.Profile,
 			log:        cfg.Log,
 			liveConfig: a.settings,
