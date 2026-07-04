@@ -144,12 +144,6 @@ type mockFlakyReader struct {
 	hpValue   float64
 }
 
-func (r *mockFlakyReader) setFailNext(n int) {
-	r.mu.Lock()
-	r.failNext = n
-	r.mu.Unlock()
-}
-
 func (r *mockFlakyReader) ReadValues(ctx context.Context) BarReadResult {
 	r.mu.Lock()
 	r.callCount++
@@ -287,26 +281,6 @@ func (r *risingReader) ReadValues(ctx context.Context) BarReadResult {
 }
 
 func (r *risingReader) Name() string { return "rising" }
-
-// mockFastReader returns a fixed HP/SP value immediately on every call.
-// Used by TestAutoPotRunnerRunWithMockReader to keep the run() loop
-// spinning fast and exercise race conditions under concurrent
-// UpdateSettings.
-type mockFastReader struct {
-	hp, sp float64
-}
-
-func (r *mockFastReader) ReadValues(_ context.Context) BarReadResult {
-	return BarReadResult{
-		Status: StatusFound,
-		HP:     r.hp,
-		SP:     r.sp,
-		HPLow:  r.hp < 50,
-		SPLow:  r.sp < 50,
-	}
-}
-
-func (r *mockFastReader) Name() string { return "mockFast" }
 
 // TestAutoPotRunnerRunWithMockReader starts the full run() loop with a
 // mock reader (no screen capture) and hammers UpdateSettings from multiple

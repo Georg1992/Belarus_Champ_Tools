@@ -322,12 +322,6 @@ func pairCenterInROI(hp, sp ColorRun, roi Rect) bool {
 		midY >= roi.Y && midY < roi.Y+roi.H
 }
 
-func pairCenter(hp, sp ColorRun) (int, int) {
-	midX := (hp.X1 + hp.X2 + sp.X1 + sp.X2) / 4
-	midY := (hp.Y + sp.Y) / 2
-	return midX, midY
-}
-
 func runOverlap(a, b ColorRun) int {
 	lo := a.X1
 	if b.X1 > lo {
@@ -479,13 +473,9 @@ func deriveBarRects(img image.Image, hpRun, spRun ColorRun) (hp, sp Rect) {
 		}
 	}
 
-	right := hpRun.X2
-	if spRun.X2 > right {
-		right = spRun.X2
-	}
 	rightHP := extendHPBarRight(img, hpRun.Y, hpRun.X2)
 	rightSP := extendSPBarRight(img, spRun.Y, spRun.X2)
-	right = rightHP
+	right := rightHP
 	if rightSP > right {
 		right = rightSP
 	}
@@ -507,11 +497,8 @@ func deriveBarRects(img image.Image, hpRun, spRun ColorRun) (hp, sp Rect) {
 		w = hpRun.Width
 		if spRun.Width > w {
 			w = spRun.Width
-		}
-		right = left + w - 1
-	}
+		}	}
 	if w > maxBarWidth {
-		right = left + maxBarWidth - 1
 		w = maxBarWidth
 	}
 

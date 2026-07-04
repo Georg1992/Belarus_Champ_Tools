@@ -7,6 +7,7 @@ import (
 
 	win "belarus-champ-tools/runner/platform/windows"
 	"belarus-champ-tools/runner/profiles"
+	"golang.org/x/sys/windows"
 )
 
 // addressReader is a BarReader that reads HP/SP values from a game
@@ -54,7 +55,6 @@ func (r *addressReader) ReadValues(ctx context.Context) BarReadResult {
 		return BarReadResult{Status: StatusInvalid, Err: fmt.Errorf("address reader: no process selected (PID=0)")}
 	}
 
-	// Open a fresh handle every time — avoids stale-handle issues.
 	h, err := win.OpenProcessHandle(r.pid)
 	if err != nil {
 		r.setError("address: OpenProcess(%d) failed: %v", r.pid, err)
@@ -62,29 +62,13 @@ func (r *addressReader) ReadValues(ctx context.Context) BarReadResult {
 	}
 	defer win.CloseProcessHandle(h)
 
-	// Profile stores module-relative offsets. Add the exe base address
-	// to get absolute virtual addresses (ASLR-safe).
 	base := r.moduleBase
-
-	// Read HP values.
-	curHP, err := win.ReadProcessUint32ByHandle(h, base+r.profile.CurrentHPAddr)
+	curHP, maxHP, err := r.readValues(h, base, r.profile.CurrentHPAddr, r.profile.MaxHPAddr)
 	if err != nil {
 		r.setError("address: %v", err)
 		return BarReadResult{Status: StatusInvalid, Err: err}
 	}
-	maxHP, err := win.ReadProcessUint32ByHandle(h, base+r.profile.MaxHPAddr)
-	if err != nil {
-		r.setError("address: %v", err)
-		return BarReadResult{Status: StatusInvalid, Err: err}
-	}
-
-	// Read SP values.
-	curSP, err := win.ReadProcessUint32ByHandle(h, base+r.profile.CurrentSPAddr)
-	if err != nil {
-		r.setError("address: %v", err)
-		return BarReadResult{Status: StatusInvalid, Err: err}
-	}
-	maxSP, err := win.ReadProcessUint32ByHandle(h, base+r.profile.MaxSPAddr)
+	curSP, maxSP, err := r.readValues(h, base, r.profile.CurrentSPAddr, r.profile.MaxSPAddr)
 	if err != nil {
 		r.setError("address: %v", err)
 		return BarReadResult{Status: StatusInvalid, Err: err}
@@ -98,49 +82,60 @@ func (r *addressReader) ReadValues(ctx context.Context) BarReadResult {
 		}
 	}
 
-	// Convert to percentages.
-	hpPct := 0.0
-	if maxHP > 0 {
-		hpPct = float64(curHP) * 100.0 / float64(maxHP)
-	}
-	spPct := 0.0
-	if maxSP > 0 {
-		spPct = float64(curSP) * 100.0 / float64(maxSP)
-	}
+	hpPct, spPct := r.pct(curHP, maxHP, curSP, maxSP)
 
-	// HP=1 means dead in Ragnarok Online.
 	if curHP == 1 {
 		return BarReadResult{
-			HP:     hpPct,
-			SP:     spPct,
+			HP: hpPct, SP: spPct,
 			Status: StatusDead,
 			Err:    fmt.Errorf("character dead (HP=1)"),
 		}
 	}
 
-	// (Debug logging for HP/SP values removed — addresses confirmed working.)
-
-	// Forward raw values to the overlay (same as OCR reader does).
 	if r.onParsed != nil {
 		r.onParsed(int(curHP), int(maxHP), int(curSP), int(maxSP), 0, 0, 0, 0)
 	}
 
-	// Compute HPLow/SPLow against the current thresholds from live config.
-	hpLow := false
-	spLow := false
-	if r.liveConfig != nil {
-		cfg := r.liveConfig()
-		hpLow = hpPct < float64(cfg.HPThreshold)
-		spLow = spPct < float64(cfg.SPThreshold)
-	}
-
+	hpLow, spLow := r.lowFlags(hpPct, spPct)
 	return BarReadResult{
-		HP:     hpPct,
-		SP:     spPct,
-		HPLow:  hpLow,
-		SPLow:  spLow,
+		HP: hpPct, SP: spPct,
+		HPLow: hpLow, SPLow: spLow,
 		Status: StatusFound,
 	}
+}
+
+// readValues reads two uint32 values from the process memory at
+// (base+addr1) and (base+addr2) using the open handle h.
+func (r *addressReader) readValues(h windows.Handle, base uintptr, addr1, addr2 uintptr) (uint32, uint32, error) {
+	v1, err := win.ReadProcessUint32ByHandle(h, base+addr1)
+	if err != nil {
+		return 0, 0, err
+	}
+	v2, err := win.ReadProcessUint32ByHandle(h, base+addr2)
+	if err != nil {
+		return 0, 0, err
+	}
+	return v1, v2, nil
+}
+
+// pct converts raw HP/SP values to percentages.
+func (r *addressReader) pct(curHP, maxHP, curSP, maxSP uint32) (hpPct, spPct float64) {
+	if maxHP > 0 {
+		hpPct = float64(curHP) * 100.0 / float64(maxHP)
+	}
+	if maxSP > 0 {
+		spPct = float64(curSP) * 100.0 / float64(maxSP)
+	}
+	return
+}
+
+// lowFlags checks HP/SP percentages against the live config thresholds.
+func (r *addressReader) lowFlags(hpPct, spPct float64) (hpLow, spLow bool) {
+	if r.liveConfig == nil {
+		return false, false
+	}
+	cfg := r.liveConfig()
+	return hpPct < float64(cfg.HPThreshold), spPct < float64(cfg.SPThreshold)
 }
 
 // setError marks the reader as in error state, updates the overlay mode

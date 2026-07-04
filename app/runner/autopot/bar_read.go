@@ -10,17 +10,6 @@ type BarRead struct {
 	Found       bool
 }
 
-// Bar is used by debug visualization output.
-type Bar struct {
-	Left, Right int
-	Y           int
-	Width       int
-	Height      int
-	FilledWidth int
-	Percent     float64
-	Found       bool
-}
-
 // ReadMappedBars reads the fill percentage of HP and SP bars from the given image.
 // Uses cached bar rectangles from the last successful pair detection.
 func ReadMappedBars(img image.Image, bars MappedBars) (hp BarRead, sp BarRead) {
@@ -311,16 +300,3 @@ func isBarEmptyPixel(r, g, b uint8, hpBar bool) bool {
 	return isHPTrack(r, g, b) || isBarBackground(r, g, b)
 }
 
-// barFromRead creates a debug visualization Bar from a Rect and BarRead.
-func barFromRead(r Rect, br BarRead) Bar {
-	return Bar{
-		Left:        r.X,
-		Right:       r.X + r.W - 1,
-		Y:           r.Y,
-		Width:       r.W,
-		Height:      r.H,
-		FilledWidth: br.FilledWidth,
-		Percent:     br.Percent,
-		Found:       br.Found,
-	}
-}

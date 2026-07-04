@@ -21,12 +21,37 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 		return err
 	}
 
+	if err := a.buildAutoPotModeSection(page); err != nil {
+		return err
+	}
+	if err := a.buildHPPotionSection(page); err != nil {
+		return err
+	}
+	if err := a.buildSPPotionSection(page); err != nil {
+		return err
+	}
+
 	hintFont, err := walk.NewFont("Segoe UI", 8, 0)
 	if err != nil {
 		return err
 	}
+	hint, err := walk.NewLabel(page)
+	if err != nil {
+		return err
+	}
+	if err := hint.SetText("When HP or SP drops below the threshold, one potion is pressed at a time; the bar is polled until it recovers before using another."); err != nil {
+		return err
+	}
+	hint.SetFont(hintFont)
 
-	// ---- Mode: Visual / Address reading ----
+	// Initial state: address controls disabled (default is Visual mode).
+	a.setAutoPotAddressModeEnabled(false)
+	return nil
+}
+
+// buildAutoPotModeSection creates the Detection mode group box with
+// Visual/Address radio buttons, address controls, and wires their events.
+func (a *guiApp) buildAutoPotModeSection(page *walk.TabPage) error {
 	modeGB, err := walk.NewGroupBox(page)
 	if err != nil {
 		return err
@@ -67,7 +92,28 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 		return err
 	}
 
-	// Address-mode sub-controls (window selector + profile).
+	if err := a.buildAddressControls(modeGB); err != nil {
+		return err
+	}
+
+	// Wire mode toggle.
+	a.autopotVisualRB.CheckedChanged().Attach(func() {
+		isAddress := a.autopotAddressRB.Checked()
+		a.setAutoPotAddressModeEnabled(isAddress)
+		if isAddress {
+			a.appendLog("AutoPot mode: Address reading — select a game window and bind potion keys")
+		}
+	})
+	a.autopotAddressRB.CheckedChanged().Attach(func() {
+		isAddress := a.autopotAddressRB.Checked()
+		a.setAutoPotAddressModeEnabled(isAddress)
+	})
+	return nil
+}
+
+// buildAddressControls creates the window selector, profile combo, refresh
+// button, and wires their events (selection change, refresh click).
+func (a *guiApp) buildAddressControls(modeGB *walk.GroupBox) error {
 	addrRow, err := walk.NewComposite(modeGB)
 	if err != nil {
 		return err
@@ -117,7 +163,6 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 	if err := a.profileCB.SetMinMaxSize(walk.Size{Width: 120, Height: 0}, walk.Size{Width: 120, Height: 0}); err != nil {
 		return err
 	}
-	// Populate profiles from the profiles package.
 	allProfiles := profiles.All()
 	profileNames := make([]string, 0, len(allProfiles))
 	for _, p := range allProfiles {
@@ -130,22 +175,7 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 		a.profileCB.SetCurrentIndex(0)
 	}
 
-	// Wire mode toggle: when Visual is checked, disable address controls
-	// and clear keys. When Address is checked, enable controls.
-	a.autopotVisualRB.CheckedChanged().Attach(func() {
-		isAddress := a.autopotAddressRB.Checked()
-		a.setAutoPotAddressModeEnabled(isAddress)
-		if isAddress {
-			a.appendLog("AutoPot mode: Address reading — select a game window and bind potion keys")
-		}
-	})
-	a.autopotAddressRB.CheckedChanged().Attach(func() {
-		isAddress := a.autopotAddressRB.Checked()
-		a.setAutoPotAddressModeEnabled(isAddress)
-	})
-
-	// Wire window selection: when the user selects a window, open a handle.
-	// When the selection is cleared, close the handle and clear keys.
+	// Wire window selection.
 	a.windowCB.CurrentIndexChanged().Attach(func() {
 		if a.isRefreshingWindows {
 			return
@@ -154,22 +184,14 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 			a.processPID = 0
 			a.clearAutoPotKeys()
 			a.appendLog("Game window cleared — potion keys reset")
+		} else if err := a.openSelectedProcessHandle(); err != nil {
+			a.appendLog(fmt.Sprintf("Failed to open process: %v", err))
 		} else {
-			// Open handle to the selected window's process.
-			if err := a.openSelectedProcessHandle(); err != nil {
-				a.appendLog(fmt.Sprintf("Failed to open process: %v", err))
-			}
-			// Sync after PID change so the runner picks up the new
-			// AddressMode=true config (if Address radio is checked).
-			// In Visual mode this is a harmless no-op.
 			a.syncAutoPotSettings()
 		}
 	})
 
-	// Wire refresh button — uses MouseDown (fires on every press) instead of
-	// Clicked (which may not fire on first click inside nested containers).
-	// isRefreshingWindows guards against CurrentIndexChanged side-effects
-	// during model replacement (window list refresh clears and repopulates).
+	// Wire refresh button.
 	a.windowRefreshBtn.MouseDown().Attach(func(x, y int, button walk.MouseButton) {
 		if button != walk.LeftButton {
 			return
@@ -184,187 +206,145 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 		a.windowList = windows
 		a.isRefreshingWindows = false
 	})
-
-	// ---- HP potion ----
-	hpGB, err := walk.NewGroupBox(page)
-	if err != nil {
-		return err
-	}
-	if err := hpGB.SetTitle("HP potion"); err != nil {
-		return err
-	}
-	hpLayout := walk.NewHBoxLayout()
-	hpLayout.SetSpacing(10)
-	if err := hpGB.SetLayout(hpLayout); err != nil {
-		return err
-	}
-
-	a.hpEnabledCB, err = walk.NewCheckBox(hpGB)
-	if err != nil {
-		return err
-	}
-	if err := a.hpEnabledCB.SetText("Enabled"); err != nil {
-		return err
-	}
-	a.hpEnabledCB.SetChecked(true)
-	a.hpEnabledCB.CheckedChanged().Attach(a.syncAutoPotSettings)
-
-	hpThreshLabel, err := walk.NewLabel(hpGB)
-	if err != nil {
-		return err
-	}
-	if err := hpThreshLabel.SetText("Trigger below %:"); err != nil {
-		return err
-	}
-
-	a.hpThresholdEdit, err = walk.NewLineEdit(hpGB)
-	if err != nil {
-		return err
-	}
-	a.hpThresholdEdit.SetMaxLength(2)
-	if err := a.hpThresholdEdit.SetMinMaxSize(walk.Size{Width: 40, Height: 0}, walk.Size{Width: 40, Height: 0}); err != nil {
-		return err
-	}
-	if err := a.hpThresholdEdit.SetText("50"); err != nil {
-		return err
-	}
-	a.hpThreshold = 50
-	a.hpThresholdEdit.EditingFinished().Attach(func() {
-		a.commitHPThresholdEdit()
-		a.syncAutoPotSettings()
-	})
-
-	hpKeyLabel, err := walk.NewLabel(hpGB)
-	if err != nil {
-		return err
-	}
-	if err := hpKeyLabel.SetText("Key:"); err != nil {
-		return err
-	}
-
-	a.hpKeyLabel, err = walk.NewLabel(hpGB)
-	if err != nil {
-		return err
-	}
-	if err := a.hpKeyLabel.SetText("none"); err != nil {
-		return err
-	}
-
-	a.hpBindBtn, err = walk.NewPushButton(hpGB)
-	if err != nil {
-		return err
-	}
-	if err := a.hpBindBtn.SetText("Set key..."); err != nil {
-		return err
-	}
-	a.hpBindBtn.Clicked().Attach(a.onBindHPKey)
-
-	a.hpClearBtn, err = walk.NewPushButton(hpGB)
-	if err != nil {
-		return err
-	}
-	if err := a.hpClearBtn.SetText("Clear"); err != nil {
-		return err
-	}
-	a.hpClearBtn.Clicked().Attach(a.onClearHPKey)
-
-	// ---- SP potion ----
-	spGB, err := walk.NewGroupBox(page)
-	if err != nil {
-		return err
-	}
-	if err := spGB.SetTitle("SP potion"); err != nil {
-		return err
-	}
-	spLayout := walk.NewHBoxLayout()
-	spLayout.SetSpacing(10)
-	if err := spGB.SetLayout(spLayout); err != nil {
-		return err
-	}
-
-	a.spEnabledCB, err = walk.NewCheckBox(spGB)
-	if err != nil {
-		return err
-	}
-	if err := a.spEnabledCB.SetText("Enabled"); err != nil {
-		return err
-	}
-	a.spEnabledCB.SetChecked(true)
-	a.spEnabledCB.CheckedChanged().Attach(a.syncAutoPotSettings)
-
-	spThreshLabel, err := walk.NewLabel(spGB)
-	if err != nil {
-		return err
-	}
-	if err := spThreshLabel.SetText("Trigger below %:"); err != nil {
-		return err
-	}
-
-	a.spThresholdEdit, err = walk.NewLineEdit(spGB)
-	if err != nil {
-		return err
-	}
-	a.spThresholdEdit.SetMaxLength(2)
-	if err := a.spThresholdEdit.SetMinMaxSize(walk.Size{Width: 40, Height: 0}, walk.Size{Width: 40, Height: 0}); err != nil {
-		return err
-	}
-	if err := a.spThresholdEdit.SetText("30"); err != nil {
-		return err
-	}
-	a.spThreshold = 30
-	a.spThresholdEdit.EditingFinished().Attach(func() {
-		a.commitSPThresholdEdit()
-		a.syncAutoPotSettings()
-	})
-
-	spKeyLabel, err := walk.NewLabel(spGB)
-	if err != nil {
-		return err
-	}
-	if err := spKeyLabel.SetText("Key:"); err != nil {
-		return err
-	}
-
-	a.spKeyLabel, err = walk.NewLabel(spGB)
-	if err != nil {
-		return err
-	}
-	if err := a.spKeyLabel.SetText("none"); err != nil {
-		return err
-	}
-
-	a.spBindBtn, err = walk.NewPushButton(spGB)
-	if err != nil {
-		return err
-	}
-	if err := a.spBindBtn.SetText("Set key..."); err != nil {
-		return err
-	}
-	a.spBindBtn.Clicked().Attach(a.onBindSPKey)
-
-	a.spClearBtn, err = walk.NewPushButton(spGB)
-	if err != nil {
-		return err
-	}
-	if err := a.spClearBtn.SetText("Clear"); err != nil {
-		return err
-	}
-	a.spClearBtn.Clicked().Attach(a.onClearSPKey)
-
-	autopotHint, err := walk.NewLabel(page)
-	if err != nil {
-		return err
-	}
-	if err := autopotHint.SetText("When HP or SP drops below the threshold, one potion is pressed at a time; the bar is polled until it recovers before using another."); err != nil {
-		return err
-	}
-	autopotHint.SetFont(hintFont)
-
-	// Initial state: address controls disabled (default is Visual mode).
-	// Must be AFTER all controls are created (hpKeyLabel, windowCB, etc.).
-	a.setAutoPotAddressModeEnabled(false)
-
 	return nil
+}
+
+// potionSectionConfig carries the varying details for buildPotionSection.
+type potionSectionConfig struct {
+	title            string
+	defaultThreshold int
+	enabledCB        **walk.CheckBox
+	thresholdEdit    **walk.LineEdit
+	keyLabel         **walk.Label
+	bindBtn          **walk.PushButton
+	clearBtn         **walk.PushButton
+	threshold        *int
+	onBind           func()
+	onClear          func()
+	commitThresh     func()
+}
+
+// buildPotionSection creates a potion (HP/SP) group box with enable checkbox,
+// threshold input, key label, bind button, and clear button. Two thin wrappers
+// (buildHPPotionSection / buildSPPotionSection) call this with the right config.
+func (a *guiApp) buildPotionSection(page *walk.TabPage, cfg potionSectionConfig) error {
+	gb, err := walk.NewGroupBox(page)
+	if err != nil {
+		return err
+	}
+	if err := gb.SetTitle(cfg.title); err != nil {
+		return err
+	}
+	layout := walk.NewHBoxLayout()
+	layout.SetSpacing(10)
+	if err := gb.SetLayout(layout); err != nil {
+		return err
+	}
+
+	*cfg.enabledCB, err = walk.NewCheckBox(gb)
+	if err != nil {
+		return err
+	}
+	if err := (*cfg.enabledCB).SetText("Enabled"); err != nil {
+		return err
+	}
+	(*cfg.enabledCB).SetChecked(true)
+	(*cfg.enabledCB).CheckedChanged().Attach(a.syncAutoPotSettings)
+
+	threshLabel, err := walk.NewLabel(gb)
+	if err != nil {
+		return err
+	}
+	if err := threshLabel.SetText("Trigger below %:"); err != nil {
+		return err
+	}
+
+	*cfg.thresholdEdit, err = walk.NewLineEdit(gb)
+	if err != nil {
+		return err
+	}
+	(*cfg.thresholdEdit).SetMaxLength(2)
+	if err := (*cfg.thresholdEdit).SetMinMaxSize(walk.Size{Width: 40, Height: 0}, walk.Size{Width: 40, Height: 0}); err != nil {
+		return err
+	}
+	thresholdStr := strconv.Itoa(cfg.defaultThreshold)
+	if err := (*cfg.thresholdEdit).SetText(thresholdStr); err != nil {
+		return err
+	}
+	*cfg.threshold = cfg.defaultThreshold
+	(*cfg.thresholdEdit).EditingFinished().Attach(func() {
+		cfg.commitThresh()
+		a.syncAutoPotSettings()
+	})
+
+	keyLabel, err := walk.NewLabel(gb)
+	if err != nil {
+		return err
+	}
+	if err := keyLabel.SetText("Key:"); err != nil {
+		return err
+	}
+
+	*cfg.keyLabel, err = walk.NewLabel(gb)
+	if err != nil {
+		return err
+	}
+	if err := (*cfg.keyLabel).SetText("none"); err != nil {
+		return err
+	}
+
+	*cfg.bindBtn, err = walk.NewPushButton(gb)
+	if err != nil {
+		return err
+	}
+	if err := (*cfg.bindBtn).SetText("Set key..."); err != nil {
+		return err
+	}
+	(*cfg.bindBtn).Clicked().Attach(cfg.onBind)
+
+	*cfg.clearBtn, err = walk.NewPushButton(gb)
+	if err != nil {
+		return err
+	}
+	if err := (*cfg.clearBtn).SetText("Clear"); err != nil {
+		return err
+	}
+	(*cfg.clearBtn).Clicked().Attach(cfg.onClear)
+	return nil
+}
+
+// buildHPPotionSection builds the HP potion group box using the shared builder.
+func (a *guiApp) buildHPPotionSection(page *walk.TabPage) error {
+	return a.buildPotionSection(page, potionSectionConfig{
+		title:            "HP potion",
+		defaultThreshold: 50,
+		enabledCB:        &a.hpEnabledCB,
+		thresholdEdit:    &a.hpThresholdEdit,
+		keyLabel:         &a.hpKeyLabel,
+		bindBtn:          &a.hpBindBtn,
+		clearBtn:         &a.hpClearBtn,
+		threshold:        &a.hpThreshold,
+		onBind:           a.onBindHPKey,
+		onClear:          a.onClearHPKey,
+		commitThresh:     a.commitHPThresholdEdit,
+	})
+}
+
+// buildSPPotionSection builds the SP potion group box using the shared builder.
+func (a *guiApp) buildSPPotionSection(page *walk.TabPage) error {
+	return a.buildPotionSection(page, potionSectionConfig{
+		title:            "SP potion",
+		defaultThreshold: 30,
+		enabledCB:        &a.spEnabledCB,
+		thresholdEdit:    &a.spThresholdEdit,
+		keyLabel:         &a.spKeyLabel,
+		bindBtn:          &a.spBindBtn,
+		clearBtn:         &a.spClearBtn,
+		threshold:        &a.spThreshold,
+		onBind:           a.onBindSPKey,
+		onClear:          a.onClearSPKey,
+		commitThresh:     a.commitSPThresholdEdit,
+	})
 }
 
 // isAutoPotAddressMode returns true if Address Reading mode is active.

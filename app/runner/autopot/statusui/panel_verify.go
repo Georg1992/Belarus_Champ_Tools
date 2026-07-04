@@ -126,13 +126,39 @@ func ComputePanelFeatures(panel image.Image) (PanelFeatures, error) {
 	}
 	totalPx := float64(w * h)
 
-	// Pass 1 — colour buckets + top-right corner patch capture. The
-	// corner patch is captured inline to avoid re-decoding pixels.
-	blue := 0
+	// Pass 1 — colour buckets + top-right corner patch + luma grid.
+	blue, luma, patchR, patchG, patchB := scanPanelColors(panel, b, w, h)
+
+	// Pass 2 — edge density in luma grid.
+	edges, strains := computeEdgeDensity(luma, w, h)
+
+	// Patch contrast — average per-channel stddev.
+	contrast := channelAvgStddev(patchR, patchG, patchB)
+
+	frac := func(n int) float64 {
+		if totalPx == 0 {
+			return 0
+		}
+		return float64(n) / totalPx
+	}
+	edgeFrac := 0.0
+	if strains > 0 {
+		edgeFrac = float64(edges) / float64(strains)
+	}
+	return PanelFeatures{
+		BlueFraction:           frac(blue),
+		TopRightCornerContrast: contrast,
+		EdgeFraction:           edgeFrac,
+	}, nil
+}
+
+// scanPanelColors does a single pass over the panel to count blue-dominant
+// pixels, build the luma grid, and capture the top-right corner patch for
+// contrast measurement.
+func scanPanelColors(panel image.Image, b image.Rectangle, w, h int) (blue int, luma []uint16, patchR, patchG, patchB []uint8) {
 	patchW := panelCornerPatch
 	patchH := panelCornerPatch
 	patchX0 := w - patchW
-	patchY0 := 0
 	if patchX0 < 0 {
 		patchX0 = 0
 	}
@@ -140,36 +166,35 @@ func ComputePanelFeatures(panel image.Image) (PanelFeatures, error) {
 	if patchSize > w*h {
 		patchSize = w * h
 	}
-	patchR := make([]uint8, 0, patchSize)
-	patchG := make([]uint8, 0, patchSize)
-	patchB := make([]uint8, 0, patchSize)
-	luma := make([]uint16, h*w) // 16-bit so cumulative addition doesn't overflow
+	patchR = make([]uint8, 0, patchSize)
+	patchG = make([]uint8, 0, patchSize)
+	patchB = make([]uint8, 0, patchSize)
+	luma = make([]uint16, h*w)
+
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			r, g, bl, _ := panel.At(b.Min.X+x, b.Min.Y+y).RGBA()
-			// 16-bit RGBA() returns pre-multiplied, 0..0xffff. Convert
-			// to 8-bit post-pre-multiply (q>>8).
 			r8 := uint8(r >> 8)
 			g8 := uint8(g >> 8)
 			b8 := uint8(bl >> 8)
 			if b8 > r8+25 && b8 > g8+25 && b8 > 80 {
 				blue++
 			}
-			// Rec.601 luma, same formula the rest of statusui uses
-			// (luma8 in panel_finder.go) — agreement to ±1.
 			luma[y*w+x] = uint16((uint32(r8)*299 + uint32(g8)*587 + uint32(b8)*114) / 1000)
-			if x >= patchX0 && y >= patchY0 && x < patchX0+patchW && y < patchY0+patchH {
+			if x >= patchX0 && y >= 0 && x < patchX0+patchW && y < patchH {
 				patchR = append(patchR, r8)
 				patchG = append(patchG, g8)
 				patchB = append(patchB, b8)
 			}
 		}
 	}
+	return
+}
 
-	// Pass 2 — edge density. Sample stride >= 2 from each interior
-	// pixel (right + below + left + above, 4 strains).
-	edges := 0
-	strains := 0
+// computeEdgeDensity counts the number of luminance neighbour-pairs whose
+// difference exceeds panelEdgeDiff. Each interior pixel contributes 4
+// orthogonal strains (right, below, left, above).
+func computeEdgeDensity(luma []uint16, w, h int) (edges, strains int) {
 	for y := panelEdgeStep; y < h-panelEdgeStep; y++ {
 		for x := panelEdgeStep; x < w-panelEdgeStep; x++ {
 			c := luma[y*w+x]
@@ -188,26 +213,7 @@ func ComputePanelFeatures(panel image.Image) (PanelFeatures, error) {
 			strains += 4
 		}
 	}
-
-	// Patch contrast — average per-channel stddev. Empty patch on tiny
-	// panels collapses to 0 (no signal) and Verify will fail loudly
-	// rather than pass a false negative.
-	contrast := channelAvgStddev(patchR, patchG, patchB)
-	frac := func(n int) float64 {
-		if totalPx == 0 {
-			return 0
-		}
-		return float64(n) / totalPx
-	}
-	edgeFrac := 0.0
-	if strains > 0 {
-		edgeFrac = float64(edges) / float64(strains)
-	}
-	return PanelFeatures{
-		BlueFraction:           frac(blue),
-		TopRightCornerContrast: contrast,
-		EdgeFraction:           edgeFrac,
-	}, nil
+	return
 }
 
 // absU16 is integer |a-b| in two's complement, equivalent to math.Abs

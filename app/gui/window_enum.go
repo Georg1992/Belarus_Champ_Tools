@@ -40,7 +40,7 @@ var enumWindowsOnce sync.Once
 func listVisibleWindows() []windowInfo {
 	enumWindowsOnce.Do(func() {
 		enumWindowsCallback = syscall.NewCallback(func(hwnd, lParam uintptr) uintptr {
-			ptr := (*[]windowInfo)(unsafe.Pointer(lParam))
+			ptr := (*[]windowInfo)(unsafe.Pointer(lParam)) //nolint:govet — Win32 callback, lParam is always a valid aligned pointer
 
 			visible, _, _ := procIsWindowVisible.Call(hwnd)
 			if visible == 0 {

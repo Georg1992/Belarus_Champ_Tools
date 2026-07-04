@@ -856,38 +856,51 @@ func emitDebug(
 	if err := os.MkdirAll(debDir, 0o755); err != nil {
 		return
 	}
-	// mask.png — binarized foreground mask fed to findComponents.
+	writeMaskPNG(debDir, mask)
+	writeComponentsPNG(debDir, strip, matches, mask)
+	writeGlyphCrops(debDir, strip, matches)
+	writeRecognizedText(debDir, res, bounds, matches)
+}
+
+func writeMaskPNG(debDir string, mask [][]bool) {
 	mw := maskWidth(mask)
 	mh := maskHeight(mask)
-	if mw > 0 && mh > 0 {
-		gray := image.NewGray(image.Rect(0, 0, mw, mh))
-		for y := 0; y < mh; y++ {
-			for x := 0; x < mw; x++ {
-				if mask[y][x] {
-					gray.SetGray(x, y, color.Gray{Y: 0})
-				} else {
-					gray.SetGray(x, y, color.Gray{Y: 255})
-				}
+	if mw == 0 || mh == 0 {
+		return
+	}
+	gray := image.NewGray(image.Rect(0, 0, mw, mh))
+	for y := 0; y < mh; y++ {
+		for x := 0; x < mw; x++ {
+			if mask[y][x] {
+				gray.SetGray(x, y, color.Gray{Y: 0})
+			} else {
+				gray.SetGray(x, y, color.Gray{Y: 255})
 			}
 		}
-		_ = os.WriteFile(filepath.Join(debDir, "mask.png"), encodePNG(gray), 0o644)
 	}
+	_ = os.WriteFile(filepath.Join(debDir, "mask.png"), encodePNG(gray), 0o644)
+}
 
-	// 2. components.png — copy of strip with red bboxes drawn
-	// around each detected component (mask-local coords + bounds
-	// offset = strip-local).
-	if strip != nil && mw > 0 && mh > 0 {
-		annotated := cloneImage(strip)
-		red := color.RGBA{R: 255, A: 255}
-		for _, m := range matches {
-			drawBox(annotated, m.rect, red)
-		}
-		_ = os.WriteFile(filepath.Join(debDir, "components.png"), encodePNG(annotated), 0o644)
+func writeComponentsPNG(debDir string, strip image.Image, matches []matchRec, mask [][]bool) {
+	mw := maskWidth(mask)
+	mh := maskHeight(mask)
+	if strip == nil || mw == 0 || mh == 0 {
+		return
 	}
-
-	// 3. glyph_NN_<char>_S.SS.png — strip crop per match.
+	annotated := cloneImage(strip)
+	red := color.RGBA{R: 255, A: 255}
 	for _, m := range matches {
-		if strip == nil || m.rect.Empty() {
+		drawBox(annotated, m.rect, red)
+	}
+	_ = os.WriteFile(filepath.Join(debDir, "components.png"), encodePNG(annotated), 0o644)
+}
+
+func writeGlyphCrops(debDir string, strip image.Image, matches []matchRec) {
+	if strip == nil {
+		return
+	}
+	for _, m := range matches {
+		if m.rect.Empty() {
 			continue
 		}
 		crop := cropImage(strip, m.rect)
@@ -897,8 +910,9 @@ func emitDebug(
 		name := fmt.Sprintf("glyph_%02d_%c_%.2f.png", m.idx, m.ch, m.score)
 		_ = os.WriteFile(filepath.Join(debDir, name), encodePNG(crop), 0o644)
 	}
+}
 
-	// 4. recognized.txt — what the reader assembled + final score.
+func writeRecognizedText(debDir string, res Result, bounds image.Rectangle, matches []matchRec) {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "ok=%v\n", res.OK)
 	if res.Reason != "" {

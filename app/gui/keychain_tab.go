@@ -24,6 +24,23 @@ func (a *guiApp) buildKeyChainTab(page *walk.TabPage) error {
 		return err
 	}
 
+	if err := a.buildKeyChainGroup(page); err != nil {
+		return err
+	}
+
+	hint, err := walk.NewLabel(page)
+	if err != nil {
+		return err
+	}
+	if err := hint.SetText("Key 1 is the trigger. Tap it to run the chain once; hold it to loop."); err != nil {
+		return err
+	}
+	return nil
+}
+
+// buildKeyChainGroup creates the Switch 1 group box with labels, step columns,
+// step links, and the Clear button.
+func (a *guiApp) buildKeyChainGroup(page *walk.TabPage) error {
 	chainGB, err := walk.NewGroupBox(page)
 	if err != nil {
 		return err
@@ -37,6 +54,7 @@ func (a *guiApp) buildKeyChainTab(page *walk.TabPage) error {
 		return err
 	}
 
+	// Main row: labels | steps
 	chainRow, err := walk.NewComposite(chainGB)
 	if err != nil {
 		return err
@@ -48,7 +66,39 @@ func (a *guiApp) buildKeyChainTab(page *walk.TabPage) error {
 	}
 	applyKeyChainSurface(chainRow)
 
-	labelsCol, err := walk.NewComposite(chainRow)
+	if err := a.buildKeyChainLabels(chainRow); err != nil {
+		return err
+	}
+	if err := a.buildKeyChainSteps(chainRow); err != nil {
+		return err
+	}
+
+	// Clear button row
+	btnRow, err := walk.NewComposite(chainGB)
+	if err != nil {
+		return err
+	}
+	btnLayout := walk.NewHBoxLayout()
+	btnLayout.SetSpacing(10)
+	if err := btnRow.SetLayout(btnLayout); err != nil {
+		return err
+	}
+	applyKeyChainSurface(btnRow)
+
+	a.keyChainClearBtn, err = walk.NewPushButton(btnRow)
+	if err != nil {
+		return err
+	}
+	if err := a.keyChainClearBtn.SetText("Clear"); err != nil {
+		return err
+	}
+	a.keyChainClearBtn.Clicked().Attach(a.clearKeyChain)
+	return nil
+}
+
+// buildKeyChainLabels creates the Keys/Delay(ms) label column.
+func (a *guiApp) buildKeyChainLabels(parent walk.Container) error {
+	labelsCol, err := walk.NewComposite(parent)
 	if err != nil {
 		return err
 	}
@@ -92,8 +142,12 @@ func (a *guiApp) buildKeyChainTab(page *walk.TabPage) error {
 	if err := delaysLabel.SetMinMaxSize(walk.Size{Width: 70, Height: keyChainFieldHeight}, walk.Size{Width: 70, Height: keyChainFieldHeight}); err != nil {
 		return err
 	}
+	return nil
+}
 
-	stepsRow, err := walk.NewComposite(chainRow)
+// buildKeyChainSteps creates the step column with all 7 key slots and links.
+func (a *guiApp) buildKeyChainSteps(parent walk.Container) error {
+	stepsRow, err := walk.NewComposite(parent)
 	if err != nil {
 		return err
 	}
@@ -115,35 +169,6 @@ func (a *guiApp) buildKeyChainTab(page *walk.TabPage) error {
 			}
 		}
 	}
-
-	btnRow, err := walk.NewComposite(chainGB)
-	if err != nil {
-		return err
-	}
-	btnLayout := walk.NewHBoxLayout()
-	btnLayout.SetSpacing(10)
-	if err := btnRow.SetLayout(btnLayout); err != nil {
-		return err
-	}
-	applyKeyChainSurface(btnRow)
-
-	a.keyChainClearBtn, err = walk.NewPushButton(btnRow)
-	if err != nil {
-		return err
-	}
-	if err := a.keyChainClearBtn.SetText("Clear"); err != nil {
-		return err
-	}
-	a.keyChainClearBtn.Clicked().Attach(a.clearKeyChain)
-
-	hint, err := walk.NewLabel(page)
-	if err != nil {
-		return err
-	}
-	if err := hint.SetText("Key 1 is the trigger. Tap it to run the chain once; hold it to loop."); err != nil {
-		return err
-	}
-
 	return nil
 }
 

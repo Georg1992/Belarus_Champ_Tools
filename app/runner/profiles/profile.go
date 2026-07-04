@@ -4,11 +4,8 @@
 //
 // Usage:
 //
-//	profiles.Default()        // returns the built-in Revenant profile
-//	profiles.ByName("Revenant") // returns a profile by server name
+//	profiles.Default() // returns the built-in Revenant profile
 package profiles
-
-import "fmt"
 
 // Profile holds module-relative memory offsets for a specific server's
 // client memory layout. The address reader adds the process base address
@@ -46,21 +43,11 @@ func Default() Profile {
 	return Revenant()
 }
 
-// ByName returns the profile for the given server name, or an error
-// if no profile matches.
+// All returns every registered profile.
 var profiles = map[string]Profile{
 	"Revenant": Revenant(),
 }
 
-func ByName(name string) (Profile, error) {
-	p, ok := profiles[name]
-	if !ok {
-		return Profile{}, fmt.Errorf("unknown server profile %q", name)
-	}
-	return p, nil
-}
-
-// All returns every registered profile.
 func All() []Profile {
 	out := make([]Profile, 0, len(profiles))
 	for _, p := range profiles {

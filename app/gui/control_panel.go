@@ -7,11 +7,6 @@ import (
 )
 
 func (a *guiApp) buildControlPanel(parent walk.Container) error {
-	hintFont, err := walk.NewFont("Segoe UI", 8, 0)
-	if err != nil {
-		return err
-	}
-
 	runGB, err := walk.NewGroupBox(parent)
 	if err != nil {
 		return err
@@ -35,23 +30,38 @@ func (a *guiApp) buildControlPanel(parent walk.Container) error {
 		return err
 	}
 
-	// ---- VIIPER block ----
-	viiperPanel, err := walk.NewComposite(controlRow)
+	if err := a.buildViiperSection(controlRow); err != nil {
+		return err
+	}
+	if _, err := walk.NewHSpacer(controlRow); err != nil {
+		return err
+	}
+	return a.buildToolsSection(controlRow)
+}
+
+// buildViiperSection creates the VIIPER status badge, Start button, and hint.
+func (a *guiApp) buildViiperSection(parent walk.Container) error {
+	hintFont, err := walk.NewFont("Segoe UI", 8, 0)
 	if err != nil {
 		return err
 	}
-	viiperVBox := walk.NewVBoxLayout()
-	viiperVBox.SetSpacing(4)
-	if err := viiperPanel.SetLayout(viiperVBox); err != nil {
+
+	panel, err := walk.NewComposite(parent)
+	if err != nil {
+		return err
+	}
+	vbox := walk.NewVBoxLayout()
+	vbox.SetSpacing(4)
+	if err := panel.SetLayout(vbox); err != nil {
 		return err
 	}
 
-	a.viiperBadge, err = newViiperBadge(viiperPanel)
+	a.viiperBadge, err = newViiperBadge(panel)
 	if err != nil {
 		return err
 	}
 
-	a.viiperStartBtn, err = walk.NewPushButton(viiperPanel)
+	a.viiperStartBtn, err = walk.NewPushButton(panel)
 	if err != nil {
 		return err
 	}
@@ -60,36 +70,40 @@ func (a *guiApp) buildControlPanel(parent walk.Container) error {
 	}
 	a.viiperStartBtn.Clicked().Attach(a.onStartViiper)
 
-	viiperHint, err := walk.NewLabel(viiperPanel)
+	hint, err := walk.NewLabel(panel)
 	if err != nil {
 		return err
 	}
-	if err := viiperHint.SetText("VIIPER starts automatically."); err != nil {
+	if err := hint.SetText("VIIPER starts automatically."); err != nil {
 		return err
 	}
-	viiperHint.SetFont(hintFont)
+	hint.SetFont(hintFont)
+	return nil
+}
 
-	if _, err := walk.NewHSpacer(controlRow); err != nil {
-		return err
-	}
-
-	// ---- TOOLS block ----
-	toolsPanel, err := walk.NewComposite(controlRow)
-	if err != nil {
-		return err
-	}
-	toolsVBox := walk.NewVBoxLayout()
-	toolsVBox.SetSpacing(4)
-	if err := toolsPanel.SetLayout(toolsVBox); err != nil {
-		return err
-	}
-
-	a.toolsBadge, err = newToolsBadge(toolsPanel)
+// buildToolsSection creates the TOOLS status badge, Start/Stop buttons, and hint.
+func (a *guiApp) buildToolsSection(parent walk.Container) error {
+	hintFont, err := walk.NewFont("Segoe UI", 8, 0)
 	if err != nil {
 		return err
 	}
 
-	btnRow, err := walk.NewComposite(toolsPanel)
+	panel, err := walk.NewComposite(parent)
+	if err != nil {
+		return err
+	}
+	vbox := walk.NewVBoxLayout()
+	vbox.SetSpacing(4)
+	if err := panel.SetLayout(vbox); err != nil {
+		return err
+	}
+
+	a.toolsBadge, err = newToolsBadge(panel)
+	if err != nil {
+		return err
+	}
+
+	btnRow, err := walk.NewComposite(panel)
 	if err != nil {
 		return err
 	}
@@ -118,7 +132,7 @@ func (a *guiApp) buildControlPanel(parent walk.Container) error {
 	a.stopBtn.SetEnabled(false)
 	a.stopBtn.Clicked().Attach(a.onStop)
 
-	toggleHint, err := walk.NewLabel(toolsPanel)
+	toggleHint, err := walk.NewLabel(panel)
 	if err != nil {
 		return err
 	}
@@ -126,7 +140,5 @@ func (a *guiApp) buildControlPanel(parent walk.Container) error {
 		return err
 	}
 	toggleHint.SetFont(hintFont)
-
-	// Initial state set in createWindow after all tabs are built.
 	return nil
 }

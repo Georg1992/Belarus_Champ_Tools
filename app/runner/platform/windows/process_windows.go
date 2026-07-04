@@ -4,7 +4,6 @@ package runner
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -12,23 +11,12 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// ProcessInfo holds details about a running process for memory reading.
-type ProcessInfo struct {
-	PID  uint32
-	Name string // executable name, e.g. "Ragnarok.exe"
-}
-
 var (
-	procKernel32                  = windows.NewLazySystemDLL("kernel32.dll")
-	procCreateToolhelp32Snapshot  = procKernel32.NewProc("CreateToolhelp32Snapshot")
-	procProcess32First            = procKernel32.NewProc("Process32FirstW")
-	procProcess32Next             = procKernel32.NewProc("Process32NextW")
-	procOpenProcess               = procKernel32.NewProc("OpenProcess")
+	procKernel32                 = windows.NewLazySystemDLL("kernel32.dll")
+	procCreateToolhelp32Snapshot = procKernel32.NewProc("CreateToolhelp32Snapshot")
+	procOpenProcess              = procKernel32.NewProc("OpenProcess")
 	procReadProcessMemory         = procKernel32.NewProc("ReadProcessMemory")
 	procCloseHandle               = procKernel32.NewProc("CloseHandle")
-
-	procNtdll                     = windows.NewLazySystemDLL("ntdll.dll")
-	procNtReadVirtualMemory       = procNtdll.NewProc("NtReadVirtualMemory")
 
 	winUser32                     = windows.NewLazySystemDLL("user32.dll")
 	procEnumWindows               = winUser32.NewProc("EnumWindows")
@@ -38,29 +26,12 @@ var (
 	procGetWindowThreadProcessId2 = winUser32.NewProc("GetWindowThreadProcessId")
 
 	procModule32First = procKernel32.NewProc("Module32FirstW")
-	procModule32Next  = procKernel32.NewProc("Module32NextW")
 )
 
 const (
-	th32csSnapProcess  = 0x00000002
-	th32csSnapModule   = 0x00000008
-	processVMRead      = 0x0010
-	processQueryInfo   = 0x0400
-
+	th32csSnapModule = 0x00000008
+	processVMRead    = 0x0010
 )
-
-type processEntry32 struct {
-	Size            uint32
-	CntUsage        uint32
-	ProcessID       uint32
-	DefaultHeapID   uintptr
-	ModuleID        uint32
-	CntThreads      uint32
-	ParentProcessID uint32
-	PriorityClass   int32
-	Flags           uint32
-	ExeFile         [260]uint16
-}
 
 type moduleEntry32 struct {
 	Size         uint32
@@ -73,46 +44,6 @@ type moduleEntry32 struct {
 	HModule      uintptr
 	SzModule     [256]uint16
 	SzExePath    [260]uint16
-}
-
-// ListProcesses returns all running processes with a non-empty executable
-// name, sorted alphabetically.
-func ListProcesses() ([]ProcessInfo, error) {
-	snapshot, _, err := procCreateToolhelp32Snapshot.Call(th32csSnapProcess, 0)
-	if snapshot == uintptr(windows.Handle(0xFFFFFFFF)) {
-		return nil, fmt.Errorf("CreateToolhelp32Snapshot failed: %w", err)
-	}
-	defer procCloseHandle.Call(snapshot)
-
-	var entry processEntry32
-	entry.Size = uint32(unsafe.Sizeof(entry))
-
-	ret, _, _ := procProcess32First.Call(snapshot, uintptr(unsafe.Pointer(&entry)))
-	if ret == 0 {
-		return nil, fmt.Errorf("Process32First failed")
-	}
-
-	var processes []ProcessInfo
-	for {
-		name := windows.UTF16ToString(entry.ExeFile[:])
-		if name != "" {
-			processes = append(processes, ProcessInfo{
-				PID:  entry.ProcessID,
-				Name: name,
-			})
-		}
-
-		ret, _, _ := procProcess32Next.Call(snapshot, uintptr(unsafe.Pointer(&entry)))
-		if ret == 0 {
-			break
-		}
-	}
-
-	sort.Slice(processes, func(i, j int) bool {
-		return processes[i].Name < processes[j].Name
-	})
-
-	return processes, nil
 }
 
 // OpenProcessHandle opens a handle to the process with the given PID
@@ -183,7 +114,7 @@ func FindVisibleWindowPID(title string) uint32 {
 		if strings.Contains(winTitle, title) {
 			var pid uint32
 			procGetWindowThreadProcessId2.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
-			*(*uint32)(unsafe.Pointer(ptr)) = pid
+			*(*uint32)(unsafe.Pointer(ptr)) = pid //nolint:govet — Win32 callback, lParam is always a valid aligned pointer
 			return 0 // stop enumeration
 		}
 		return 1
@@ -192,23 +123,6 @@ func FindVisibleWindowPID(title string) uint32 {
 	var foundPID uint32
 	procEnumWindows.Call(cb, uintptr(unsafe.Pointer(&foundPID)))
 	return foundPID
-}
-
-// ReadProcessUint32ByPID opens a handle to the process, reads a 32-bit
-// value at addr, and closes the handle. This matches the pattern used in
-// the user's AutoHotKey script and avoids stale-handle issues.
-//
-// Deprecated: prefer opening the handle once with OpenProcessHandle and
-// calling ReadProcessUint32ByHandle repeatedly — avoids 400 syscall pairs
-// per second which can trigger anti-cheat heuristics.
-func ReadProcessUint32ByPID(pid uint32, addr uintptr) (uint32, error) {
-	h, _, err := procOpenProcess.Call(processVMRead, 0, uintptr(pid))
-	if h == 0 {
-		return 0, fmt.Errorf("OpenProcess(%d) failed: %w", pid, err)
-	}
-	defer procCloseHandle.Call(h)
-
-	return ReadProcessUint32ByHandle(windows.Handle(h), addr)
 }
 
 // ReadProcessUint32ByHandle reads a 32-bit value from the target process
@@ -233,34 +147,3 @@ func ReadProcessUint32ByHandle(h windows.Handle, addr uintptr) (uint32, error) {
 	return val, nil
 }
 
-// ReadProcessUint32ViaNt reads a 32-bit value from the target process
-// using NtReadVirtualMemory from ntdll instead of ReadProcessMemory from
-// kernel32. Some anti-cheat systems (like Gepard) hook kernel32 but not
-// ntdll, so this may bypass detection.
-//
-// Opens a handle, reads, and closes — matching the user's AHK pattern
-// to avoid stale-handle issues that can arise from persistent handles.
-func ReadProcessUint32ViaNt(pid uint32, addr uintptr) (uint32, error) {
-	h, _, err := procOpenProcess.Call(processVMRead, 0, uintptr(pid))
-	if h == 0 {
-		return 0, fmt.Errorf("OpenProcess(%d) failed: %w", pid, err)
-	}
-	defer procCloseHandle.Call(h)
-
-	var val uint32
-	var nBytes uintptr
-	status, _, _ := procNtReadVirtualMemory.Call(
-		h,
-		addr,
-		uintptr(unsafe.Pointer(&val)),
-		4,
-		uintptr(unsafe.Pointer(&nBytes)),
-	)
-	if status != 0 {
-		return 0, fmt.Errorf("NtReadVirtualMemory(0x%X) failed: NTSTATUS 0x%08X", addr, status)
-	}
-	if nBytes != 4 {
-		return 0, fmt.Errorf("NtReadVirtualMemory(0x%X): read %d bytes, want 4", addr, nBytes)
-	}
-	return val, nil
-}

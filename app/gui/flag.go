@@ -28,7 +28,7 @@ func belarusFlagImage() image.Image {
 }
 
 func belarusFlagBitmap() (*walk.Bitmap, error) {
-	return walk.NewBitmapFromImage(belarusFlagImage())
+	return walk.NewBitmapFromImageForDPI(belarusFlagImage(), 96)
 }
 
 func addBelarusHeader(parent walk.Container) error {

@@ -119,10 +119,6 @@ func FindStatusPanel(img, template image.Image, opts FindStatusPanelOptions) (im
 // false-positive matches from tiny visible slivers far outside the image.
 const panelBoundaryOverflowPx = 20
 
-// panelMinVisibleFraction is the minimum fraction of the template area that
-// must be inside the image for a candidate position to be evaluated.
-const panelMinVisibleFraction = 0.75
-
 // findPanelInRegion scans the given region of img at the given stride
 // against the template and returns the lowest-SAD match below maxScore,
 // or ok=false if no match qualifies.
@@ -175,42 +171,7 @@ func findPanelInRegion(img, template image.Image, region image.Rectangle, maxSco
 	// visible intersection so scores remain in the same 0..1 range as a
 	// full-template match.
 	sadPartial := func(x0, y0 int, earlyExit float64) float64 {
-		// Visible template rows: rows where img row (y0+dy) is in ib.
-		dyStart := ib.Min.Y - y0
-		if dyStart < 0 {
-			dyStart = 0
-		}
-		dyEnd := ib.Max.Y - y0
-		if dyEnd > th {
-			dyEnd = th
-		}
-		// Visible template cols: cols where img col (x0+dx) is in ib.
-		dxStart := ib.Min.X - x0
-		if dxStart < 0 {
-			dxStart = 0
-		}
-		dxEnd := ib.Max.X - x0
-		if dxEnd > tw {
-			dxEnd = tw
-		}
-		visH := dyEnd - dyStart
-		visW := dxEnd - dxStart
-		if visH <= 0 || visW <= 0 || visH*visW < minVisPx {
-			return earlyExit + 1 // skip: not enough visible pixels
-		}
-		visPixels := float64(visH * visW)
-		// Scale earlyExit down to the visible-area budget so the inner-loop
-		// early-exit comparison remains valid.
-		scaledExit := earlyExit * (visPixels / float64(tw*th))
-
-		var rawSum float64
-		if fastOK {
-			rawSum = sadOnGrayscalePartial(imgGray, tplGray, x0, y0, dxStart, dyStart, dxEnd, dyEnd, scaledExit)
-		} else {
-			rawSum = sadWithEarlyExitPartial(img, tplGray, x0, y0, dxStart, dyStart, dxEnd, dyEnd, scaledExit)
-		}
-		// Normalize rawSum to full-template scale so maxScore applies uniformly.
-		return rawSum / visPixels * float64(tw*th)
+		return computeSadPartial(ib, tw, th, minVisPx, fastOK, imgGray, tplGray, img, x0, y0, earlyExit)
 	}
 
 	maxPossible := float64(tw*th) * 255.0
@@ -235,6 +196,43 @@ scan:
 		return image.Rectangle{}, normalized, false
 	}
 	return image.Rect(bestX, bestY, bestX+tw, bestY+th), normalized, true
+}
+
+// computeSadPartial computes the SAD for a single candidate position (x0, y0)
+// accounting for only the visible portion of the template that overlaps the
+// image. Returns a normalized score on the full-template scale.
+func computeSadPartial(ib image.Rectangle, tw, th, minVisPx int, fastOK bool, imgGray, tplGray [][]uint8, img image.Image, x0, y0 int, earlyExit float64) float64 {
+	dyStart := ib.Min.Y - y0
+	if dyStart < 0 {
+		dyStart = 0
+	}
+	dyEnd := ib.Max.Y - y0
+	if dyEnd > th {
+		dyEnd = th
+	}
+	dxStart := ib.Min.X - x0
+	if dxStart < 0 {
+		dxStart = 0
+	}
+	dxEnd := ib.Max.X - x0
+	if dxEnd > tw {
+		dxEnd = tw
+	}
+	visH := dyEnd - dyStart
+	visW := dxEnd - dxStart
+	if visH <= 0 || visW <= 0 || visH*visW < minVisPx {
+		return earlyExit + 1
+	}
+	visPixels := float64(visH * visW)
+	scaledExit := earlyExit * (visPixels / float64(tw*th))
+
+	var rawSum float64
+	if fastOK {
+		rawSum = sadOnGrayscalePartial(imgGray, tplGray, x0, y0, dxStart, dyStart, dxEnd, dyEnd, scaledExit)
+	} else {
+		rawSum = sadWithEarlyExitPartial(img, tplGray, x0, y0, dxStart, dyStart, dxEnd, dyEnd, scaledExit)
+	}
+	return rawSum / visPixels * float64(tw*th)
 }
 
 // precomputeGrayscale returns a 2-D slice of 8-bit luminance values

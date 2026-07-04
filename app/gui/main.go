@@ -184,27 +184,53 @@ func (a *guiApp) shutdown() {
 			a.overlay.Destroy()
 			a.overlay = nil
 		}
-
-
 	})
 }
 
+// ---------------------------------------------------------------------------
+// createWindow and initialisation phases
+// ---------------------------------------------------------------------------
+
 func (a *guiApp) createWindow() error {
+	mw := a.initMainWindow()
+	if err := a.setupMainWindow(mw); err != nil {
+		return err
+	}
+	a.startBackgroundMonitors()
+	if err := a.initTabs(mw); err != nil {
+		return err
+	}
+	if err := a.initLogArea(mw); err != nil {
+		return err
+	}
+	a.wireClosingHandler(mw)
+	a.setInitialState()
+	a.onStartViiper()
+
+	mw.Show()
+	mw.Run()
+	return nil
+}
+
+// initMainWindow creates the main window and the HP/SP overlay.
+func (a *guiApp) initMainWindow() *walk.MainWindow {
 	mw, err := walk.NewMainWindow()
 	if err != nil {
-		return err
+		panic(err) // must not fail
 	}
 	a.mainWindow = mw
 
-	// Create the HP/SP overlay window (hidden until autopot produces values).
 	if ovl, ovlErr := newStatusOverlay(); ovlErr == nil {
 		a.overlay = ovl
 	}
+	return mw
+}
 
+// setupMainWindow sets title, size, layout, icon, header, and control panel.
+func (a *guiApp) setupMainWindow(mw *walk.MainWindow) error {
 	if err := a.setupLogLimit(); err != nil {
 		return err
 	}
-
 	if err := mw.SetTitle("BELARUS CHAMP TOOLS"); err != nil {
 		return err
 	}
@@ -222,53 +248,46 @@ func (a *guiApp) createWindow() error {
 		return err
 	}
 
-	icon, err := walk.NewIconFromImage(belarusFlagImage())
+	icon, err := walk.NewIconFromImageForDPI(belarusFlagImage(), 96)
 	if err != nil {
 		return err
 	}
 	if err := mw.SetIcon(icon); err != nil {
 		return err
 	}
-
 	if err := addBelarusHeader(mw); err != nil {
 		return err
 	}
+	return a.buildControlPanel(mw)
+}
 
-	if err := a.buildControlPanel(mw); err != nil {
-		return err
-	}
-
-	// Start the VIIPER monitor. Uses context.Background so it survives
-	// start/stop cycles; shutdown calls viiperMonitor.stop().
+// startBackgroundMonitors starts the VIIPER connectivity monitor and the
+// End-key toggle watcher. Both run for the lifetime of the app.
+func (a *guiApp) startBackgroundMonitors() {
 	a.viiperMonitor = startViiperMonitor(context.Background(), func(active bool) {
 		a.mainWindow.Synchronize(func() {
 			if active {
 				a.viiperBadge.SetStatus(viiperActive)
-			} else {
-				a.viiperBadge.SetStatus(viiperInactive)
-				// VIIPER went down — stop tools, close the session,
-				// and disable everything except Start VIIPER.
-				if a.isStarted() {
-					a.appendLog("VIIPER server disconnected — stopping tools")
-					a.onStop()
-				}
-				a.mu.Lock()
-				if a.inputSession != nil {
-					a.inputSession.Close()
-					a.inputSession = nil
-				}
-				a.mu.Unlock()
-				a.startBtn.SetEnabled(false)
-				a.stopBtn.SetEnabled(false)
-				a.setConfigEnabled(false)
-				a.viiperStartBtn.SetEnabled(true)
+				return
 			}
+			a.viiperBadge.SetStatus(viiperInactive)
+			if a.isStarted() {
+				a.appendLog("VIIPER server disconnected — stopping tools")
+				a.onStop()
+			}
+			a.mu.Lock()
+			if a.inputSession != nil {
+				a.inputSession.Close()
+				a.inputSession = nil
+			}
+			a.mu.Unlock()
+			a.startBtn.SetEnabled(false)
+			a.stopBtn.SetEnabled(false)
+			a.setConfigEnabled(false)
+			a.viiperStartBtn.SetEnabled(true)
 		})
 	})
 
-	// Start the End-key toggle watcher. It runs for the lifetime of the
-	// app — pressing End stops the tools (keeps VIIPER alive) when
-	// running, or starts them when stopped.
 	runner.StartEndKeyWatcher(context.Background(), func() {
 		a.mainWindow.Synchronize(func() {
 			if a.isStarted() {
@@ -279,58 +298,48 @@ func (a *guiApp) createWindow() error {
 			}
 		})
 	})
+}
 
+// initTabs creates the Clicker, AutoPot, and KeyChain tab pages and wires
+// tab-change and deactivating handlers for threshold blur.
+func (a *guiApp) initTabs(mw *walk.MainWindow) error {
 	tabs, err := walk.NewTabWidget(mw)
 	if err != nil {
 		return err
 	}
 
-	clickerPage, err := walk.NewTabPage()
-	if err != nil {
-		return err
-	}
-	if err := clickerPage.SetTitle("Clicker"); err != nil {
-		return err
-	}
-	if err := a.buildClickerTab(clickerPage); err != nil {
-		return err
-	}
-	if err := tabs.Pages().Add(clickerPage); err != nil {
-		return err
+	tabDefs := []struct {
+		title string
+		build func(*walk.TabPage) error
+	}{
+		{"Clicker", a.buildClickerTab},
+		{"AutoPot", a.buildAutoPotTab},
+		{"KeyChain", a.buildKeyChainTab},
 	}
 
-	autopotPage, err := walk.NewTabPage()
-	if err != nil {
-		return err
-	}
-	if err := autopotPage.SetTitle("AutoPot"); err != nil {
-		return err
-	}
-	if err := a.buildAutoPotTab(autopotPage); err != nil {
-		return err
-	}
-	if err := tabs.Pages().Add(autopotPage); err != nil {
-		return err
-	}
-
-	keyChainPage, err := walk.NewTabPage()
-	if err != nil {
-		return err
-	}
-	if err := keyChainPage.SetTitle("KeyChain"); err != nil {
-		return err
-	}
-	if err := a.buildKeyChainTab(keyChainPage); err != nil {
-		return err
-	}
-	if err := tabs.Pages().Add(keyChainPage); err != nil {
-		return err
+	for _, td := range tabDefs {
+		page, err := walk.NewTabPage()
+		if err != nil {
+			return err
+		}
+		if err := page.SetTitle(td.title); err != nil {
+			return err
+		}
+		if err := td.build(page); err != nil {
+			return err
+		}
+		if err := tabs.Pages().Add(page); err != nil {
+			return err
+		}
 	}
 
 	tabs.CurrentIndexChanged().Attach(a.finishThresholdInput)
-
 	mw.Deactivating().Attach(a.finishThresholdInput)
+	return nil
+}
 
+// initLogArea creates the log label and list box at the bottom of the window.
+func (a *guiApp) initLogArea(mw *walk.MainWindow) error {
 	logLabel, err := walk.NewLabel(mw)
 	if err != nil {
 		return err
@@ -351,26 +360,24 @@ func (a *guiApp) createWindow() error {
 		return err
 	}
 	a.wireThresholdBlurOnClick(mw)
-	// Initial state (after all tabs are built):
-	// VIIPER OFF, TOOLS OFF, only Start VIIPER enabled.
+	return nil
+}
+
+// wireClosingHandler attaches the shutdown handler to the window close event.
+func (a *guiApp) wireClosingHandler(mw *walk.MainWindow) {
+	mw.Closing().Attach(func(canceled *bool, reason walk.CloseReason) {
+		a.shutdown()
+	})
+}
+
+// setInitialState disables everything except Start VIIPER.
+func (a *guiApp) setInitialState() {
 	a.viiperBadge.SetStatus(viiperInactive)
 	a.toolsBadge.SetStatus(toolsStatusStopped)
 	a.viiperStartBtn.SetEnabled(true)
 	a.startBtn.SetEnabled(false)
 	a.stopBtn.SetEnabled(false)
 	a.setConfigEnabled(false)
-
-	mw.Closing().Attach(func(canceled *bool, reason walk.CloseReason) {
-		a.shutdown()
-	})
-
-	// Auto-start VIIPER on launch so tools are ready before the game.
-	// The goroutine in onStartViiper handles errors and logs progress.
-	a.onStartViiper()
-
-	mw.Show()
-	mw.Run()
-	return nil
 }
 
 // isViiperReady reports whether VIIPER is running with an active session.
@@ -380,6 +387,7 @@ func (a *guiApp) isViiperReady() bool {
 	defer a.mu.Unlock()
 	return a.inputSession != nil
 }
+
 // maxLogItems is the maximum number of log entries kept in memory to
 // prevent unbounded memory growth during long sessions.
 const maxLogItems = 500
@@ -645,6 +653,21 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 		return
 	}
 
+	a.startRemainingRunners(session, logFn)
+
+	// atomically read+clear the starting flag so onStop can't race
+	// between the two operations.
+	wasStarting := a.starting.Swap(0)
+	if wasStarting == 0 {
+		return // onStop already cleared starting before we could finish
+	}
+
+	a.mainWindow.Synchronize(func() { a.setToolsStarted(true) })
+	logFn("Tools started")
+}
+
+// startRemainingRunners starts AutoPot, TimerKey, and KeyChain runners.
+func (a *guiApp) startRemainingRunners(session runner.InputSession, logFn func(string)) {
 	autopotCfg := a.autopotWanted()
 	autopotCfg.Session = session
 	autopotCfg.Log = logFn
@@ -670,16 +693,6 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 
 	a.startTimerKeyRunner(timerCfg, logFn)
 	a.startKeyChainRunner(keyChainCfg, logFn)
-
-	// atomically read+clear the starting flag so onStop can't race
-	// between the two operations.
-	wasStarting := a.starting.Swap(0)
-	if wasStarting == 0 {
-		return // onStop already cleared starting before we could finish
-	}
-
-	a.mainWindow.Synchronize(func() { a.setToolsStarted(true) })
-	logFn("Tools started")
 }
 
 // onStop stops all tools but keeps the VIIPER session alive so the next
