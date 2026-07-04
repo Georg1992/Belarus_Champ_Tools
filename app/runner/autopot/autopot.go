@@ -155,16 +155,9 @@ const (
 func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 	defer a.resetStabilizers()
 
-	// Close the persistent process handle when exiting the run loop.
-	var address *addressReader
-	defer func() {
-		if address != nil {
-			address.Close()
-		}
-	}()
-
 	// Determine which reader to use based on the config.
-	// Address mode takes priority when a valid process handle is provided.
+	// Address mode takes priority when a valid process PID is provided.
+	var address *addressReader
 	var reader BarReader
 	var pixel *pixelBarReader
 	var ocr *statusUIReader
@@ -176,27 +169,21 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 		if baseErr != nil {
 			cfg.Log(fmt.Sprintf("address: cannot resolve module base for PID %d: %v — falling back to Visual mode", cfg.ProcessPID, baseErr))
 		} else {
-			// Open a persistent process handle for the game process.
-			// This handle is reused for all memory reads and closed
-			// on cleanup in the deferred block below.
-			handle, hErr := win.OpenProcessHandle(cfg.ProcessPID)
-			if hErr != nil {
-				cfg.Log(fmt.Sprintf("address: OpenProcess(%d) failed: %v — falling back to Visual mode", cfg.ProcessPID, hErr))
-			} else {
-				address = &addressReader{
-					pid:          cfg.ProcessPID,
-					procHandle:   handle,
-					profile:      cfg.Profile,
-					processTitle: cfg.ProcessTitle,
-					moduleBase:   baseAddr,
-					log:          cfg.Log,
-					liveConfig:   a.settings,
-					onParsed:     cfg.OnStatusParsed,
-					onModeChange: cfg.OnStatusUIMode,
-				}
-				reader = address
-				setMode(cfg.OnStatusUIMode, "Address reading")
+			// No persistent handle — ReadValues opens a fresh handle every
+			// call and closes it after reading all 4 values. This avoids
+			// stale-handle issues with anti-cheat.
+			address = &addressReader{
+				pid:          cfg.ProcessPID,
+				profile:      cfg.Profile,
+				processTitle: cfg.ProcessTitle,
+				moduleBase:   baseAddr,
+				log:          cfg.Log,
+				liveConfig:   a.settings,
+				onParsed:     cfg.OnStatusParsed,
+				onModeChange: cfg.OnStatusUIMode,
 			}
+			reader = address
+			setMode(cfg.OnStatusUIMode, "Address reading")
 		}
 	}
 

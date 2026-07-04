@@ -46,6 +46,7 @@ const (
 	th32csSnapModule   = 0x00000008
 	processVMRead      = 0x0010
 	processQueryInfo   = 0x0400
+
 )
 
 type processEntry32 struct {

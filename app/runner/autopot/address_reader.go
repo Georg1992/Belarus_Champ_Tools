@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"golang.org/x/sys/windows"
-
 	win "belarus-champ-tools/runner/platform/windows"
 	"belarus-champ-tools/runner/profiles"
 )
@@ -14,16 +12,14 @@ import (
 // addressReader is a BarReader that reads HP/SP values from a game
 // process's memory at the offsets defined by a server profile.
 //
-// Uses kernel32 ReadProcessMemory via win.ReadProcessUint32ByHandle with
-// a persistent process handle (opened once in autopot.go, reused for all
-// reads, closed on shutdown). This avoids the open/close-per-read pattern
-// that can trigger anti-cheat heuristics.
+// Opens a fresh process handle on every ReadValues() call and closes it
+// after all 4 values are read. This avoids the stale-handle problem that
+// occurs when anti-cheat invalidates persistent handles.
 //
 // When reads fail persistently, the reader attempts to auto-reconnect by
 // finding a window whose title matches processTitle and resolving its PID.
 type addressReader struct {
 	pid          uint32
-	procHandle   windows.Handle
 	profile      profiles.Profile
 	processTitle string // window title for auto-reconnect
 	moduleBase   uintptr // base address of the exe in the target process
@@ -40,14 +36,9 @@ type addressReader struct {
 	lastReconn    time.Time  // last auto-reconnect attempt time
 }
 
-// Close closes the persistent process handle. Should be called when the
-// reader is no longer needed (e.g. on autopot shutdown).
-func (r *addressReader) Close() {
-	if r.procHandle != windows.InvalidHandle && r.procHandle != 0 {
-		win.CloseProcessHandle(r.procHandle)
-		r.procHandle = windows.InvalidHandle
-	}
-}
+// Close is a no-op — there is no persistent handle to close. Handles are
+// opened and closed inside each ReadValues call.
+func (r *addressReader) Close() {}
 
 // reconnectInterval is how long the reader waits before trying to find
 // the process again after persistent read failures.
@@ -63,30 +54,37 @@ func (r *addressReader) ReadValues(ctx context.Context) BarReadResult {
 		return BarReadResult{Status: StatusInvalid, Err: fmt.Errorf("address reader: no process selected (PID=0)")}
 	}
 
+	// Open a fresh handle every time — avoids stale-handle issues.
+	h, err := win.OpenProcessHandle(r.pid)
+	if err != nil {
+		r.setError("address: OpenProcess(%d) failed: %v", r.pid, err)
+		return BarReadResult{Status: StatusInvalid, Err: err}
+	}
+	defer win.CloseProcessHandle(h)
+
 	// Profile stores module-relative offsets. Add the exe base address
 	// to get absolute virtual addresses (ASLR-safe).
 	base := r.moduleBase
 
-	// Read HP values using the persistent process handle via kernel32
-	// ReadProcessMemory. Handle opened once in autopot.go.
-	curHP, err := win.ReadProcessUint32ByHandle(r.procHandle, base+r.profile.CurrentHPAddr)
+	// Read HP values.
+	curHP, err := win.ReadProcessUint32ByHandle(h, base+r.profile.CurrentHPAddr)
 	if err != nil {
 		r.setError("address: %v", err)
 		return BarReadResult{Status: StatusInvalid, Err: err}
 	}
-	maxHP, err := win.ReadProcessUint32ByHandle(r.procHandle, base+r.profile.MaxHPAddr)
+	maxHP, err := win.ReadProcessUint32ByHandle(h, base+r.profile.MaxHPAddr)
 	if err != nil {
 		r.setError("address: %v", err)
 		return BarReadResult{Status: StatusInvalid, Err: err}
 	}
 
 	// Read SP values.
-	curSP, err := win.ReadProcessUint32ByHandle(r.procHandle, base+r.profile.CurrentSPAddr)
+	curSP, err := win.ReadProcessUint32ByHandle(h, base+r.profile.CurrentSPAddr)
 	if err != nil {
 		r.setError("address: %v", err)
 		return BarReadResult{Status: StatusInvalid, Err: err}
 	}
-	maxSP, err := win.ReadProcessUint32ByHandle(r.procHandle, base+r.profile.MaxSPAddr)
+	maxSP, err := win.ReadProcessUint32ByHandle(h, base+r.profile.MaxSPAddr)
 	if err != nil {
 		r.setError("address: %v", err)
 		return BarReadResult{Status: StatusInvalid, Err: err}
@@ -160,23 +158,22 @@ func (r *addressReader) setError(format string, args ...interface{}) {
 		}
 	}
 
-	// Auto-reconnect: try to find the process by window title periodically.
-	// On reconnect, close the old handle and open a new one for the new PID.
-	if r.processTitle != "" && now.Sub(r.lastReconn) >= reconnectInterval {
+	// Auto-reconnect: try to find a new PID by window title periodically.
+	if r.pid != 0 && now.Sub(r.lastReconn) >= reconnectInterval {
 		r.lastReconn = now
-		newPID := win.FindVisibleWindowPID(r.processTitle)
-		if newPID != 0 && newPID != r.pid {
-			// Close old handle, open new one for the new PID.
-			r.Close()
-			newHandle, hErr := win.OpenProcessHandle(newPID)
-			if hErr != nil {
-				r.log(fmt.Sprintf("address: reconnected to PID %d but OpenProcess failed: %v", newPID, hErr))
-				return
+
+		newPID := r.pid
+		if r.processTitle != "" {
+			if found := win.FindVisibleWindowPID(r.processTitle); found != 0 {
+				newPID = found
 			}
+		}
+
+		if newPID != r.pid {
 			r.pid = newPID
-			r.procHandle = newHandle
-			r.log(fmt.Sprintf("address: reconnected to PID %d via window %q", newPID, r.processTitle))
+			r.log(fmt.Sprintf("address: reconnected to PID %d", newPID))
 			// Reconnect succeeded — clear error and restore normal mode.
+			// The next ReadValues will open a fresh handle to the new PID.
 			r.hadError = false
 			r.loggedFirstFail = false
 			if r.onModeChange != nil {

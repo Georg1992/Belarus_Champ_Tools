@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"fmt"
+	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -145,6 +147,11 @@ func WaitForKeyPress(timeout time.Duration) (int32, bool) {
 // marshal to the GUI thread if needed. Stop the watcher by cancelling ctx.
 func StartEndKeyWatcher(ctx context.Context, onToggle func()) {
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "PANIC in StartEndKeyWatcher: %v\n%s\n", r, debug.Stack())
+			}
+		}()
 		keyDown := false
 		for ctx.Err() == nil {
 			if windows.PollKeyToggle(&keyDown, timing.ToggleVK) {

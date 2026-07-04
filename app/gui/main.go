@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -390,6 +391,11 @@ const maxLogItems = 500
 func (a *guiApp) setupLogLimit() error {
 	t := time.NewTicker(30 * time.Second)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "PANIC in log trimmer: %v\n%s\n", r, debug.Stack())
+			}
+		}()
 		defer t.Stop()
 		for range t.C {
 			if a.logList == nil {
@@ -478,6 +484,11 @@ func (a *guiApp) onStartViiper() {
 	a.appendLog("Starting VIIPER server...")
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "PANIC in onStartViiper: %v\n%s\n", r, debug.Stack())
+			}
+		}()
 		logFn := func(s string) {
 			a.mainWindow.Synchronize(func() { a.appendLog(s) })
 		}
@@ -699,6 +710,11 @@ func (a *guiApp) onStop() {
 	a.appendLog("Stopping tools...")
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "PANIC in onStop: %v\n%s\n", r, debug.Stack())
+			}
+		}()
 		if r != nil {
 			r.Stop()
 			r.Wait()
@@ -754,6 +770,15 @@ func (a *guiApp) startAutoPotRunner(cfg runner.AutoPotConfig, log func(string)) 
 			return runner.NewAutoPot(cfg)
 		},
 	)
+}
+
+// guiLog wraps a function call in mainWindow.Synchronize so it always
+// marshals to the GUI thread. Use for callbacks that are invoked from
+// background goroutines but call Walk UI operations (e.g. appendLog).
+func (a *guiApp) guiLog(fn func(string)) func(string) {
+	return func(s string) {
+		a.mainWindow.Synchronize(func() { fn(s) })
+	}
 }
 
 // unsetKeyBinding searches every key storage location in the app for vk.

@@ -4,6 +4,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"runtime/debug"
 	"strconv"
 
 	"belarus-champ-tools/runner"
@@ -243,6 +245,11 @@ func (a *guiApp) syncTimerKeySettings() {
 			// deadlocking the GUI thread if the runner
 			// goroutine is in a Synchronize call.
 			go func(old *runner.TimerKeyRunner) {
+				defer func() {
+					if r := recover(); r != nil {
+						_, _ = fmt.Fprintf(os.Stderr, "PANIC in timerKey stop: %v\n%s\n", r, debug.Stack())
+					}
+				}()
 				old.Stop()
 				old.Wait()
 			}(t)
@@ -253,7 +260,7 @@ func (a *guiApp) syncTimerKeySettings() {
 	}
 
 	if a.isStarted() {
-		a.startTimerKeyRunner(cfg, a.appendLog)
+		a.startTimerKeyRunner(cfg, a.guiLog(a.appendLog))
 	}
 }
 

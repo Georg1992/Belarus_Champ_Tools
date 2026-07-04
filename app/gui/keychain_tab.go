@@ -4,6 +4,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"runtime/debug"
 
 	"belarus-champ-tools/runner"
 	"github.com/lxn/walk"
@@ -266,7 +268,7 @@ func (a *guiApp) syncKeyChainSettings() {
 		return
 	}
 
-	a.startKeyChainRunner(cfg, a.appendLog)
+	a.startKeyChainRunner(cfg, a.guiLog(a.appendLog))
 }
 
 func (a *guiApp) setKeyChainConfigEnabled(enabled bool) {
@@ -309,6 +311,11 @@ func (a *guiApp) stopKeyChainRunner() {
 		// deadlocking the GUI thread if the runner
 		// goroutine is in a Synchronize call.
 		go func(old *runner.KeyChainRunner) {
+			defer func() {
+				if r := recover(); r != nil {
+					_, _ = fmt.Fprintf(os.Stderr, "PANIC in keyChain stop: %v\n%s\n", r, debug.Stack())
+				}
+			}()
 			old.Stop()
 			old.Wait()
 		}(kc)

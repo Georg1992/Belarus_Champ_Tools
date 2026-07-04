@@ -4,6 +4,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"runtime/debug"
 	"strconv"
 
 	"belarus-champ-tools/runner"
@@ -530,6 +532,11 @@ func (a *guiApp) syncAutoPotSettings() {
 			a.autopotRunner = nil
 			a.mu.Unlock()
 			go func(old *runner.AutoPotRunner) {
+				defer func() {
+					if r := recover(); r != nil {
+						_, _ = fmt.Fprintf(os.Stderr, "PANIC in autopot stop: %v\n%s\n", r, debug.Stack())
+					}
+				}()
 				old.Stop()
 				old.Wait()
 			}(r)
@@ -554,9 +561,14 @@ func (a *guiApp) syncAutoPotSettings() {
 			// same InputSession (VIIPER connection).
 			r.Stop()
 			go func(old *runner.AutoPotRunner) {
+				defer func() {
+					if r := recover(); r != nil {
+						_, _ = fmt.Fprintf(os.Stderr, "PANIC in autopot mode-switch wait: %v\n%s\n", r, debug.Stack())
+					}
+				}()
 				old.Wait()
 			}(r)
-			a.startAutoPotRunner(cfg, a.appendLog)
+			a.startAutoPotRunner(cfg, a.guiLog(a.appendLog))
 			return
 		}
 
@@ -569,7 +581,7 @@ func (a *guiApp) syncAutoPotSettings() {
 	}
 
 	a.prevAutoPotAddressMode = cfg.AddressMode
-	a.startAutoPotRunner(cfg, a.appendLog)
+	a.startAutoPotRunner(cfg, a.guiLog(a.appendLog))
 }
 
 func (a *guiApp) setAutoPotConfigEnabled(enabled bool) {

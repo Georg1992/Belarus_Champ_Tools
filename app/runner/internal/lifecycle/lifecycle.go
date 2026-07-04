@@ -7,6 +7,9 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"runtime/debug"
 	"sync"
 )
 
@@ -86,6 +89,17 @@ func (l *Lifecycle[C]) Start(run func(context.Context, C)) error {
 	l.mu.Unlock()
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "PANIC in runner: %v\n%s\n", r, debug.Stack())
+				// Mark as not running so the app doesn't hang on Wait().
+				// Normal defers (close(l.done), onStop) already ran before this.
+				l.mu.Lock()
+				l.running = false
+				l.cancel = nil
+				l.mu.Unlock()
+			}
+		}()
 		defer close(l.done)
 		defer func() {
 			l.mu.Lock()

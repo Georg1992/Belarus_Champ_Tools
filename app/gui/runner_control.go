@@ -9,7 +9,9 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"reflect"
+	"runtime/debug"
 	"sync"
 
 	"belarus-champ-tools/runner"
@@ -202,6 +204,12 @@ func (a *guiApp) bindKeyFlow(
 	}
 	a.appendLog(prompt)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "PANIC in bindKeyFlow: %v\n%s\n", r, debug.Stack())
+				cleanup()
+			}
+		}()
 		defer func() {
 			cleanup()
 			a.mainWindow.Synchronize(func() {
