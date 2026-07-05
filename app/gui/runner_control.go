@@ -9,7 +9,9 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"reflect"
+	"runtime/debug"
 	"sync"
 
 	"belarus-champ-tools/runner"
@@ -167,4 +169,65 @@ func startLifecycle[R lifecycleRunner](
 	return true
 }
 
-
+// bindKeyFlow runs the "user presses a key to bind" interaction that
+// appears in four places: bindClickerKey, bindAutoPotKey, bindTimerKey,
+// bindKeyChainKey.
+//
+// Pipeline:
+//  1. gate is checked synchronously. Side-effects (e.g. setting a
+//     binding-slot index so concurrent binds are rejected) are OK
+//     inside gate — they happen before the goroutine spawns. `false`
+//     bails without spawning.
+//  2. prompt is logged once.
+//  3. A goroutine waits for a keypress with runner.WaitForKeyPress
+//     (runner.KeyBindTimeout).
+//  4. The result is dispatched back to the UI thread via
+//     mainWindow.Synchronize, where:
+//     * timeout → "Key bind timed out"
+//     * unsupported VK (VKToHID fails) → "Key <name> is not supported"
+//     * otherwise onPress(vk) runs.
+//  5. cleanup runs (off-UI) once the goroutine exits, regardless of
+//     outcome — use it to un-register binding state.
+//  6. reenable runs on the UI thread after cleanup, refreshing bind
+//     button enabled state.
+//
+// Returns true if a binding goroutine was spawned.
+func (a *guiApp) bindKeyFlow(
+	gate func() bool,
+	prompt string,
+	cleanup func(),
+	reenable func(),
+	onPress func(vk int32),
+) bool {
+	if !gate() {
+		return false
+	}
+	a.appendLog(prompt)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "PANIC in bindKeyFlow: %v\n%s\n", r, debug.Stack())
+				cleanup()
+			}
+		}()
+		defer func() {
+			cleanup()
+			a.mainWindow.Synchronize(func() {
+				reenable()
+			})
+		}()
+		vk, ok := runner.WaitForKeyPress(runner.KeyBindTimeout)
+		a.mainWindow.Synchronize(func() {
+			if !ok {
+				a.appendLog("Key bind timed out")
+				return
+			}
+			if _, hidOK := runner.VKToHID(vk); !hidOK {
+				a.appendLog(fmt.Sprintf("Key %s is not supported", runner.KeyName(vk)))
+				return
+			}
+			onPress(vk)
+		})
+	}()
+	return true
+}
