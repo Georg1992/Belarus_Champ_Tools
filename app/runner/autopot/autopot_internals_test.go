@@ -17,11 +17,14 @@ func TestInitReaders_AddressMode(t *testing.T) {
 	// but win.GetProcessBaseAddr will fail in test (no such process).
 	// The reader should fall back to visual mode gracefully.
 	cfg := AutoPotConfig{
-		AddressMode: true,
-		ProcessPID:  12345,
-		HPThreshold: 50,
-		SPThreshold: 50,
-		Log:         func(string) {},
+		Address: &AddressConfig{
+			ProcessPID: 12345,
+		},
+		Core: CoreConfig{
+			HPThreshold: 50,
+			SPThreshold: 50,
+			Log:         func(string) {},
+		},
 	}
 	ap := NewAutoPot(cfg)
 
@@ -46,11 +49,11 @@ func TestInitReaders_AddressMode(t *testing.T) {
 func TestInitReaders_AddressModeFallback(t *testing.T) {
 	// Address mode with PID=0 — should fall back to visual (pixel/OCR).
 	cfg := AutoPotConfig{
-		AddressMode: true,
-		ProcessPID:  0, // no PID → fallback
-		HPThreshold: 50,
-		SPThreshold: 50,
-		Log:         func(string) {},
+		Core: CoreConfig{
+			HPThreshold: 50,
+			SPThreshold: 50,
+			Log:         func(string) {},
+		},
 	}
 	ap := NewAutoPot(cfg)
 
@@ -77,11 +80,11 @@ func TestInitReaders_AddressModeFallback(t *testing.T) {
 func TestInitReaders_VisualModeNoPID(t *testing.T) {
 	// Visual mode with no address config — pure pixel/OCR path.
 	cfg := AutoPotConfig{
-		AddressMode: false,
-		ProcessPID:  0,
-		HPThreshold: 50,
-		SPThreshold: 50,
-		Log:         func(string) {},
+		Core: CoreConfig{
+			HPThreshold: 50,
+			SPThreshold: 50,
+			Log:         func(string) {},
+		},
 	}
 	ap := NewAutoPot(cfg)
 
@@ -111,7 +114,7 @@ func TestDispatchVisual_OCRSwitchToPixel(t *testing.T) {
 	ocr := &statusUIReader{}
 	reader := BarReader(ocr) // reader == ocr initially
 
-	cfg := AutoPotConfig{Log: func(string) {}}
+	cfg := AutoPotConfig{Core: CoreConfig{Log: func(string) {}}}
 	result := BarReadResult{Status: StatusInvalid, Err: fmt.Errorf("ocr failed")}
 	nextOCRRetry := time.Time{}
 
@@ -133,7 +136,7 @@ func TestDispatchVisual_OCRSuccess(t *testing.T) {
 	ocr := &statusUIReader{}
 	reader := BarReader(ocr)
 
-	cfg := AutoPotConfig{}
+	cfg := AutoPotConfig{Core: CoreConfig{}}
 	result := BarReadResult{Status: StatusFound, HP: 80, SP: 80}
 	nextOCRRetry := time.Time{}
 
@@ -154,7 +157,7 @@ func TestHandleDead_NotDead(t *testing.T) {
 	ap := &AutoPotRunner{}
 	dead := false
 	ctx := context.Background()
-	cfg := AutoPotConfig{HPEnabled: true, HPKeyVK: 'Q', Log: func(string) {}}
+	cfg := AutoPotConfig{Core: CoreConfig{HPEnabled: true, HPKeyVK: 'Q', Log: func(string) {}}}
 	result := BarReadResult{Status: StatusFound, HP: 80}
 
 	consumed := ap.handleDead(ctx, cfg, result, &dead)
@@ -174,10 +177,12 @@ func TestHandleDead_FirstDead(t *testing.T) {
 
 	logged := ""
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Session:   &recordSession{},
 		HPEnabled: true,
 		HPKeyVK:   'Q',
 		Log:       func(s string) { logged = s },
+		},
 	}
 	result := BarReadResult{Status: StatusDead}
 
@@ -201,10 +206,12 @@ func TestHandleDead_RepeatDead(t *testing.T) {
 
 	logCount := 0
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Session:   &recordSession{},
 		HPEnabled: true,
 		HPKeyVK:   'Q',
 		Log:       func(s string) { logCount++ },
+		},
 	}
 	result := BarReadResult{Status: StatusDead}
 
@@ -227,7 +234,7 @@ func TestHandleOCR_Found(t *testing.T) {
 	ocr := &statusUIReader{}
 	reader := BarReader(ocr)
 
-	cfg := AutoPotConfig{Log: func(string) {}}
+	cfg := AutoPotConfig{Core: CoreConfig{Log: func(string) {}}}
 	result := BarReadResult{Status: StatusFound, HP: 80, SP: 80}
 	nextOCRRetry := time.Time{}
 
@@ -248,8 +255,10 @@ func TestHandleOCR_FailureSwitch(t *testing.T) {
 
 	modeFns := []string{}
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Log:           func(string) {},
 		OnStatusUIMode: func(s string) { modeFns = append(modeFns, s) },
+		},
 	}
 	result := BarReadResult{Status: StatusInvalid, Err: fmt.Errorf("ocr lost panel")}
 	nextOCRRetry := time.Time{}
@@ -276,7 +285,7 @@ func TestHandleOCR_DeadSwitchesToPixel(t *testing.T) {
 	ocr := &statusUIReader{}
 	reader := BarReader(ocr)
 
-	cfg := AutoPotConfig{Log: func(string) {}}
+	cfg := AutoPotConfig{Core: CoreConfig{Log: func(string) {}}}
 	result := BarReadResult{Status: StatusDead, Err: fmt.Errorf("HP=1")}
 	nextOCRRetry := time.Time{}
 
@@ -295,7 +304,7 @@ func TestHandleOCR_DeadSwitchesToPixel(t *testing.T) {
 
 func TestPotsEndedStep_NotEnded(t *testing.T) {
 	ap := &AutoPotRunner{}
-	cfg := AutoPotConfig{Log: func(string) {}}
+	cfg := AutoPotConfig{Core: CoreConfig{Log: func(string) {}}}
 	now := time.Now()
 
 	ended, hs := ap.potsEndedStep(cfg, true, time.Second, 30, 30, false, now)
@@ -309,10 +318,10 @@ func TestPotsEndedStep_NotEnded(t *testing.T) {
 
 func TestPotsEndedStep_DetectsEnded(t *testing.T) {
 	ap := &AutoPotRunner{}
-	cfg := AutoPotConfig{Log: func(string) {}, HPKeyName: "F1"}
+	cfg := AutoPotConfig{Core: CoreConfig{Log: func(string) {}, HPKeyName: "F1"}}
 
 	logged := ""
-	cfg.Log = func(s string) { logged = s }
+	cfg.Core.Log = func(s string) { logged = s }
 	now := time.Now()
 
 	ended, _ := ap.potsEndedStep(cfg, true, 4*time.Second, 30, 30, false, now)
@@ -328,8 +337,10 @@ func TestPotsEndedStep_Recovers(t *testing.T) {
 	ap := &AutoPotRunner{}
 	modeCalls := []string{}
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Log:           func(string) {},
 		OnStatusUIMode: func(s string) { modeCalls = append(modeCalls, s) },
+		},
 	}
 	now := time.Now()
 
@@ -347,9 +358,11 @@ func TestPotsEndedStep_ReAppliesLabel(t *testing.T) {
 	ap := &AutoPotRunner{}
 	modeCalls := []string{}
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Log:           func(string) {},
 		OnStatusUIMode: func(s string) { modeCalls = append(modeCalls, s) },
 		HPKeyName:     "F1",
+		},
 	}
 	now := time.Now()
 
@@ -373,7 +386,7 @@ func TestPotsEndedTap_SuccessfulHeal(t *testing.T) {
 	// When the value changes >= 1% after tap, potsEndedTap returns true.
 	sess := &recordSession{}
 	reader := &constantReader{hp: 70, sp: 80} // reader returns value after tap
-	cfg := AutoPotConfig{Session: sess, Log: func(string) {}}
+	cfg := AutoPotConfig{Core: CoreConfig{Session: sess, Log: func(string) {}}}
 	ap := &AutoPotRunner{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -392,7 +405,7 @@ func TestPotsEndedTap_NoRecovery(t *testing.T) {
 	// When the value stays the same after tap, potsEndedTap returns false.
 	sess := &recordSession{}
 	reader := &constantReader{hp: 30, sp: 80} // same value
-	cfg := AutoPotConfig{Session: sess, Log: func(string) {}}
+	cfg := AutoPotConfig{Core: CoreConfig{Session: sess, Log: func(string) {}}}
 	ap := &AutoPotRunner{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -408,7 +421,7 @@ func TestPotsEndedTap_TapKeyError(t *testing.T) {
 	// When TapKey returns error, potsEndedTap returns false.
 	sess := &errorSession{}
 	reader := &constantReader{hp: 70, sp: 80}
-	cfg := AutoPotConfig{Session: sess, Log: func(string) {}}
+	cfg := AutoPotConfig{Core: CoreConfig{Session: sess, Log: func(string) {}}}
 	ap := &AutoPotRunner{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -438,7 +451,7 @@ func TestDispatchVisual_OCR_Proceed(t *testing.T) {
 	ocr := &statusUIReader{}
 	reader := BarReader(ocr)
 
-	cfg := AutoPotConfig{}
+	cfg := AutoPotConfig{Core: CoreConfig{}}
 	result := BarReadResult{Status: StatusFound, HP: 80}
 	nextOCRRetry := time.Time{}
 	var pfs time.Time
@@ -455,7 +468,7 @@ func TestDispatchVisual_Pixel_BarsFound_Proceed(t *testing.T) {
 	pixel := &pixelBarReader{}
 	reader := BarReader(pixel)
 
-	cfg := AutoPotConfig{}
+	cfg := AutoPotConfig{Core: CoreConfig{}}
 	result := BarReadResult{Status: StatusFound, HP: 80}
 	nextOCRRetry := time.Now().Add(time.Hour) // don't probe OCR
 	var pfs time.Time
@@ -474,7 +487,7 @@ func TestDispatchVisual_Pixel_BarsNotFound(t *testing.T) {
 	ocr := &statusUIReader{}
 	reader := BarReader(pixel)
 
-	cfg := AutoPotConfig{Log: func(string) {}}
+	cfg := AutoPotConfig{Core: CoreConfig{Log: func(string) {}}}
 	result := BarReadResult{Status: StatusInvalid, Err: fmt.Errorf("no bars found")}
 	nextOCRRetry := time.Now().Add(time.Hour) // don't probe OCR
 	var pfs time.Time
@@ -493,12 +506,12 @@ func TestDispatchVisual_Pixel_BarsNotFound(t *testing.T) {
 // Concurrent safety: initReaders + handleDead under -race
 // ---------------------------------------------------------------------------
 
-func TestInitReadersConcurrentRace(t *testing.T) {
-	cfg := AutoPotConfig{
-		AddressMode: false,
-		HPThreshold: 50,
-		SPThreshold: 50,
-		Log:         func(string) {},
+func TestInitReadersConcurrentRace(t *testing.T) {	cfg := AutoPotConfig{
+		Core: CoreConfig{
+			HPThreshold: 50,
+			SPThreshold: 50,
+			Log:         func(string) {},
+		},
 	}
 	ap := NewAutoPot(cfg)
 
@@ -517,7 +530,7 @@ func TestHandleDeadConcurrentRace(t *testing.T) {
 	ap := &AutoPotRunner{}
 	dead := false
 	ctx := context.Background()
-	cfg := AutoPotConfig{HPEnabled: true, HPKeyVK: 'Q', Log: func(string) {}}
+	cfg := AutoPotConfig{Core: CoreConfig{HPEnabled: true, HPKeyVK: 'Q', Log: func(string) {}}}
 
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {

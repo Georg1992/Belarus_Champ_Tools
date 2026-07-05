@@ -22,38 +22,11 @@ import (
 	"fmt"
 	"time"
 
-	"belarus-champ-tools/runner/autopot/statusui"
-	"belarus-champ-tools/runner/profiles"
-
-	win "belarus-champ-tools/runner/platform/windows"
-
 	"belarus-champ-tools/runner/internal/lifecycle"
-	"belarus-champ-tools/runner/internal/session"
 	"belarus-champ-tools/runner/internal/timing"
 )
 
-// AutoPotConfig is what gui/main.go passes to NewAutoPot.
-type AutoPotConfig struct {
-	Session        session.InputSession
-	HPThreshold    int
-	SPThreshold    int
-	HPKeyVK        int32
-	SPKeyVK        int32
-	HPKeyName      string // human-readable key name for overlay (e.g. "F1")
-	SPKeyName      string
-	HPEnabled      bool
-	SPEnabled      bool
-	Log            func(string)
-	OnStatusParsed func(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int)
-	OnStatusUIMode func(mode string)
-
-	// Address reading mode — reads HP/SP directly from game process memory.
-	// Following the AHK pattern: opens handle on each read, reads, closes.
-	AddressMode  bool
-	ProcessPID   uint32 // game process PID; 0 = not selected
-	ProcessTitle string // game window title for auto-reconnect on error
-	Profile      profiles.Profile
-}
+// AutoPotConfig is defined in config.go (composite of CoreConfig + optional AddressConfig).
 
 // AutoPotRunner heals HP/SP based on readings from the active BarReader.
 type AutoPotRunner struct {
@@ -69,24 +42,12 @@ func NewAutoPot(cfg AutoPotConfig) *AutoPotRunner {
 		lc: lifecycle.New(
 			cfg,
 			func(c AutoPotConfig) error {
-				if c.Session == nil {
-					return fmt.Errorf("input session is required")
-				}
-				if c.Log == nil {
-					return fmt.Errorf("log callback is required")
-				}
-				if c.HPEnabled && c.HPKeyVK == 0 {
-					return fmt.Errorf("HP potion key is not set")
-				}
-				if c.SPEnabled && c.SPKeyVK == 0 {
-					return fmt.Errorf("SP potion key is not set")
-				}
-				return nil
+				return c.validate()
 			},
 			nil, // cleanup is handled by defer resetStabilizers() inside run()
 		),
-		hpStabilizer: NewBarStabilizer(true, cfg.HPThreshold),
-		spStabilizer: NewBarStabilizer(false, cfg.SPThreshold),
+		hpStabilizer: NewBarStabilizer(true, cfg.Core.HPThreshold),
+		spStabilizer: NewBarStabilizer(false, cfg.Core.SPThreshold),
 	}
 }
 
@@ -103,13 +64,13 @@ func (a *AutoPotRunner) Running() bool { return a.lc.Running() }
 // autopot goroutine always marshal to the GUI thread.
 func (a *AutoPotRunner) UpdateSettings(cfg AutoPotConfig) {
 	old := a.settings()
-	cfg.Log = old.Log
-	cfg.OnStatusParsed = old.OnStatusParsed
-	cfg.OnStatusUIMode = old.OnStatusUIMode
-	cfg.Session = old.Session
+	cfg.Core.Log = old.Core.Log
+	cfg.Core.OnStatusParsed = old.Core.OnStatusParsed
+	cfg.Core.OnStatusUIMode = old.Core.OnStatusUIMode
+	cfg.Core.Session = old.Core.Session
 	a.lc.UpdateSettings(cfg)
-	a.hpStabilizer.SetThreshold(cfg.HPThreshold)
-	a.spStabilizer.SetThreshold(cfg.SPThreshold)
+	a.hpStabilizer.SetThreshold(cfg.Core.HPThreshold)
+	a.spStabilizer.SetThreshold(cfg.Core.SPThreshold)
 }
 
 // Start launches the healer.
@@ -144,8 +105,7 @@ const (
 
 // run is the main autopot loop.
 //
-//  1. Try to build the OCR reader (statusUIReader). If it succeeds,
-//     start in OCR mode; otherwise start in pixel-bar mode.
+//  1. Builds readers via ReaderFactory based on config.
 //  2. Each tick: read HP/SP from the active reader. If HP or SP drops
 //     below its threshold, call healUntil to press the potion key and
 //     wait for the value to rise.
@@ -155,59 +115,20 @@ const (
 func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 	defer a.resetStabilizers()
 
-	reader, pixel, ocr, isAddress := a.initReaders(cfg)
-	a.mainLoop(ctx, reader, pixel, ocr, isAddress)
+	factory := NewReaderFactory(a.settings, a.hpStabilizer, a.spStabilizer)
+	reader, pixel, ocr := factory.Build()
+	a.mainLoop(ctx, reader, pixel, ocr, factory.IsAddressMode())
 }
 
 // initReaders creates the appropriate BarReader(s) based on the config.
 // Returns the primary reader, pixel fallback, OCR reader, and isAddress flag.
+//
+// DEPRECATED: logic moved to ReaderFactory.Build(). Kept as a thin wrapper
+// for backward compat with tests that call initReaders directly.
 func (a *AutoPotRunner) initReaders(cfg AutoPotConfig) (reader BarReader, pixel *pixelBarReader, ocr *statusUIReader, isAddress bool) {
-	if cfg.AddressMode && cfg.ProcessPID != 0 {
-		baseAddr, baseErr := win.GetProcessBaseAddr(cfg.ProcessPID)
-		if baseErr != nil {
-			cfg.Log(fmt.Sprintf("address: cannot resolve module base for PID %d: %v — falling back to Visual mode", cfg.ProcessPID, baseErr))
-		} else {
-			reader = &addressReader{
-				pid:          cfg.ProcessPID,
-				profile:      cfg.Profile,
-				processTitle: cfg.ProcessTitle,
-				moduleBase:   baseAddr,
-				log:          cfg.Log,
-				liveConfig:   a.settings,
-				onParsed:     cfg.OnStatusParsed,
-				onModeChange: cfg.OnStatusUIMode,
-			}
-			setMode(cfg.OnStatusUIMode, "Address reading")
-			return reader, nil, nil, true
-		}
-	}
-
-	pixel = &pixelBarReader{
-		hpStab:   a.hpStabilizer,
-		spStab:   a.spStabilizer,
-		log:      cfg.Log,
-		onParsed: cfg.OnStatusParsed,
-	}
-
-	pipeline, err := statusui.NewDefaultPipeline()
-	if err == nil {
-		ocr = &statusUIReader{
-			poller:       statusui.NewStripPoller(pipeline),
-			onModeChange: cfg.OnStatusUIMode,
-			onParsed:     cfg.OnStatusParsed,
-			log:          cfg.Log,
-			settings:     a.settings,
-		}
-		reader = ocr
-		setMode(cfg.OnStatusUIMode, "Searching...")
-	} else {
-		reader = pixel
-		setMode(cfg.OnStatusUIMode, "Pixelsearch")
-		if cfg.OnStatusParsed != nil {
-			cfg.OnStatusParsed(pixelModeSentinel, 0, pixelModeSentinel, 0, 0, 0, 0, 0)
-		}
-	}
-	return reader, pixel, ocr, false
+	factory := NewReaderFactory(a.settings, a.hpStabilizer, a.spStabilizer)
+	reader, pixel, ocr = factory.Build()
+	return reader, pixel, ocr, factory.IsAddressMode()
 }
 
 // mainLoop is the core autopot polling loop. It reads HP/SP, dispatches
@@ -227,7 +148,7 @@ func (a *AutoPotRunner) mainLoop(ctx context.Context, reader BarReader, pixel *p
 		}
 
 		cfg := a.settings()
-		if cfg.Session == nil {
+		if cfg.Core.Session == nil {
 			timing.Sleep(ctx, timing.PollInterval)
 			continue
 		}
@@ -240,7 +161,7 @@ func (a *AutoPotRunner) mainLoop(ctx context.Context, reader BarReader, pixel *p
 
 		if dead && result.Status == StatusFound {
 			dead = false
-			setMode(cfg.OnStatusUIMode, reader.Name())
+			setMode(cfg.Core.OnStatusUIMode, reader.Name())
 		}
 
 		// Dispatch to the active reader's handler.
@@ -257,21 +178,21 @@ func (a *AutoPotRunner) mainLoop(ctx context.Context, reader BarReader, pixel *p
 		pixelFailStart = time.Time{}
 		loggedPixelFail = false
 
-		if cfg.HPEnabled && result.HPLow {
+		if cfg.Core.HPEnabled && result.HPLow {
 			a.healUntil(ctx, reader, true)
 			continue
 		}
-		if cfg.SPEnabled && result.SPLow {
+		if cfg.Core.SPEnabled && result.SPLow {
 			a.healUntil(ctx, reader, false)
 			continue
 		}
 
-	if isAddress {
-		timing.Sleep(ctx, timing.PollInterval) // 10ms for address mode
-	} else {
-		timing.Sleep(ctx, timing.CaptureRetryDelay) // 50ms for pixel/OCR
+		if isAddress {
+			timing.Sleep(ctx, timing.PollInterval) // 10ms for address mode
+		} else {
+			timing.Sleep(ctx, timing.CaptureRetryDelay) // 50ms for pixel/OCR
+		}
 	}
-}
 }
 
 // dispatchVisual handles OCR→pixel fallback and pixel→OCR recovery.
@@ -290,13 +211,13 @@ func (a *AutoPotRunner) handleDead(ctx context.Context, cfg AutoPotConfig, resul
 		return false
 	}
 	if !*dead {
-		cfg.Log("autopot: character dead (HP=1)")
+		cfg.Core.Log("autopot: character dead (HP=1)")
 		*dead = true
 	}
-	setMode(cfg.OnStatusUIMode, "Dead")
-	if cfg.HPEnabled && cfg.HPKeyVK != 0 {
-		if err := cfg.Session.TapKey(cfg.HPKeyVK, timing.KeyTapHold); err != nil {
-			cfg.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", cfg.HPKeyVK, err))
+	setMode(cfg.Core.OnStatusUIMode, "Dead")
+	if cfg.Core.HPEnabled && cfg.Core.HPKeyVK != 0 {
+		if err := cfg.Core.Session.TapKey(cfg.Core.HPKeyVK, timing.KeyTapHold); err != nil {
+			cfg.Core.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", cfg.Core.HPKeyVK, err))
 		}
 	}
 	timing.Sleep(ctx, potsEndedDelay)
@@ -312,11 +233,11 @@ func (a *AutoPotRunner) handleOCR(cfg AutoPotConfig, reader *BarReader, pixel Ba
 		return false
 	}
 	// OCR reader failed — switch to pixel-bar fallback.
-	cfg.Log(fmt.Sprintf("autopot: statusui issue, switching to pixel-bar: %v", result.Err))
+	cfg.Core.Log(fmt.Sprintf("autopot: statusui issue, switching to pixel-bar: %v", result.Err))
 	*reader = pixel
-	setMode(cfg.OnStatusUIMode, "Pixelsearch")
-	if cfg.OnStatusParsed != nil {
-		cfg.OnStatusParsed(pixelModeSentinel, 0, pixelModeSentinel, 0, 0, 0, 0, 0)
+	setMode(cfg.Core.OnStatusUIMode, "Pixelsearch")
+	if cfg.Core.OnStatusParsed != nil {
+		cfg.Core.OnStatusParsed(pixelModeSentinel, 0, pixelModeSentinel, 0, 0, 0, 0, 0)
 	}
 	*nextOCRRetry = time.Now().Add(ocrProbeInterval)
 	return true
@@ -341,15 +262,15 @@ func (a *AutoPotRunner) handlePixel(ctx context.Context, cfg AutoPotConfig, read
 		*nextOCRRetry = time.Now().Add(ocrProbeInterval)
 		probe := ocr.ReadValues(ctx)
 		if probe.Status == StatusFound {
-			cfg.Log("autopot: statusui recovered, switching back")
+			cfg.Core.Log("autopot: statusui recovered, switching back")
 			*reader = ocr
-			setMode(cfg.OnStatusUIMode, "OCR")
+			setMode(cfg.Core.OnStatusUIMode, "OCR")
 			*loggedPixelFail = false
 			*result = probe
 			return false // fall through to normal processing
 		}
 		if probe.Status == StatusDead {
-			cfg.Log("autopot: statusui recovered (dead)")
+			cfg.Core.Log("autopot: statusui recovered (dead)")
 			*reader = ocr
 			*loggedPixelFail = false
 			*result = probe
@@ -371,7 +292,7 @@ func (a *AutoPotRunner) handlePixel(ctx context.Context, cfg AutoPotConfig, read
 		return true
 	}
 	if !*loggedPixelFail {
-		cfg.Log(fmt.Sprintf("autopot: pixel bars not found for 5s — retrying every 5s: %v", result.Err))
+		cfg.Core.Log(fmt.Sprintf("autopot: pixel bars not found for 5s — retrying every 5s: %v", result.Err))
 		*loggedPixelFail = true
 	}
 	timing.Sleep(ctx, statusUIRetryInterval)
@@ -409,7 +330,7 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, reader BarReader, hpBar b
 		}
 
 		cfg := a.settings()
-		if cfg.Session == nil {
+		if cfg.Core.Session == nil {
 			timing.Sleep(ctx, timing.PollInterval)
 			continue
 		}
@@ -426,10 +347,10 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, reader BarReader, hpBar b
 		}
 
 		pct := result.HP
-		threshold := float64(cfg.HPThreshold)
+		threshold := float64(cfg.Core.HPThreshold)
 		if !hpBar {
 			pct = result.SP
-			threshold = float64(cfg.SPThreshold)
+			threshold = float64(cfg.Core.SPThreshold)
 		}
 		if pct >= threshold {
 			a.healExit(cfg, potsEnded)
@@ -464,7 +385,7 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, reader BarReader, hpBar b
 // or if they've recovered. Returns (potsEnded, healStart).
 func (a *AutoPotRunner) potsEndedStep(cfg AutoPotConfig, hpBar bool, elapsed time.Duration, pct, lastPct float64, potsEnded bool, healStart time.Time) (bool, time.Time) {
 	if !potsEnded && elapsed >= noChangeTimeout && absPctDiff(pct, lastPct) < valueChangeTol {
-		cfg.Log(fmt.Sprintf("autopot: %s — slowing to 1s taps", potsEndedLabel(cfg, hpBar)))
+		cfg.Core.Log(fmt.Sprintf("autopot: %s — slowing to 1s taps", potsEndedLabel(cfg, hpBar)))
 		potsEnded = true
 	}
 	if !potsEnded {
@@ -472,19 +393,19 @@ func (a *AutoPotRunner) potsEndedStep(cfg AutoPotConfig, hpBar bool, elapsed tim
 	}
 	// In pots-ended mode: check for recovery.
 	if absPctDiff(pct, lastPct) >= valueChangeTol {
-		cfg.Log("autopot: potion took effect, resuming normal speed")
-		setMode(cfg.OnStatusUIMode, "")
+		cfg.Core.Log("autopot: potion took effect, resuming normal speed")
+		setMode(cfg.Core.OnStatusUIMode, "")
 		return false, time.Now()
 	}
-	setMode(cfg.OnStatusUIMode, potsEndedLabel(cfg, hpBar))
+	setMode(cfg.Core.OnStatusUIMode, potsEndedLabel(cfg, hpBar))
 	return true, healStart
 }
 
 // potsEndedTap taps the key, reads the value after, and returns true if
 // the potion took effect (value changed >= valueChangeTol).
 func (a *AutoPotRunner) potsEndedTap(ctx context.Context, cfg AutoPotConfig, vk int32, reader BarReader, hpBar bool, beforePct float64) bool {
-	if err := cfg.Session.TapKey(vk, timing.KeyTapHold); err != nil {
-		cfg.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", vk, err))
+	if err := cfg.Core.Session.TapKey(vk, timing.KeyTapHold); err != nil {
+		cfg.Core.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", vk, err))
 		return false
 	}
 	afterResult := reader.ReadValues(ctx)
@@ -494,8 +415,8 @@ func (a *AutoPotRunner) potsEndedTap(ctx context.Context, cfg AutoPotConfig, vk 
 			afterPct = afterResult.SP
 		}
 		if absPctDiff(afterPct, beforePct) >= valueChangeTol {
-			cfg.Log("autopot: potion took effect, resuming normal speed")
-			setMode(cfg.OnStatusUIMode, "")
+			cfg.Core.Log("autopot: potion took effect, resuming normal speed")
+			setMode(cfg.Core.OnStatusUIMode, "")
 			return true
 		}
 	}
@@ -507,11 +428,11 @@ func (a *AutoPotRunner) potsEndedTap(ctx context.Context, cfg AutoPotConfig, vk 
 // based on whether pots-ended mode is active. Returns true on success;
 // false on TapKey error or nil session (caller should return from healUntil).
 func (a *AutoPotRunner) healTap(ctx context.Context, cfg AutoPotConfig, vk int32, potsEnded bool) bool {
-	if cfg.Session == nil {
+	if cfg.Core.Session == nil {
 		return false
 	}
-	if err := cfg.Session.TapKey(vk, timing.KeyTapHold); err != nil {
-		cfg.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", vk, err))
+	if err := cfg.Core.Session.TapKey(vk, timing.KeyTapHold); err != nil {
+		cfg.Core.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", vk, err))
 		return false
 	}
 	if potsEnded {
@@ -525,7 +446,7 @@ func (a *AutoPotRunner) healTap(ctx context.Context, cfg AutoPotConfig, vk int32
 // healExit clears the pots-ended overlay mode when leaving healUntil.
 // Called before every return in the heal loop.
 func (a *AutoPotRunner) healExit(cfg AutoPotConfig, potsEnded bool) {
-	a.clearPotsEndedMode(cfg.OnStatusUIMode, potsEnded)
+	a.clearPotsEndedMode(cfg.Core.OnStatusUIMode, potsEnded)
 }
 
 // clearPotsEndedMode clears the "Pots ended" overlay mode when leaving
@@ -538,10 +459,10 @@ func (a *AutoPotRunner) clearPotsEndedMode(fn func(string), potsEnded bool) {
 
 func potsEndedLabel(cfg AutoPotConfig, hpBar bool) string {
 	label := "HP pots ended"
-	keyName := cfg.HPKeyName
+	keyName := cfg.Core.HPKeyName
 	if !hpBar {
 		label = "SP pots ended"
-		keyName = cfg.SPKeyName
+		keyName = cfg.Core.SPKeyName
 	}
 	if keyName != "" {
 		label += " on " + keyName
@@ -558,15 +479,15 @@ func absPctDiff(a, b float64) float64 {
 
 func healTarget(cfg AutoPotConfig, hpBar bool) (vk int32, ok bool) {
 	if hpBar {
-		if !cfg.HPEnabled || cfg.HPKeyVK == 0 {
+		if !cfg.Core.HPEnabled || cfg.Core.HPKeyVK == 0 {
 			return 0, false
 		}
-		return cfg.HPKeyVK, true
+		return cfg.Core.HPKeyVK, true
 	}
-	if !cfg.SPEnabled || cfg.SPKeyVK == 0 {
+	if !cfg.Core.SPEnabled || cfg.Core.SPKeyVK == 0 {
 		return 0, false
 	}
-	return cfg.SPKeyVK, true
+	return cfg.Core.SPKeyVK, true
 }
 
 func setMode(fn func(string), mode string) {

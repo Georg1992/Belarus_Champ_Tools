@@ -241,6 +241,7 @@ func TestClickerAndAutoPotConcurrent(t *testing.T) {
 	}
 
 	ap := NewAutoPot(AutoPotConfig{
+		Core: CoreConfig{
 		Session:     sess,
 		HPThreshold: 50,
 		SPThreshold: 50,
@@ -249,6 +250,7 @@ func TestClickerAndAutoPotConcurrent(t *testing.T) {
 		HPEnabled:   true,
 		SPEnabled:   true,
 		Log:         func(string) {},
+		},
 	})
 	if err := ap.Start(); err != nil {
 		t.Fatalf("autopot Start: %v", err)
@@ -273,6 +275,7 @@ func TestClickerAndAutoPotConcurrent(t *testing.T) {
 						{},
 					})
 					ap.UpdateSettings(AutoPotConfig{
+						Core: CoreConfig{
 						Session:     sess,
 						HPThreshold: 40 + n%40,
 						SPThreshold: 40 + n%40,
@@ -281,6 +284,7 @@ func TestClickerAndAutoPotConcurrent(t *testing.T) {
 						HPEnabled:   n%2 == 0,
 						SPEnabled:   true,
 						Log:         func(string) {},
+						},
 					})
 					n++
 				}

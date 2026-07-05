@@ -52,6 +52,7 @@ func (m *mockSession) MouseClick(_ time.Duration) error { return nil }
 func TestAutoPotRunnerStress(t *testing.T) {
 	sess := &mockSession{}
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Session:     sess,
 		HPThreshold: 50,
 		SPThreshold: 50,
@@ -60,6 +61,7 @@ func TestAutoPotRunnerStress(t *testing.T) {
 		HPEnabled:   true,
 		SPEnabled:   true,
 		Log:         func(string) {},
+		},
 	}
 	ap := NewAutoPot(cfg)
 	if err := ap.Start(); err != nil {
@@ -79,6 +81,7 @@ func TestAutoPotRunnerStress(t *testing.T) {
 					return
 				default:
 					ap.UpdateSettings(AutoPotConfig{
+						Core: CoreConfig{
 						Session:     sess,
 						HPThreshold: 40 + n%40,
 						SPThreshold: 40 + n%40,
@@ -87,6 +90,7 @@ func TestAutoPotRunnerStress(t *testing.T) {
 						HPEnabled:   n%2 == 0,
 						SPEnabled:   true,
 						Log:         func(string) {},
+						},
 					})
 					n++
 				}
@@ -181,11 +185,13 @@ func (r *mockFlakyReader) Name() string { return "mockFlaky" }
 func TestAutoPotHealUntilErrorAborts(t *testing.T) {
 	sess := &mockSession{}
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Session:     sess,
 		HPThreshold: 50,
 		HPKeyVK:     'Q',
 		HPEnabled:   true,
 		Log:         func(string) {},
+		},
 	}
 	ap := NewAutoPot(cfg)
 
@@ -220,11 +226,13 @@ func TestAutoPotHealUntilSucceeds(t *testing.T) {
 	// Start below threshold, then healUntil reads will see the value
 	// cross above threshold and return.
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Session:     sess,
 		HPThreshold: 50,
 		HPKeyVK:     'Q',
 		HPEnabled:   true,
 		Log:         func(string) {},
+		},
 	}
 	ap := NewAutoPot(cfg)
 
@@ -293,6 +301,7 @@ func (r *risingReader) Name() string { return "rising" }
 func TestAutoPotRunnerRunWithMockReader(t *testing.T) {
 	sess := &mockSession{}
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Session:     sess,
 		HPThreshold: 50,
 		SPThreshold: 50,
@@ -301,6 +310,7 @@ func TestAutoPotRunnerRunWithMockReader(t *testing.T) {
 		HPEnabled:   true,
 		SPEnabled:   true,
 		Log:         func(string) {},
+		},
 	}
 	ap := NewAutoPot(cfg)
 
@@ -353,6 +363,7 @@ func TestAutoPotRunnerRunWithMockReader(t *testing.T) {
 					return
 				default:
 					ap.UpdateSettings(AutoPotConfig{
+						Core: CoreConfig{
 						Session:     sess,
 						HPThreshold: 10 + n%80,
 						SPThreshold: 10 + n%80,
@@ -361,6 +372,7 @@ func TestAutoPotRunnerRunWithMockReader(t *testing.T) {
 						HPEnabled:   n%3 != 0,
 						SPEnabled:   n%3 != 1,
 						Log:         func(string) {},
+						},
 					})
 					n++
 				}

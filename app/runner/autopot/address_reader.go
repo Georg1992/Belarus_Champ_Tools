@@ -25,7 +25,7 @@ type addressReader struct {
 	processTitle string // window title for auto-reconnect
 	moduleBase   uintptr // base address of the exe in the target process
 
-	liveConfig   func() AutoPotConfig
+	thresholdFn  func() (hpThresh, spThresh int)
 	onParsed     func(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int)
 	onModeChange func(string)
 
@@ -131,11 +131,11 @@ func (r *addressReader) pct(curHP, maxHP, curSP, maxSP uint32) (hpPct, spPct flo
 
 // lowFlags checks HP/SP percentages against the live config thresholds.
 func (r *addressReader) lowFlags(hpPct, spPct float64) (hpLow, spLow bool) {
-	if r.liveConfig == nil {
+	if r.thresholdFn == nil {
 		return false, false
 	}
-	cfg := r.liveConfig()
-	return hpPct < float64(cfg.HPThreshold), spPct < float64(cfg.SPThreshold)
+	hpThresh, spThresh := r.thresholdFn()
+	return hpPct < float64(hpThresh), spPct < float64(spThresh)
 }
 
 // setError marks the reader as in error state, updates the overlay mode

@@ -31,6 +31,8 @@ type Lifecycle[C any] = lifecycle.Lifecycle[C]
 type (
 	AutoPotRunner = autopot.AutoPotRunner
 	AutoPotConfig = autopot.AutoPotConfig
+	CoreConfig    = autopot.CoreConfig
+	AddressConfig = autopot.AddressConfig
 )
 
 var (

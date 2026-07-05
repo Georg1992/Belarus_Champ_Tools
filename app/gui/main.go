@@ -669,8 +669,8 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 // startRemainingRunners starts AutoPot, TimerKey, and KeyChain runners.
 func (a *guiApp) startRemainingRunners(session runner.InputSession, logFn func(string)) {
 	autopotCfg := a.autopotWanted()
-	autopotCfg.Session = session
-	autopotCfg.Log = logFn
+	autopotCfg.Core.Session = session
+	autopotCfg.Core.Log = logFn
 	timerCfg := a.timerKeyWanted()
 	timerCfg.Session = session
 	timerCfg.Log = logFn
@@ -679,11 +679,11 @@ func (a *guiApp) startRemainingRunners(session runner.InputSession, logFn func(s
 	keyChainCfg.Session = session
 	keyChainCfg.Log = logFn
 
-	a.prevAutoPotAddressMode = autopotCfg.AddressMode
+	a.prevAutoPotAddressMode = autopotCfg.IsAddressMode()
 	a.startAutoPotRunner(autopotCfg, logFn)
 
 	// If no autopot keys are bound, show "AutoPot off" instead of a stale mode.
-	if !autopotCfg.HPEnabled && !autopotCfg.SPEnabled {
+	if !autopotCfg.Core.HPEnabled && !autopotCfg.Core.SPEnabled {
 		a.mainWindow.Synchronize(func() {
 			if a.overlay != nil {
 				a.overlay.SetMode("AutoPot off")
@@ -760,8 +760,8 @@ func (a *guiApp) onStop() {
 
 func (a *guiApp) autopotWanted() runner.AutoPotConfig {
 	cfg := a.autopotConfig()
-	cfg.HPEnabled = cfg.HPEnabled && cfg.HPKeyVK != 0
-	cfg.SPEnabled = cfg.SPEnabled && cfg.SPKeyVK != 0
+	cfg.Core.HPEnabled = cfg.Core.HPEnabled && cfg.Core.HPKeyVK != 0
+	cfg.Core.SPEnabled = cfg.Core.SPEnabled && cfg.Core.SPKeyVK != 0
 	return cfg
 }
 
@@ -776,10 +776,10 @@ func (a *guiApp) startAutoPotRunner(cfg runner.AutoPotConfig, log func(string)) 
 			defer a.mu.Unlock()
 			return a.inputSession
 		},
-		func() bool { return cfg.HPEnabled || cfg.SPEnabled },
+		func() bool { return cfg.Core.HPEnabled || cfg.Core.SPEnabled },
 		func(sess runner.InputSession) *runner.AutoPotRunner {
-			cfg.Session = sess
-			cfg.Log = log
+			cfg.Core.Session = sess
+			cfg.Core.Log = log
 			return runner.NewAutoPot(cfg)
 		},
 	)

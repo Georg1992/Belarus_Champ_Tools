@@ -33,16 +33,18 @@ func TestCommittedThresholdFields(t *testing.T) {
 func TestRunningRunnerReceivesThresholdUpdate(t *testing.T) {
 	mock := &mockAutoPotRunner{running: true}
 	cfg := runner.AutoPotConfig{
-		HPEnabled:   true,
-		HPKeyVK:     'W',
-		HPThreshold: 60,
-		SPThreshold: 50,
+		Core: runner.CoreConfig{
+			HPEnabled:   true,
+			HPKeyVK:     'W',
+			HPThreshold: 60,
+			SPThreshold: 50,
+		},
 	}
 	mock.UpdateSettings(cfg)
 	if len(mock.updates) != 1 {
 		t.Fatalf("updates=%d want 1", len(mock.updates))
 	}
-	if mock.updates[0].HPThreshold != 60 || mock.updates[0].SPThreshold != 50 {
+	if mock.updates[0].Core.HPThreshold != 60 || mock.updates[0].Core.SPThreshold != 50 {
 		t.Fatalf("update=%+v want 60/50", mock.updates[0])
 	}
 }

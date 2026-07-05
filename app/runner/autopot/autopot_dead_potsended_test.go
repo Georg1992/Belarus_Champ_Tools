@@ -42,25 +42,25 @@ func TestPotsEndedLabel(t *testing.T) {
 	}{
 		{
 			name:  "HP with key",
-			cfg:   AutoPotConfig{HPKeyName: "F1"},
+			cfg:   AutoPotConfig{Core: CoreConfig{HPKeyName: "F1"}},
 			hpBar: true,
 			want:  "HP pots ended on F1",
 		},
 		{
 			name:  "SP with key",
-			cfg:   AutoPotConfig{SPKeyName: "F2"},
+			cfg:   AutoPotConfig{Core: CoreConfig{SPKeyName: "F2"}},
 			hpBar: false,
 			want:  "SP pots ended on F2",
 		},
 		{
 			name:   "HP without key",
-			cfg:    AutoPotConfig{},
+			cfg:    AutoPotConfig{Core: CoreConfig{}},
 			hpBar:  true,
 			want:   "HP pots ended",
 		},
 		{
 			name:   "SP without key",
-			cfg:    AutoPotConfig{},
+			cfg:    AutoPotConfig{Core: CoreConfig{}},
 			hpBar:  false,
 			want:   "SP pots ended",
 		},
@@ -85,42 +85,42 @@ func TestHealTarget(t *testing.T) {
 	}{
 		{
 			name:   "HP enabled with key",
-			cfg:    AutoPotConfig{HPEnabled: true, HPKeyVK: 'Q'},
+			cfg:    AutoPotConfig{Core: CoreConfig{HPEnabled: true, HPKeyVK: 'Q'}},
 			hpBar:  true,
 			wantVK: 'Q',
 			wantOK: true,
 		},
 		{
 			name:   "HP disabled",
-			cfg:    AutoPotConfig{HPEnabled: false, HPKeyVK: 'Q'},
+			cfg:    AutoPotConfig{Core: CoreConfig{HPEnabled: false, HPKeyVK: 'Q'}},
 			hpBar:  true,
 			wantVK: 0,
 			wantOK: false,
 		},
 		{
 			name:   "HP no key",
-			cfg:    AutoPotConfig{HPEnabled: true, HPKeyVK: 0},
+			cfg:    AutoPotConfig{Core: CoreConfig{HPEnabled: true, HPKeyVK: 0}},
 			hpBar:  true,
 			wantVK: 0,
 			wantOK: false,
 		},
 		{
 			name:   "SP enabled with key",
-			cfg:    AutoPotConfig{SPEnabled: true, SPKeyVK: 'W'},
+			cfg:    AutoPotConfig{Core: CoreConfig{SPEnabled: true, SPKeyVK: 'W'}},
 			hpBar:  false,
 			wantVK: 'W',
 			wantOK: true,
 		},
 		{
 			name:   "SP disabled",
-			cfg:    AutoPotConfig{SPEnabled: false, SPKeyVK: 'W'},
+			cfg:    AutoPotConfig{Core: CoreConfig{SPEnabled: false, SPKeyVK: 'W'}},
 			hpBar:  false,
 			wantVK: 0,
 			wantOK: false,
 		},
 		{
 			name:   "SP no key",
-			cfg:    AutoPotConfig{SPEnabled: true, SPKeyVK: 0},
+			cfg:    AutoPotConfig{Core: CoreConfig{SPEnabled: true, SPKeyVK: 0}},
 			hpBar:  false,
 			wantVK: 0,
 			wantOK: false,
@@ -306,11 +306,13 @@ func TestHealUntil_StatusDead_Returns(t *testing.T) {
 	// the main loop handles the dead state, not healUntil.
 	sess := &recordSession{}
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Session:     sess,
 		HPThreshold: 50,
 		HPKeyVK:     'Q',
 		HPEnabled:   true,
 		Log:         func(string) {},
+		},
 	}
 	ap := NewAutoPot(cfg)
 
@@ -339,6 +341,7 @@ func TestHealUntil_StatusDead_NoKeyPress(t *testing.T) {
 	// any keys when reader returns StatusDead.
 	sess := &recordSession{}
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Session:     sess,
 		HPThreshold: 50,
 		SPThreshold: 50,
@@ -347,6 +350,7 @@ func TestHealUntil_StatusDead_NoKeyPress(t *testing.T) {
 		HPEnabled:   true,
 		SPEnabled:   true,
 		Log:         func(string) {},
+		},
 	}
 	ap := NewAutoPot(cfg)
 
@@ -367,12 +371,14 @@ func TestHealUntil_StatusDead_ClearsPotsEndedMode(t *testing.T) {
 	// cause a clean exit with mode cleared.
 	rec := &modeRecorder{}
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Session:       &recordSession{},
 		HPThreshold:   50,
 		HPKeyVK:       'Q',
 		HPEnabled:     true,
 		Log:           func(string) {},
 		OnStatusUIMode: rec.record,
+		},
 	}
 	ap := NewAutoPot(cfg)
 
@@ -402,6 +408,7 @@ func TestHealUntil_PotsEndedDetected(t *testing.T) {
 	sess := &recordSession{}
 	rec := &modeRecorder{}
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Session:       sess,
 		HPThreshold:   50,
 		HPKeyVK:       'Q',
@@ -409,6 +416,7 @@ func TestHealUntil_PotsEndedDetected(t *testing.T) {
 		Log:           func(string) {},
 		OnStatusUIMode: rec.record,
 		HPKeyName:     "F1",
+		},
 	}
 	ap := NewAutoPot(cfg)
 
@@ -458,6 +466,7 @@ func TestHealUntil_PotsEnded_ThenValueChanges(t *testing.T) {
 	sess := &recordSession{}
 	rec := &modeRecorder{}
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Session:       sess,
 		HPThreshold:   50,
 		HPKeyVK:       'Q',
@@ -465,6 +474,7 @@ func TestHealUntil_PotsEnded_ThenValueChanges(t *testing.T) {
 		Log:           func(string) {},
 		OnStatusUIMode: rec.record,
 		HPKeyName:     "F1",
+		},
 	}
 	ap := NewAutoPot(cfg)
 
@@ -500,6 +510,7 @@ func TestHealUntil_PotsEnded_SPBar(t *testing.T) {
 	sess := &recordSession{}
 	rec := &modeRecorder{}
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Session:       sess,
 		HPThreshold:   50,
 		SPThreshold:   50,
@@ -510,6 +521,7 @@ func TestHealUntil_PotsEnded_SPBar(t *testing.T) {
 		Log:           func(string) {},
 		OnStatusUIMode: rec.record,
 		SPKeyName:     "F2",
+		},
 	}
 	ap := NewAutoPot(cfg)
 
@@ -548,6 +560,7 @@ func TestHealUntil_PotsEnded_ReApply(t *testing.T) {
 	sess := &recordSession{}
 	rec := &modeRecorder{}
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Session:       sess,
 		HPThreshold:   50,
 		HPKeyVK:       'Q',
@@ -555,6 +568,7 @@ func TestHealUntil_PotsEnded_ReApply(t *testing.T) {
 		Log:           func(string) {},
 		OnStatusUIMode: rec.record,
 		HPKeyName:     "F1",
+		},
 	}
 	ap := NewAutoPot(cfg)
 
@@ -601,12 +615,14 @@ func TestHealUntil_HealsImmediately_NoPotsEnded(t *testing.T) {
 	sess := &recordSession{}
 	rec := &modeRecorder{}
 	cfg := AutoPotConfig{
+		Core: CoreConfig{
 		Session:       sess,
 		HPThreshold:   50,
 		HPKeyVK:       'Q',
 		HPEnabled:     true,
 		Log:           func(string) {},
 		OnStatusUIMode: rec.record,
+		},
 	}
 	ap := NewAutoPot(cfg)
 

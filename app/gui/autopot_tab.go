@@ -446,24 +446,29 @@ func (a *guiApp) autopotConfig() runner.AutoPotConfig {
 
 	isAddress := a.isAutoPotAddressMode()
 	profile := a.selectedProfile()
-	return runner.AutoPotConfig{
-		HPThreshold:    a.hpThreshold,
-		SPThreshold:    a.spThreshold,
-		HPKeyVK:        a.hpKeyVK,
-		SPKeyVK:        a.spKeyVK,
-		HPKeyName:      hpName,
-		SPKeyName:      spName,
-		HPEnabled:      a.hpEnabledCB.Checked(),
-		SPEnabled:      a.spEnabledCB.Checked(),
-		Log:            a.appendLog,
-		OnStatusParsed: statusFn,
-		OnStatusUIMode: modeFn,
-		// Address reading fields.
-		AddressMode:  isAddress && a.processPID != 0,
-		ProcessPID:   a.processPID,
-		ProcessTitle: a.selectedWindowTitle(),
-		Profile:      profile,
+	cfg := runner.AutoPotConfig{
+		Core: runner.CoreConfig{
+			HPThreshold:    a.hpThreshold,
+			SPThreshold:    a.spThreshold,
+			HPKeyVK:        a.hpKeyVK,
+			SPKeyVK:        a.spKeyVK,
+			HPKeyName:      hpName,
+			SPKeyName:      spName,
+			HPEnabled:      a.hpEnabledCB.Checked(),
+			SPEnabled:      a.spEnabledCB.Checked(),
+			Log:            a.appendLog,
+			OnStatusParsed: statusFn,
+			OnStatusUIMode: modeFn,
+		},
 	}
+	if isAddress && a.processPID != 0 {
+		cfg.Address = &runner.AddressConfig{
+			ProcessPID:   a.processPID,
+			ProcessTitle: a.selectedWindowTitle(),
+			Profile:      profile,
+		}
+	}
+	return cfg
 }
 
 func (a *guiApp) commitHPThresholdEdit() {
@@ -495,19 +500,19 @@ func (a *guiApp) commitSPThresholdEdit() {
 func (a *guiApp) syncAutoPotSettings() {
 	cfg := a.autopotWanted()
 	a.mu.Lock()
-	cfg.Session = a.inputSession
-	cfg.Log = a.appendLog
+	cfg.Core.Session = a.inputSession
+	cfg.Core.Log = a.appendLog
 	r := a.autopotRunner
 	a.mu.Unlock()
 
-	if cfg.Session == nil || cfg.Log == nil {
+	if cfg.Core.Session == nil || cfg.Core.Log == nil {
 		return
 	}
 
 	if r != nil && r.Running() {
 		// If neither HP nor SP keys are bound, stop the runner
 		// instead of letting it spin doing nothing.
-		if !cfg.HPEnabled && !cfg.SPEnabled {
+		if !cfg.Core.HPEnabled && !cfg.Core.SPEnabled {
 			a.mu.Lock()
 			a.autopotRunner = nil
 			a.mu.Unlock()
@@ -531,8 +536,8 @@ func (a *guiApp) syncAutoPotSettings() {
 		// (addressReader / statusUIReader / pixelBarReader) is created
 		// once inside run() — UpdateSettings only changes the config,
 		// it doesn't recreate the reader.
-		if cfg.AddressMode != a.prevAutoPotAddressMode {
-			a.prevAutoPotAddressMode = cfg.AddressMode
+		if cfg.IsAddressMode() != a.prevAutoPotAddressMode {
+			a.prevAutoPotAddressMode = cfg.IsAddressMode()
 			a.mu.Lock()
 			a.autopotRunner = nil
 			a.mu.Unlock()
@@ -560,7 +565,7 @@ func (a *guiApp) syncAutoPotSettings() {
 		return
 	}
 
-	a.prevAutoPotAddressMode = cfg.AddressMode
+	a.prevAutoPotAddressMode = cfg.IsAddressMode()
 	a.startAutoPotRunner(cfg, a.guiLog(a.appendLog))
 }
 

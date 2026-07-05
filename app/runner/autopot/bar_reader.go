@@ -192,7 +192,7 @@ type statusUIReader struct {
 	onModeChange  func(string)
 	onParsed      func(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int)
 	log           func(string)
-	settings      func() AutoPotConfig
+	coreSettings  func() CoreConfig
 }
 
 func (r *statusUIReader) Name() string { return "OCR" }
@@ -241,7 +241,7 @@ func (r *statusUIReader) ReadValues(ctx context.Context) BarReadResult {
 		spPct = float64(status.SP) * 100 / float64(status.SPMax)
 	}
 
-	cfg := r.settings()
+	cfg := r.coreSettings()
 	return BarReadResult{
 		HP:     hpPct,
 		SP:     spPct,
