@@ -65,7 +65,7 @@ type autopotTabController struct {
 }
 
 func newAutopotTabController(ctx *tabContext) *autopotTabController {
-	return &autopotTabController{}
+	return &autopotTabController{ctx: ctx}
 }
 
 func (c *autopotTabController) runnerPtr() **runner.AutoPotRunner { return &c.runner }
