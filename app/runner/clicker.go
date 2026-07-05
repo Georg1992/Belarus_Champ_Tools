@@ -13,8 +13,6 @@ import (
 	"fmt"
 	"time"
 
-	windows "belarus-champ-tools/runner/platform/windows"
-
 	"belarus-champ-tools/runner/internal/lifecycle"
 	"belarus-champ-tools/runner/internal/session"
 	"belarus-champ-tools/runner/internal/timing"
@@ -159,7 +157,7 @@ func (r *Runner) runSlot(ctx context.Context, sess session.InputSession, slot Cl
 
 func anyKeyDown(vks []int32) bool {
 	for _, vk := range vks {
-		if vk != 0 && windows.PhysicalKeyDown(vk) {
+		if vk != 0 && PhysicalKeyDown(vk) {
 			return true
 		}
 	}

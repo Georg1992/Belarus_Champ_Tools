@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"belarus-champ-tools/runner/internal/timing"
-	windows "belarus-champ-tools/runner/platform/windows"
 
 	"github.com/Alia5/VIIPER/device/keyboard"
 )
@@ -111,7 +110,7 @@ func WaitForKeyPress(timeout time.Duration) (int32, bool) {
 	// Track the previous state of each key so we can detect rising edges.
 	prev := make(map[int32]bool, len(keyNames))
 	for vk := range keyNames {
-		if windows.PhysicalKeyDown(vk) {
+		if PhysicalKeyDown(vk) {
 			prev[vk] = true
 		}
 	}
@@ -122,12 +121,12 @@ func WaitForKeyPress(timeout time.Duration) (int32, bool) {
 			return 0, false
 		}
 		for vk := range keyNames {
-			nowDown := windows.PhysicalKeyDown(vk)
+			nowDown := PhysicalKeyDown(vk)
 			if nowDown && !prev[vk] {
 				// Found a new key press. Phase 2: wait for its release
 				// before returning, so the binder doesn't sync the runner
 				// while the key is still held down.
-				for windows.PhysicalKeyDown(vk) {
+				for PhysicalKeyDown(vk) {
 					if time.Now().After(deadline) {
 						return 0, false
 					}
@@ -154,7 +153,7 @@ func StartEndKeyWatcher(ctx context.Context, onToggle func()) {
 		}()
 		keyDown := false
 		for ctx.Err() == nil {
-			if windows.PollKeyToggle(&keyDown, timing.ToggleVK) {
+			if PollKeyToggle(&keyDown, timing.ToggleVK) {
 				onToggle()
 			}
 			time.Sleep(timing.PollInterval)

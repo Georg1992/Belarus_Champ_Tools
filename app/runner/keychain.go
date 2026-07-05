@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	windows "belarus-champ-tools/runner/platform/windows"
-
 	"belarus-champ-tools/runner/internal/lifecycle"
 	"belarus-champ-tools/runner/internal/session"
 	"belarus-champ-tools/runner/internal/timing"
@@ -97,12 +95,12 @@ func (k *KeyChainRunner) run(ctx context.Context, cfg KeyChainConfig) {
 		}
 		trigger := current.Keys[0]
 
-		if !windows.PhysicalKeyDown(trigger) {
+		if !PhysicalKeyDown(trigger) {
 			timing.Sleep(ctx, timing.PollInterval)
 			continue
 		}
 
-		for windows.PhysicalKeyDown(trigger) && ctx.Err() == nil {
+		for PhysicalKeyDown(trigger) && ctx.Err() == nil {
 			current = k.settings()
 			if !current.Active() {
 				break

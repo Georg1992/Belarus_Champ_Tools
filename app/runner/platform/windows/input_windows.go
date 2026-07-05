@@ -26,3 +26,12 @@ func PhysicalKeyDown(vk int32) bool {
 	return ret&0x8000 != 0
 }
 
+// WinPhysicalKeyDown and WinPollKeyToggle are exported aliases used by
+// the runner package's init() in keyboard_windows.go to wire the
+// PhysicalKeyDown / PollKeyToggle function variables. They are exported
+// because keyboard_windows.go imports this package under an alias.
+var (
+	WinPhysicalKeyDown = PhysicalKeyDown
+	WinPollKeyToggle   = PollKeyToggle
+)
+
