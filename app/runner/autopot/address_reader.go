@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	win "belarus-champ-tools/runner/platform/windows"
 	"belarus-champ-tools/runner/profiles"
 	"golang.org/x/sys/windows"
 )
@@ -55,12 +54,12 @@ func (r *addressReader) ReadValues(ctx context.Context) BarReadResult {
 		return BarReadResult{Status: StatusInvalid, Err: fmt.Errorf("address reader: no process selected (PID=0)")}
 	}
 
-	h, err := win.OpenProcessHandle(r.pid)
+	h, err := OpenProcessHandle(r.pid)
 	if err != nil {
 		r.setError("address: OpenProcess(%d) failed: %v", r.pid, err)
 		return BarReadResult{Status: StatusInvalid, Err: err}
 	}
-	defer win.CloseProcessHandle(h)
+	defer CloseProcessHandle(h)
 
 	base := r.moduleBase
 	curHP, maxHP, err := r.readValues(h, base, r.profile.CurrentHPAddr, r.profile.MaxHPAddr)
@@ -107,11 +106,11 @@ func (r *addressReader) ReadValues(ctx context.Context) BarReadResult {
 // readValues reads two uint32 values from the process memory at
 // (base+addr1) and (base+addr2) using the open handle h.
 func (r *addressReader) readValues(h windows.Handle, base uintptr, addr1, addr2 uintptr) (uint32, uint32, error) {
-	v1, err := win.ReadProcessUint32ByHandle(h, base+addr1)
+	v1, err := ReadProcessUint32ByHandle(h, base+addr1)
 	if err != nil {
 		return 0, 0, err
 	}
-	v2, err := win.ReadProcessUint32ByHandle(h, base+addr2)
+	v2, err := ReadProcessUint32ByHandle(h, base+addr2)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -159,7 +158,7 @@ func (r *addressReader) setError(format string, args ...interface{}) {
 
 		newPID := r.pid
 		if r.processTitle != "" {
-			if found := win.FindVisibleWindowPID(r.processTitle); found != 0 {
+			if found := FindVisibleWindowPID(r.processTitle); found != 0 {
 				newPID = found
 			}
 		}
