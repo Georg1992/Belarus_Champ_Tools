@@ -202,6 +202,7 @@ func (a *AutoPotRunner) initReaders(cfg AutoPotConfig) (reader BarReader, pixel 
 		setMode(cfg.OnStatusUIMode, "Searching...")
 	} else {
 		reader = pixel
+		setMode(cfg.OnStatusUIMode, "Pixelsearch")
 		if cfg.OnStatusParsed != nil {
 			cfg.OnStatusParsed(pixelModeSentinel, 0, pixelModeSentinel, 0, 0, 0, 0, 0)
 		}

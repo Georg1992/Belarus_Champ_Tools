@@ -1,6 +1,9 @@
 package autopot
 
-import "image"
+import (
+	"image"
+	"sort"
+)
 
 // BarRead holds the fill percentage and pixel counts for a single bar.
 type BarRead struct {
@@ -26,8 +29,9 @@ func ReadMappedBars(img image.Image, bars MappedBars) (hp BarRead, sp BarRead) {
 
 // ReadHPFill reads the fill percentage of an HP bar from the image.
 // Returns a BarRead with the fill percentage and pixel counts.
-// When no fill pixels are found and the bar has no HP-colored pixels at all
-// (player is dead, bar is empty), returns Found=false to prevent potion spam.
+// When no fill pixels are found (player is dead, bar is empty), returns
+// Found=true with Percent=0 so the stabiliser can accumulate low readings
+// and trigger the dead/heal path.
 func ReadHPFill(img image.Image, hp Rect) BarRead {
 	if hp.W < 1 || hp.H < 1 {
 		return BarRead{Found: false}
@@ -44,18 +48,15 @@ func ReadHPFill(img image.Image, hp Rect) BarRead {
 		}
 	}
 	if best.FilledWidth == 0 {
-		if barHasNoColorPixels(img, hp, true) {
-			return BarRead{Found: false, FullWidth: hp.W}
-		}
-		return normalizeBarRead(img, hp, true, readBarFillSingleRow(img, hp.X, hp.Y, hp.W, isHPFillRead))
+		return BarRead{Found: true, Percent: 0, FullWidth: hp.W}
 	}
 	return normalizeBarRead(img, hp, true, best)
 }
 
 // ReadSPFill reads the fill percentage of an SP bar from the image.
 // Similar to ReadHPFill but uses SP color detection.
-// When no fill pixels are found and the bar has no SP-colored pixels at all,
-// returns Found=false to prevent potion spam.
+// When no fill pixels are found (empty bar), returns Found=true with
+// Percent=0 so the stabiliser can accumulate low readings.
 func ReadSPFill(img image.Image, sp Rect) BarRead {
 	if sp.W < 1 || sp.H < 1 {
 		return BarRead{Found: false}
@@ -64,22 +65,15 @@ func ReadSPFill(img image.Image, sp Rect) BarRead {
 	if sp.W < 1 {
 		return BarRead{Found: false}
 	}
-	// Primary: read the middle row (most reliable for SP bar fill edge).
-	// Fallback: if middle row shows 0 fill, try all rows and take the
-	// widest. This handles the case where the rect is slightly misaligned
-	// due to camera drift and the middle row misses the bar entirely.
-	midRow := sp.H / 2
-	best := readBarFillSingleRow(img, sp.X, sp.Y+midRow, sp.W, isSPFill)
-	if best.FilledWidth == 0 {
-		for row := 0; row < sp.H; row++ {
-			br := readBarFillSingleRow(img, sp.X, sp.Y+row, sp.W, isSPFill)
-			if br.FilledWidth > best.FilledWidth {
-				best = br
-			}
+	best := BarRead{Found: true, FullWidth: sp.W}
+	for row := 0; row < sp.H; row++ {
+		br := readBarFillSingleRow(img, sp.X, sp.Y+row, sp.W, isSPFill)
+		if br.FilledWidth > best.FilledWidth {
+			best = br
 		}
 	}
-	if best.FilledWidth == 0 && barHasNoColorPixels(img, sp, false) {
-		return BarRead{Found: false, FullWidth: sp.W}
+	if best.FilledWidth == 0 {
+		return BarRead{Found: true, Percent: 0, FullWidth: sp.W}
 	}
 	return normalizeBarRead(img, sp, false, best)
 }
@@ -116,30 +110,53 @@ func barReadFromFill(filled, full int) BarRead {
 }
 
 func trimBarEdges(img image.Image, r Rect, hpBar bool) Rect {
-	y := r.Y + r.H/2
-	for r.W > 0 {
-		rp, gp, bp := pixelAt(img, r.X, y)
-		if barEdgePixel(rp, gp, bp, hpBar) {
-			break
+	// Collect edge positions from all rows, then take the median.
+	// This is robust to rows where the game background has no bar
+	// pixels (e.g. a bright blue sky at the bar's middle row) —
+	// the other rows still contribute correct edges and the median
+	// filters out the deviant row.
+	var lefts, rights []int
+	for row := 0; row < r.H; row++ {
+		y := r.Y + row
+		l, rEdge := -1, -1
+		for x := r.X; x < r.X+r.W; x++ {
+			rp, gp, bp := pixelAt(img, x, y)
+			if barEdgePixel(rp, gp, bp, hpBar) {
+				l = x
+				break
+			}
 		}
-		r.X++
-		r.W--
+		for x := r.X + r.W - 1; x >= r.X; x-- {
+			rp, gp, bp := pixelAt(img, x, y)
+			if barEdgePixel(rp, gp, bp, hpBar) {
+				rEdge = x
+				break
+			}
+		}
+		if l >= 0 && rEdge >= 0 && l < rEdge {
+			lefts = append(lefts, l)
+			rights = append(rights, rEdge)
+		}
 	}
-	for r.W > 0 {
-		rp, gp, bp := pixelAt(img, r.X+r.W-1, y)
-		if barEdgePixel(rp, gp, bp, hpBar) {
-			break
-		}
-		r.W--
+	if len(lefts) == 0 {
+		return r // no row found edges — return unchanged
+	}
+	sort.Ints(lefts)
+	sort.Ints(rights)
+	r.X = lefts[len(lefts)/2]
+	r.W = rights[len(rights)/2] - r.X + 1
+	if r.W < 1 {
+		r.W = 1
 	}
 	return r
 }
 
 func barEdgePixel(r, g, b uint8, hpBar bool) bool {
 	if hpBar {
-		return IsHPPixel(r, g, b) || isHPTrack(r, g, b)
+		return IsHPPixel(r, g, b) || isHPTrack(r, g, b) || isBarBackground(r, g, b)
 	}
-	return IsSPPixel(r, g, b) || isSPFill(r, g, b) || isHPTrack(r, g, b)
+	// IsSPPixel calls isSPFill internally — use isSPFill directly.
+	return isSPFill(r, g, b) || isHPTrack(r, g, b) || isBarBackground(r, g, b)
 }
 
 func normalizeBarRead(img image.Image, r Rect, hpBar bool, read BarRead) BarRead {
@@ -174,27 +191,33 @@ func BarLooksFull(img image.Image, r Rect, hpBar bool) bool {
 }
 
 func bestFillWidth(img image.Image, r Rect, hpBar bool) int {
-	isPixel := isHPFillRead
 	if !hpBar {
-		isPixel = isSPFill
-	}
-	// For SP bars, use middle-row-primary with fallback, matching ReadSPFill.
-	// The middle row is most reliable; only widen the search when it shows 0.
-	if !hpBar {
+		// For SP bars, use middle-row-primary with fallback, matching ReadSPFill.
+		// The middle row is most reliable; only widen the search when it shows 0.
 		midRow := r.Y + r.H/2
 		mid := readBarFillSingleRow(img, r.X, midRow, r.W, isSPFill).FilledWidth
 		if mid > 0 {
 			return mid
 		}
-	}
-	best := 0
-	for row := 0; row < r.H; row++ {
-		br := readBarFillSingleRow(img, r.X, r.Y+row, r.W, isPixel)
-		if br.FilledWidth > best {
-			best = br.FilledWidth
+		best := 0
+		for row := 0; row < r.H; row++ {
+			br := readBarFillSingleRow(img, r.X, r.Y+row, r.W, isSPFill)
+			if br.FilledWidth > best {
+				best = br.FilledWidth
+			}
 		}
+		return best
 	}
-	return best
+	// For HP bars, use median across rows (matching ReadHPFill) so a single
+	// noisy row with game-background green pixels can't falsely inflate the
+	// fill width and make BarLooksFull think the bar is full.
+	var vals []int
+	for row := 0; row < r.H; row++ {
+		br := readBarFillSingleRow(img, r.X, r.Y+row, r.W, isHPFillRead)
+		vals = append(vals, br.FilledWidth)
+	}
+	sort.Ints(vals)
+	return vals[r.H/2]
 }
 
 func barConfirmedNotFull(img image.Image, r Rect, hpBar bool, read BarRead) bool {
@@ -214,50 +237,19 @@ func barReadConsistent(img image.Image, r Rect, hpBar bool, read BarRead) bool {
 	if !read.Found || r.W < 2 {
 		return false
 	}
-	// Compute best fill width once and reuse for both the full-check and
-	// the consistency comparison, eliminating the redundant bestFillWidth
-	// call that happened when BarLooksFull called it internally and then
-	// the fallback called it again.
-	fillW := bestFillWidth(img, r, hpBar)
-	if fillW >= r.W-2 && !barRightHasEmptyTrack(img, r, hpBar) {
-		return true
-	}
-	if fillW == 0 {
-		if read.FilledWidth == 0 {
-			// Both say 0% fill — check if the bar area actually has
-			// bar-colored pixels (track/background). If it does, the
-			// rect is likely slightly misaligned (e.g. due to camera
-			// drift) and the fill reading is a false 0%.
-			if !barHasNoColorPixels(img, r, hpBar) {
-				return false
-			}
-			return true
-		}
+	// Sanity-check the reading. No second-guessing via bestFillWidth:
+	// bestFillWidth operates on the original mapped rect (which may
+	// differ from the trimmed rect ReadHPFill used), and it picks up
+	// game-background pixels that happen to match the fill colour,
+	// producing inflated values that would wrongfully fail the check.
+	// The bar position was already validated by RefreshBarPair; the
+	// fill reading comes from a direct left-to-right scan across all
+	// rows. Trust it within reasonable bounds.
+	if read.Percent < 0 || read.Percent > 100 {
 		return false
 	}
-	if read.FilledWidth == 0 {
+	if read.FilledWidth < 0 || read.FilledWidth > read.FullWidth {
 		return false
-	}
-	if read.FilledWidth < fillW-2 {
-		return false
-	}
-	return read.FilledWidth <= fillW+1
-}
-
-func barHasNoColorPixels(img image.Image, r Rect, hpBar bool) bool {
-	isPixel := IsHPPixel
-	if !hpBar {
-		isPixel = isSPFill
-	}
-	// Only scan the middle row — bar height is 3px. If the middle row has
-	// no color pixels, the bar is truly empty (scrolling all 3 rows is
-	// redundant and costs 3× more pixelAt calls on every low-fill read).
-	midY := r.Y + r.H/2
-	for x := r.X; x < r.X+r.W; x++ {
-		rp, gp, bp := pixelAt(img, x, midY)
-		if isPixel(rp, gp, bp) {
-			return false
-		}
 	}
 	return true
 }
@@ -291,10 +283,10 @@ func barRightHasEmptyTrack(img image.Image, r Rect, hpBar bool) bool {
 
 func isBarEmptyPixel(r, g, b uint8, hpBar bool) bool {
 	if hpBar {
-		if IsHPPixel(r, g, b) || isHPFillRead(r, g, b) {
+		if isHPFillRead(r, g, b) {
 			return false
 		}
-	} else if IsSPPixel(r, g, b) || isSPFill(r, g, b) {
+	} else if isSPFill(r, g, b) {
 		return false
 	}
 	return isHPTrack(r, g, b) || isBarBackground(r, g, b)

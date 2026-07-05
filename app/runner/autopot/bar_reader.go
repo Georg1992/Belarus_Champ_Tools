@@ -133,6 +133,24 @@ func (r *pixelBarReader) ReadValues(ctx context.Context) BarReadResult {
 		mapped.Block.X, mapped.Block.Y, mapped.Block.W, mapped.Block.H, mapped.MapScore,
 		bounds.Dx(), bounds.Dy(), roi.X, roi.Y, roi.W, roi.H)
 
+	// Dead detection: bar pair found but HP is consistently at 0%.
+	// In RO, HP=0 means dead — the minimap HP bar is empty.
+	// Return StatusDead so the main loop enters the dead-handling path
+	// (shows "[Dead]" overlay, taps HP key at 1s intervals, skips SP heal).
+	if hp.Status == BarStatusLow && hp.Percent == 0 {
+		if r.onParsed != nil {
+			r.onParsed(1, 1, int(sp.Percent), 100, 0, 0, 0, 0)
+		}
+		return BarReadResult{
+			HP:     0,
+			SP:     sp.Percent,
+			HPLow:  false,
+			SPLow:  sp.Status == BarStatusLow,
+			Status: StatusDead,
+			Err:    fmt.Errorf("character dead (HP=0%%)"),
+		}
+	}
+
 	// Forward percentage values to overlay callback (hpMax=100, spMax=100
 	// signals to the overlay that these are percentages, not raw values).
 	if r.onParsed != nil {

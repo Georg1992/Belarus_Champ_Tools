@@ -1,193 +1,76 @@
 package autopot
 
-// Color-detection constants used by HP/SP pixel predicates.
+// Game-provided exact bar colors (from game client data):
+//
+//	HP green fill:  #21DE42  (33, 222, 66)
+//	HP red fill:    #E21019  (226, 16, 25)
+//	SP blue fill:   #225FDE  (34, 95, 222)
+//	Bar background: #423F46  (66, 63, 70)
+//
+// Pixels vary slightly due to anti-aliasing and rendering; tol handles
+// that range without being so broad it matches unrelated game pixels.
 const (
-	barBgR, barBgG, barBgB = 10, 10, 14
-	barBgTol               = 28
+	hpFillGreenR, hpFillGreenG, hpFillGreenB = 33, 222, 66   // #21DE42
+	hpFillRedR, hpFillRedG, hpFillRedB       = 226, 16, 25   // #E21019
+	spFillBlueR, spFillBlueG, spFillBlueB    = 34, 95, 222   // #225FDE
+	barTrackR, barTrackG, barTrackB          = 66, 63, 70    // #423F46
 
-	hpGreenR, hpGreenG, hpGreenB = 16, 238, 33
-	hpRedR, hpRedG, hpRedB       = 255, 13, 0
-	spBlueR, spBlueG, spBlueB    = 25, 101, 225
-	fillTol                      = 50
-
-	// HP fill detection thresholds
-	hpFillMinGreen     = 35
-	hpFillMinRed       = 50
-	hpFillRedGreenDiff = 25
-
-	// Color detection tolerances for isHPTrack
-	hpTrackBgTol   = 8
-	hpTrackSumMin  = 60
-	hpTrackSumMax  = 210
-	hpTrackDiffTol = 30
-
-	// Color detection thresholds for bar background
-	barBgNearBlackTol = 15
-	barBgDarkSum      = 35
-
-	// HP green detection thresholds
-	hpGreenMinGreen    = 60
-	hpGreenMaxRed      = 20
-	hpGreenBlueGapTol  = 8
-	hpGreenRedGapMin   = 10
-	hpGreenAltMinGreen = 50
-	hpGreenAltMinDiff  = 10
-	hpGreenBrightMin   = 80
-
-	// HP red detection thresholds
-	hpRedMinRed    = 90
-	hpRedGreenDiff = 25
-
-	// HP yellow detection thresholds
-	hpYellowMinRed        = 110
-	hpYellowMinGreen      = 90
-	hpYellowMaxBlue       = 90
-	hpYellowRedBlueDiff   = 15
-	hpYellowGreenBlueDiff = 10
-
-	// SP blue detection thresholds
-	spBlueMinBlue   = 90
-	spBlueGreenDiff = 10
-	spBlueRedDiff   = 18
-
-	// SP fill detection thresholds
-	spFillMinBlue  = 130
-	spFillMinRed   = 12
-	spFillBlueDiff = 20
-
-	// SP cyan detection thresholds
-	spCyanMinBlue   = 80
-	spCyanMinGreen  = 60
-	spCyanBlueDiff  = 10
-	spCyanGreenDiff = 5
+	// Tolerance for colour variation from anti-aliasing / rendering.
+	// Actual pixels in-game vary by ~40-50 per channel from the exact
+	// reference colours due to rendering and compression.
+	colorTol = 55
 )
 
-// IsHPPixel returns true if the pixel color is part of the HP bar (green, red, or yellow).
+// IsHPPixel returns true if the pixel matches HP bar fill (green or red).
 func IsHPPixel(r, g, b uint8) bool {
-	return isHPGreen(r, g, b) || isHPRed(r, g, b) || isHPYellow(r, g, b)
+	return isHPFillRead(r, g, b)
 }
 
-// IsSPPixel returns true if the pixel color is part of the SP bar (blue or cyan).
+// IsSPPixel returns true if the pixel matches SP bar fill (blue).
 func IsSPPixel(r, g, b uint8) bool {
-	return isSPBlue(r, g, b) || isSPCyan(r, g, b)
+	return isSPFill(r, g, b)
 }
 
-// isHPFillRead returns true if the pixel is part of the HP bar fill,
-// including mixed green-red pixels at the fill/unfilled boundary and
-// red-dominant pixels below the isHPRed brightness threshold.
+// isHPFillRead returns true if the pixel is HP fill (green or red).
 func isHPFillRead(r, g, b uint8) bool {
-	if IsHPPixel(r, g, b) {
-		return true
-	}
-	if isHPTrack(r, g, b) {
+	if isBarBackground(r, g, b) {
 		return false
 	}
-	ri, gi, bi := int(r), int(g), int(b)
-	// Mixed green-red pixels at the fill/unfilled boundary
-	if gi >= hpFillMinGreen && ri >= hpFillMinRed && absInt(ri-gi) < hpFillRedGreenDiff {
-		return true
-	}
-	// Red-dominant pixels: part of the HP bar fill that is red but below
-	// the isHPRed brightness threshold (e.g. anti-aliased edges at low HP).
-	// Must clearly be more red than green and blue to avoid false positives.
-	if ri >= hpRedMinRed && ri > gi+hpRedGreenDiff && ri > bi+hpRedGreenDiff {
-		return true
-	}
-	return false
+	return colorNear(r, g, b, hpFillGreenR, hpFillGreenG, hpFillGreenB, colorTol) ||
+		colorNear(r, g, b, hpFillRedR, hpFillRedG, hpFillRedB, colorTol)
 }
 
-// isSPFill returns true if the pixel is a blue SP fill pixel (bright blue
-// used for filled portion of SP bar).
+// isSPFill returns true if the pixel is SP fill (blue).
 func isSPFill(r, g, b uint8) bool {
 	if isBarBackground(r, g, b) {
 		return false
 	}
-	ri, gi, bi := int(r), int(g), int(b)
-	return bi >= spFillMinBlue && ri >= spFillMinRed && bi > gi+spFillBlueDiff && bi > ri+spFillBlueDiff
+	return colorNear(r, g, b, spFillBlueR, spFillBlueG, spFillBlueB, colorTol)
 }
 
+// isHPTrack returns true if the pixel matches the bar's dark background
+// track colour #423F46.
 func isHPTrack(r, g, b uint8) bool {
-	if IsHPPixel(r, g, b) || IsSPPixel(r, g, b) {
-		return false
-	}
-	if colorNear(r, g, b, barBgR, barBgG, barBgB, hpTrackBgTol) {
-		return true
-	}
-	ri, gi, bi := int(r), int(g), int(b)
-	sum := ri + gi + bi
-	if sum < hpTrackSumMin || sum > hpTrackSumMax {
-		return false
-	}
-	return bi <= gi && absInt(ri-gi) < hpTrackDiffTol
+	return colorNear(r, g, b, barTrackR, barTrackG, barTrackB, colorTol)
 }
 
+// isBarBackground returns true for very dark pixels (near-black) or the
+// bar track colour. This function identifies areas that are NOT fill.
 func isBarBackground(r, g, b uint8) bool {
-	if colorNear(r, g, b, barBgR, barBgG, barBgB, barBgTol) {
-		return true
-	}
-	if colorNear(r, g, b, 0, 0, 5, barBgNearBlackTol) {
-		return true
-	}
-	ri, gi, bi := int(r), int(g), int(b)
-	return ri+gi+bi < barBgDarkSum
-}
-
-func isHPGreen(r, g, b uint8) bool {
-	if isBarBackground(r, g, b) {
-		return false
-	}
-	if colorNear(r, g, b, hpGreenR, hpGreenG, hpGreenB, fillTol) {
+	// Near-black pixels: each channel within ~20 of 0, or total brightness < 35.
+	// The sum check catches pixels where one channel is slightly above 20 but
+	// the overall brightness is still effectively black (e.g. 21,5,5).
+	if colorNear(r, g, b, 0, 0, 0, 20) {
 		return true
 	}
 	ri, gi, bi := int(r), int(g), int(b)
-	if gi >= hpGreenMinGreen && ri <= hpGreenMaxRed && bi <= gi+hpGreenBlueGapTol && gi > ri+hpGreenRedGapMin {
+	if ri+gi+bi < 35 {
 		return true
 	}
-	if gi >= hpGreenAltMinGreen && gi > ri+hpGreenAltMinDiff && gi > bi {
-		return true
-	}
-	return gi > hpGreenBrightMin && gi > ri && gi+ri > bi+hpGreenAltMinDiff*2
+	return isHPTrack(r, g, b)
 }
 
-func isHPRed(r, g, b uint8) bool {
-	if isBarBackground(r, g, b) {
-		return false
-	}
-	if colorNear(r, g, b, hpRedR, hpRedG, hpRedB, fillTol) {
-		return true
-	}
-	ri, gi, bi := int(r), int(g), int(b)
-	return ri > hpRedMinRed && ri > gi+hpRedGreenDiff && ri > bi+hpRedGreenDiff
-}
-
-func isHPYellow(r, g, b uint8) bool {
-	if isBarBackground(r, g, b) {
-		return false
-	}
-	ri, gi, bi := int(r), int(g), int(b)
-	return ri > hpYellowMinRed && gi > hpYellowMinGreen && bi < hpYellowMaxBlue &&
-		ri > bi+hpYellowRedBlueDiff && gi > bi+hpYellowGreenBlueDiff
-}
-
-func isSPBlue(r, g, b uint8) bool {
-	if isBarBackground(r, g, b) {
-		return false
-	}
-	if colorNear(r, g, b, spBlueR, spBlueG, spBlueB, fillTol) {
-		return true
-	}
-	ri, gi, bi := int(r), int(g), int(b)
-	return bi >= spBlueMinBlue && bi > gi+spBlueGreenDiff && bi > ri+spBlueRedDiff
-}
-
-func isSPCyan(r, g, b uint8) bool {
-	if isBarBackground(r, g, b) {
-		return false
-	}
-	ri, gi, bi := int(r), int(g), int(b)
-	return bi >= spCyanMinBlue && gi >= spCyanMinGreen && bi > ri+spCyanBlueDiff && gi > ri+spCyanGreenDiff
-}
-
+// colorNear checks whether each channel of (r,g,b) is within tol of (refR,refG,refB).
 func colorNear(r, g, b, refR, refG, refB uint8, tol int) bool {
 	return absInt(int(r)-int(refR)) <= tol &&
 		absInt(int(g)-int(refG)) <= tol &&
