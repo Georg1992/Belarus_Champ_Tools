@@ -32,56 +32,23 @@ type guiApp struct {
 	logList    *walk.ListBox
 	logItems   []string
 
-	// Clicker tab
-	clickerSlots           [runner.ClickerSlotCount]clickerSlotWidgets
-	clickerTriggerVKs      [runner.ClickerSlotCount][]int32
-	clickerBindingSlot     int
-	clickerLastLoggedDelay [runner.ClickerSlotCount]int
+	// Tab controllers (each manages its own tab state + runner).
+	clicker  *clickerTabController
+	autopot  *autopotTabController
+	timer    *timerKeyTabController
+	keyChain *keyChainTabController
 
 	// Control panel
-	startBtn      *walk.PushButton  // Tools Start
-	stopBtn       *walk.PushButton  // Tools Stop
-	viiperStartBtn *walk.PushButton // VIIPER Start
-	toolsBadge    *toolsBadge
-	viiperBadge   *viiperBadge
-
-	// Timer keys (clicker tab)
-	timerSlots        [runner.TimerKeySlotCount]timerSlotWidgets
-	timerKeyVKs       [runner.TimerKeySlotCount]int32
-	timerVisibleCount int
-	timerAddBtn       *walk.PushButton
-	timerBindingSlot  int
-
-	// AutoPot tab
-	hpEnabledCB     *walk.CheckBox
-	spEnabledCB     *walk.CheckBox
-	hpThresholdEdit *walk.LineEdit
-	spThresholdEdit *walk.LineEdit
-	hpKeyLabel      *walk.Label
-	spKeyLabel      *walk.Label
-	hpBindBtn       *walk.PushButton
-	hpClearBtn      *walk.PushButton
-	spBindBtn       *walk.PushButton
-	spClearBtn      *walk.PushButton
-	// AutoPot mode & memory reading
-	autopotVisualRB   *walk.RadioButton // Visual mode (pixel/OCR)
-	autopotAddressRB  *walk.RadioButton // Address-reading mode
-	windowCB          *walk.ComboBox     // game window selector
-	windowRefreshBtn  *walk.PushButton   // refresh window list
-	profileCB         *walk.ComboBox     // server memory profile
-	processPID        uint32             // selected game process PID; 0 = none
-	windowList        []windowInfo       // cached window list for PID lookup
-
-	// KeyChain tab
-	keyChainSlots       [runner.KeyChainSlotCount]keyChainSlotWidgets
-	keyChainKeyVKs      [runner.KeyChainSlotCount]int32
-	keyChainClearBtn    *walk.PushButton
-	keyChainBindingSlot int
+	startBtn       *walk.PushButton  // Tools Start
+	stopBtn        *walk.PushButton  // Tools Stop
+	viiperStartBtn *walk.PushButton  // VIIPER Start
+	toolsBadge     *toolsBadge
+	viiperBadge    *viiperBadge
 
 	mu            sync.Mutex
 	shutdownOnce  sync.Once
 	bindingActive bool
-	logFile      *os.File
+	logFile       *os.File
 	// starting is 1 while onStart's background goroutine is wiring
 	// up runners. It is set on the GUI thread inside onStart and cleared
 	// by either the goroutine on completion (success or fail) or by
@@ -90,25 +57,15 @@ type guiApp struct {
 	// main one. The startup goroutine also re-checks this flag after
 	// every slot publish so a Stop click during startup cancels any
 	// not-yet-published work.
-	starting       atomic.Int32
-	startupCancel  context.CancelFunc // cancels in-flight startInBackground on Stop
-	runner         *runner.Runner
-	autopotRunner  *runner.AutoPotRunner
-	timerKeyRunner *runner.TimerKeyRunner
-	keyChainRunner *runner.KeyChainRunner
-	inputSession   *runner.ViiperSession
-	hpKeyVK        int32
-	spKeyVK        int32
-	hpThreshold    int
-	spThreshold    int
-	overlay              *statusOverlay
-	viiperMonitor        *viiperMonitor
-	isRefreshingWindows    bool // guard: suppress key-clearing during window list refresh
-	prevAutoPotAddressMode bool // tracks previous AddressMode to detect changes while running
+	starting      atomic.Int32
+	startupCancel context.CancelFunc // cancels in-flight startInBackground on Stop
+	inputSession  *runner.ViiperSession
+	overlay       *statusOverlay
+	viiperMonitor *viiperMonitor
 }
 
 func main() {
-	app := &guiApp{timerBindingSlot: -1, keyChainBindingSlot: -1, clickerBindingSlot: -1, bindingActive: false}
+	app := &guiApp{bindingActive: false}
 	defer app.shutdown()
 
 	// Open a persistent log file in a logs/ directory next to the
@@ -120,7 +77,6 @@ func main() {
 		logPath := filepath.Join(logDir, "app.log")
 		if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
 			app.logFile = f
-			// Stamp the first entry so the user knows where to look.
 			_, _ = f.WriteString(fmt.Sprintf("[%s] Log file: %s\n", time.Now().Format("15:04:05"), logPath))
 		}
 	}
@@ -133,16 +89,12 @@ func main() {
 func (a *guiApp) shutdown() {
 	a.shutdownOnce.Do(func() {
 		a.mu.Lock()
-		r := a.runner
-		ap := a.autopotRunner
-		tk := a.timerKeyRunner
-		kc := a.keyChainRunner
 		session := a.inputSession
-		a.runner = nil
-		a.autopotRunner = nil
-		a.timerKeyRunner = nil
-		a.keyChainRunner = nil
 		a.inputSession = nil
+		clicker := a.clicker
+		autopot := a.autopot
+		timer := a.timer
+		keyChain := a.keyChain
 		if a.startupCancel != nil {
 			a.startupCancel()
 			a.startupCancel = nil
@@ -153,33 +105,32 @@ func (a *guiApp) shutdown() {
 			a.viiperMonitor.stop()
 			a.viiperMonitor = nil
 		}
-
 		if a.logFile != nil {
 			_ = a.logFile.Close()
 			a.logFile = nil
 		}
 
-		if r != nil {
-			r.Stop()
-			r.Wait()
+		// Stop runners via their controllers.
+		if clicker != nil && clicker.runner != nil {
+			clicker.runner.Stop()
+			clicker.runner.Wait()
 		}
-		if ap != nil {
-			ap.Stop()
-			ap.Wait()
+		if autopot != nil && autopot.runner != nil {
+			autopot.runner.Stop()
+			autopot.runner.Wait()
 		}
-		if tk != nil {
-			tk.Stop()
-			tk.Wait()
+		if timer != nil && timer.runner != nil {
+			timer.runner.Stop()
+			timer.runner.Wait()
 		}
-		if kc != nil {
-			kc.Stop()
-			kc.Wait()
+		if keyChain != nil && keyChain.runner != nil {
+			keyChain.runner.Stop()
+			keyChain.runner.Wait()
 		}
 		if session != nil {
 			session.Close()
 			stopViiperServerIfStarted()
 		}
-
 		if a.overlay != nil {
 			a.overlay.Destroy()
 			a.overlay = nil
@@ -196,6 +147,7 @@ func (a *guiApp) createWindow() error {
 	if err := a.setupMainWindow(mw); err != nil {
 		return err
 	}
+	a.initControllers()
 	a.startBackgroundMonitors()
 	if err := a.initTabs(mw); err != nil {
 		return err
@@ -210,6 +162,45 @@ func (a *guiApp) createWindow() error {
 	mw.Show()
 	mw.Run()
 	return nil
+}
+
+// initControllers creates the tab controllers and wires the shared tabContext.
+func (a *guiApp) initControllers() {
+	ctx := &tabContext{
+		mu:     &a.mu,
+		window: a.mainWindow,
+		getSession: func() runner.InputSession {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			return a.inputSession
+		},
+		appendLog:     a.appendLog,
+		overlay:       a.overlay,
+		isStarted:     a.isStarted,
+		isViiperReady: a.isViiperReady,
+		bindActive:    &a.bindingActive,
+	}
+
+	a.clicker = newClickerTabController(ctx)
+	a.autopot = newAutopotTabController(ctx)
+	a.timer = newTimerKeyTabController(ctx)
+	a.keyChain = newKeyChainTabController(ctx)
+
+	// Wire unsetBinding after all controllers exist so it queries each in order.
+	ctx.unsetBinding = func(vk int32) {
+		if a.clicker.unsetBinding(vk) {
+			return
+		}
+		if a.timer.unsetBinding(vk) {
+			return
+		}
+		if a.autopot.unsetBinding(vk) {
+			return
+		}
+		if a.keyChain.unsetBinding(vk) {
+			return
+		}
+	}
 }
 
 // initMainWindow creates the main window and the HP/SP overlay.
@@ -300,8 +291,7 @@ func (a *guiApp) startBackgroundMonitors() {
 	})
 }
 
-// initTabs creates the Clicker, AutoPot, and KeyChain tab pages and wires
-// tab-change and deactivating handlers for threshold blur.
+// initTabs creates the Clicker, AutoPot, and KeyChain tab pages via controllers.
 func (a *guiApp) initTabs(mw *walk.MainWindow) error {
 	tabs, err := walk.NewTabWidget(mw)
 	if err != nil {
@@ -312,9 +302,11 @@ func (a *guiApp) initTabs(mw *walk.MainWindow) error {
 		title string
 		build func(*walk.TabPage) error
 	}{
-		{"Clicker", a.buildClickerTab},
-		{"AutoPot", a.buildAutoPotTab},
-		{"KeyChain", a.buildKeyChainTab},
+		{"Clicker", func(page *walk.TabPage) error {
+			return a.clicker.build(page, a.timer)
+		}},
+		{"AutoPot", a.autopot.build},
+		{"KeyChain", a.keyChain.build},
 	}
 
 	for _, td := range tabDefs {
@@ -333,8 +325,12 @@ func (a *guiApp) initTabs(mw *walk.MainWindow) error {
 		}
 	}
 
-	tabs.CurrentIndexChanged().Attach(a.finishThresholdInput)
-	mw.Deactivating().Attach(a.finishThresholdInput)
+	tabs.CurrentIndexChanged().Attach(func() {
+		a.autopot.finishThresholdInput()
+	})
+	mw.Deactivating().Attach(func() {
+		a.autopot.finishThresholdInput()
+	})
 	return nil
 }
 
@@ -359,7 +355,7 @@ func (a *guiApp) initLogArea(mw *walk.MainWindow) error {
 	if err := a.logList.SetModel(a.logItems); err != nil {
 		return err
 	}
-	a.wireThresholdBlurOnClick(mw)
+	a.autopot.wireThresholdBlurOnClick(mw, a.logList)
 	return nil
 }
 
@@ -381,21 +377,15 @@ func (a *guiApp) setInitialState() {
 }
 
 // isViiperReady reports whether VIIPER is running with an active session.
-// This is the minimum requirement for key binding and tools operation.
 func (a *guiApp) isViiperReady() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.inputSession != nil
 }
 
-// maxLogItems is the maximum number of log entries kept in memory to
-// prevent unbounded memory growth during long sessions.
+// maxLogItems is the maximum number of log entries kept in memory.
 const maxLogItems = 500
 
-// setupLogLimit attaches a timer that trims the log items slice on the
-// GUI thread every 30 seconds, ensuring old entries are dropped when the
-// log exceeds maxLogItems. This prevents the in-memory log from growing
-// unboundedly over hours of use.
 func (a *guiApp) setupLogLimit() error {
 	t := time.NewTicker(30 * time.Second)
 	go func() {
@@ -424,17 +414,13 @@ func (a *guiApp) setupLogLimit() error {
 
 func (a *guiApp) appendLog(line string) {
 	stamped := fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), line)
-
-	// Write to persistent log file (best-effort — file may be missing).
 	if a.logFile != nil {
 		_, _ = a.logFile.WriteString(stamped + "\n")
 	}
-
 	if a.logList == nil {
 		return
 	}
 	a.logItems = append(a.logItems, stamped)
-	// UI update errors are not critical; log display may fail but log entry is recorded
 	_ = a.logList.SetModel(a.logItems)
 	if len(a.logItems) > 0 {
 		_ = a.logList.SetCurrentIndex(len(a.logItems) - 1)
@@ -442,34 +428,36 @@ func (a *guiApp) appendLog(line string) {
 }
 
 func (a *guiApp) isStarted() bool {
-	// Fast path: startup in flight — no mutex needed (atomic load).
 	if a.starting.Load() != 0 {
 		return true
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.runner != nil && a.runner.Running() {
+	if a.clicker != nil && a.clicker.runner != nil && a.clicker.runner.Running() {
 		return true
 	}
-	if a.autopotRunner != nil && a.autopotRunner.Running() {
+	if a.autopot != nil && a.autopot.runner != nil && a.autopot.runner.Running() {
 		return true
 	}
 	return false
 }
 
-// setConfigEnabled enables or disables all tab configuration (clicker slots,
-// autopot, timer keys, keychain). Called when VIIPER state changes — config
-// is enabled when VIIPER is running, disabled when VIIPER is down.
+// setConfigEnabled enables or disables all tab configuration.
 func (a *guiApp) setConfigEnabled(enabled bool) {
-	a.setClickerConfigEnabled(enabled)
-	a.setAutoPotConfigEnabled(enabled)
-	a.setTimerKeyConfigEnabled(enabled)
-	a.setKeyChainConfigEnabled(enabled)
+	if a.clicker != nil {
+		a.clicker.setEnabled(enabled)
+	}
+	if a.autopot != nil {
+		a.autopot.setEnabled(enabled)
+	}
+	if a.timer != nil {
+		a.timer.setEnabled(enabled)
+	}
+	if a.keyChain != nil {
+		a.keyChain.setEnabled(enabled)
+	}
 }
 
-// setToolsStarted updates the TOOLS badge and Start/Stop button states.
-// Does NOT touch config enable/disable — that's managed by VIIPER state.
-// MUST be called on the GUI thread.
 func (a *guiApp) setToolsStarted(started bool) {
 	a.startBtn.SetEnabled(!started)
 	a.stopBtn.SetEnabled(started)
@@ -484,9 +472,6 @@ func (a *guiApp) setToolsStarted(started bool) {
 // VIIPER lifecycle
 // ---------------------------------------------------------------------------
 
-// onStartViiper starts the VIIPER server and opens an input session. Called
-// from the VIIPER Start button. Runs the blocking startup on a background
-// goroutine so the GUI stays responsive.
 func (a *guiApp) onStartViiper() {
 	a.viiperStartBtn.SetEnabled(false)
 	a.appendLog("Starting VIIPER server...")
@@ -505,7 +490,7 @@ func (a *guiApp) onStartViiper() {
 		if err != nil {
 			a.mainWindow.Synchronize(func() {
 				a.appendLog(fmt.Sprintf("VIIPER start failed: %v", err))
-				a.viiperStartBtn.SetEnabled(true) // retry
+				a.viiperStartBtn.SetEnabled(true)
 			})
 			return
 		}
@@ -516,13 +501,12 @@ func (a *guiApp) onStartViiper() {
 			stopViiperServerIfStarted()
 			a.mainWindow.Synchronize(func() {
 				a.appendLog(fmt.Sprintf("VIIPER session failed: %v", err))
-				a.viiperStartBtn.SetEnabled(true) // retry
+				a.viiperStartBtn.SetEnabled(true)
 			})
 			return
 		}
 
 		a.mu.Lock()
-		// Close any stale session before replacing it.
 		if a.inputSession != nil {
 			a.inputSession.Close()
 		}
@@ -532,11 +516,10 @@ func (a *guiApp) onStartViiper() {
 		a.mainWindow.Synchronize(func() {
 			a.viiperBadge.SetStatus(viiperActive)
 			a.appendLog("VIIPER server ready")
-			// VIIPER is running — enable config and Tools Start button.
 			a.setConfigEnabled(true)
 			a.startBtn.SetEnabled(true)
 			a.stopBtn.SetEnabled(false)
-			a.viiperStartBtn.SetEnabled(false) // already running
+			a.viiperStartBtn.SetEnabled(false)
 		})
 	}()
 }
@@ -545,10 +528,6 @@ func (a *guiApp) onStartViiper() {
 // Tools lifecycle
 // ---------------------------------------------------------------------------
 
-// onStart is the Tools Start button click handler. It assumes VIIPER is
-// already running (inputSession is non-nil) and starts all runners.
-// The blocking portion runs on a background goroutine so the GUI stays
-// responsive during session wiring.
 func (a *guiApp) onStart() {
 	a.mu.Lock()
 	if a.inputSession == nil {
@@ -556,7 +535,7 @@ func (a *guiApp) onStart() {
 		a.appendLog("Cannot start tools — VIIPER is not running. Start VIIPER first.")
 		return
 	}
-	if (a.runner != nil && a.runner.Running()) || (a.autopotRunner != nil && a.autopotRunner.Running()) {
+	if a.isStarted() {
 		a.mu.Unlock()
 		return
 	}
@@ -566,7 +545,6 @@ func (a *guiApp) onStart() {
 		walk.MsgBox(a.mainWindow, "Setup required", msg, walk.MsgBoxIconWarning)
 		return
 	}
-	// Cancel any previous startup goroutine that is still running.
 	if a.startupCancel != nil {
 		a.startupCancel()
 		a.startupCancel = nil
@@ -576,15 +554,12 @@ func (a *guiApp) onStart() {
 	a.starting.Store(1)
 	a.mu.Unlock()
 
-	// Immediate UI feedback.
 	a.setToolsStarted(true)
 	a.appendLog("Starting tools...")
 
 	go a.startInBackground(ctx)
 }
 
-// startInBackground runs the long-running tools startup work off the GUI
-// thread. VIIPER is already running — this only wires up the runners.
 func (a *guiApp) startInBackground(ctx context.Context) {
 	logFn := func(s string) {
 		a.mainWindow.Synchronize(func() { a.appendLog(s) })
@@ -597,13 +572,12 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 	}
 	finishFailure := func() {
 		if ctx.Err() != nil {
-			return // superseded by a newer Start
+			return
 		}
 		a.starting.Swap(0)
 		a.mainWindow.Synchronize(func() { a.setToolsStarted(false) })
 	}
 
-	// Use the existing VIIPER session (already set up by onStartViiper).
 	a.mu.Lock()
 	session := a.inputSession
 	a.mu.Unlock()
@@ -618,11 +592,10 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 	session.Reset()
 
 	if !isStillStarting() {
-		session.Reset()
 		return
 	}
 
-	cfg := a.clickerConfig()
+	cfg := a.clicker.config()
 	cfg.Session = session
 	cfg.Log = logFn
 
@@ -639,14 +612,14 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 	}
 
 	a.mu.Lock()
-	a.runner = r
+	a.clicker.runner = r
 	a.mu.Unlock()
 	if !isStillStarting() {
 		r.Stop()
 		r.Wait()
 		session.Close()
 		a.mu.Lock()
-		a.runner = nil
+		a.clicker.runner = nil
 		a.inputSession = nil
 		a.mu.Unlock()
 		stopViiperServerIfStarted()
@@ -655,34 +628,29 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 
 	a.startRemainingRunners(session, logFn)
 
-	// atomically read+clear the starting flag so onStop can't race
-	// between the two operations.
 	wasStarting := a.starting.Swap(0)
 	if wasStarting == 0 {
-		return // onStop already cleared starting before we could finish
+		return
 	}
 
 	a.mainWindow.Synchronize(func() { a.setToolsStarted(true) })
 	logFn("Tools started")
 }
 
-// startRemainingRunners starts AutoPot, TimerKey, and KeyChain runners.
 func (a *guiApp) startRemainingRunners(session runner.InputSession, logFn func(string)) {
-	autopotCfg := a.autopotWanted()
+	autopotCfg := a.autopot.wanted()
 	autopotCfg.Core.Session = session
 	autopotCfg.Core.Log = logFn
-	timerCfg := a.timerKeyWanted()
+	timerCfg := a.timer.wanted()
 	timerCfg.Session = session
 	timerCfg.Log = logFn
-
-	keyChainCfg := a.keyChainConfig()
+	keyChainCfg := a.keyChain.config()
 	keyChainCfg.Session = session
 	keyChainCfg.Log = logFn
 
-	a.prevAutoPotAddressMode = autopotCfg.IsAddressMode()
-	a.startAutoPotRunner(autopotCfg, logFn)
+	a.autopot.prevAddressMode = autopotCfg.IsAddressMode()
+	a.autopot.startRunner(autopotCfg, logFn)
 
-	// If no autopot keys are bound, show "AutoPot off" instead of a stale mode.
 	if !autopotCfg.Core.HPEnabled && !autopotCfg.Core.SPEnabled {
 		a.mainWindow.Synchronize(func() {
 			if a.overlay != nil {
@@ -691,27 +659,17 @@ func (a *guiApp) startRemainingRunners(session runner.InputSession, logFn func(s
 		})
 	}
 
-	a.startTimerKeyRunner(timerCfg, logFn)
-	a.startKeyChainRunner(keyChainCfg, logFn)
+	a.timer.startRunner(timerCfg, logFn)
+	a.keyChain.startRunner(keyChainCfg, logFn)
 }
 
-// onStop stops all tools but keeps the VIIPER session alive so the next
-// Start reuses it. The blocking Stop+Wait runs on a background goroutine.
-// VIIPER server is NOT stopped — it stays running for reuse.
 func (a *guiApp) onStop() {
 	a.mu.Lock()
-	r := a.runner
-	ap := a.autopotRunner
-	tk := a.timerKeyRunner
-	kc := a.keyChainRunner
+	clicker := a.clicker
+	autopot := a.autopot
+	timer := a.timer
+	keyChain := a.keyChain
 	session := a.inputSession
-	a.runner = nil
-	a.autopotRunner = nil
-	a.timerKeyRunner = nil
-	a.keyChainRunner = nil
-	// Keep a.inputSession alive so the next Start reuses it.
-	// Full cleanup (Close) happens in shutdown().
-	// Cancel any in-flight startup goroutine.
 	a.starting.Store(0)
 	if a.startupCancel != nil {
 		a.startupCancel()
@@ -728,26 +686,24 @@ func (a *guiApp) onStop() {
 				_, _ = fmt.Fprintf(os.Stderr, "PANIC in onStop: %v\n%s\n", r, debug.Stack())
 			}
 		}()
-		if r != nil {
-			r.Stop()
-			r.Wait()
+		if clicker != nil && clicker.runner != nil {
+			clicker.runner.Stop()
+			clicker.runner.Wait()
 		}
-		if ap != nil {
-			ap.Stop()
-			ap.Wait()
+		if autopot != nil && autopot.runner != nil {
+			autopot.runner.Stop()
+			autopot.runner.Wait()
 		}
-		if tk != nil {
-			tk.Stop()
-			tk.Wait()
+		if timer != nil && timer.runner != nil {
+			timer.runner.Stop()
+			timer.runner.Wait()
 		}
-		if kc != nil {
-			kc.Stop()
-			kc.Wait()
+		if keyChain != nil && keyChain.runner != nil {
+			keyChain.runner.Stop()
+			keyChain.runner.Wait()
 		}
 		if session != nil {
 			session.Reset()
-			// Keep the session alive; the next Start reuses it.
-			// Full cleanup (Close) happens in shutdown().
 		}
 		a.mainWindow.Synchronize(func() {
 			a.appendLog("Tools stopped — Start to relaunch")
@@ -756,107 +712,4 @@ func (a *guiApp) onStop() {
 			}
 		})
 	}()
-}
-
-func (a *guiApp) autopotWanted() runner.AutoPotConfig {
-	cfg := a.autopotConfig()
-	cfg.Core.HPEnabled = cfg.Core.HPEnabled && cfg.Core.HPKeyVK != 0
-	cfg.Core.SPEnabled = cfg.Core.SPEnabled && cfg.Core.SPKeyVK != 0
-	return cfg
-}
-
-func (a *guiApp) startAutoPotRunner(cfg runner.AutoPotConfig, log func(string)) {
-	take, store := makeLifecycleSlot[*runner.AutoPotRunner](&a.mu, &a.autopotRunner)
-	startLifecycle(
-		take, store,
-		"AutoPot",
-		log,
-		func() runner.InputSession {
-			a.mu.Lock()
-			defer a.mu.Unlock()
-			return a.inputSession
-		},
-		func() bool { return cfg.Core.HPEnabled || cfg.Core.SPEnabled },
-		func(sess runner.InputSession) *runner.AutoPotRunner {
-			cfg.Core.Session = sess
-			cfg.Core.Log = log
-			return runner.NewAutoPot(cfg)
-		},
-	)
-}
-
-// guiLog wraps a function call in mainWindow.Synchronize so it always
-// marshals to the GUI thread. Use for callbacks that are invoked from
-// background goroutines but call Walk UI operations (e.g. appendLog).
-func (a *guiApp) guiLog(fn func(string)) func(string) {
-	return func(s string) {
-		a.mainWindow.Synchronize(func() { fn(s) })
-	}
-}
-
-// unsetKeyBinding searches every key storage location in the app for vk.
-// If found, it clears the old binding (UI label + state), syncs the
-// affected runner, and logs the change. Call this from any onPress
-// handler BEFORE assigning the key to the new slot so a key can only
-// ever be bound in one place at a time.
-func (a *guiApp) unsetKeyBinding(vk int32) {
-	// Check clicker slots (each slot can have multiple VKs).
-	for i := 0; i < runner.ClickerSlotCount; i++ {
-		for j, existing := range a.clickerTriggerVKs[i] {
-			if existing == vk {
-				a.clickerTriggerVKs[i] = append(a.clickerTriggerVKs[i][:j], a.clickerTriggerVKs[i][j+1:]...)
-				a.updateClickerKeyLabel(i)
-				a.appendLog(fmt.Sprintf("Key %s removed from %s (reassigned)", runner.KeyName(vk), clickerSlotTitles[i]))
-				a.syncRunnerSettings()
-				return
-			}
-		}
-	}
-	// Check timer keys.
-	for i := 0; i < a.timerVisibleCount; i++ {
-		if a.timerKeyVKs[i] == vk {
-			a.timerKeyVKs[i] = 0
-			a.timerSlots[i].keyLabel.SetText("none")
-			a.appendLog(fmt.Sprintf("Key %s removed from Timer %d (reassigned)", runner.KeyName(vk), i+1))
-			a.syncTimerKeySettings()
-			return
-		}
-	}
-	// Check HP potion.
-	if a.hpKeyVK == vk {
-		a.hpKeyVK = 0
-		a.hpKeyLabel.SetText("none")
-		a.appendLog(fmt.Sprintf("Key %s removed from HP potion (reassigned)", runner.KeyName(vk)))
-		a.syncAutoPotSettings()
-		return
-	}
-	// Check SP potion.
-	if a.spKeyVK == vk {
-		a.spKeyVK = 0
-		a.spKeyLabel.SetText("none")
-		a.appendLog(fmt.Sprintf("Key %s removed from SP potion (reassigned)", runner.KeyName(vk)))
-		a.syncAutoPotSettings()
-		return
-	}
-	// Check keychain slots.
-	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		if a.keyChainKeyVKs[i] == vk {
-			a.keyChainKeyVKs[i] = 0
-			a.setKeyChainKeyText(i, 0)
-			a.appendLog(fmt.Sprintf("Key %s removed from Chain slot %d (reassigned)", runner.KeyName(vk), i+1))
-			a.syncKeyChainSettings()
-			return
-		}
-	}
-}
-
-func (a *guiApp) syncRunnerSettings() {
-	cfg := a.clickerConfig()
-	a.mu.Lock()
-	r := a.runner
-	a.mu.Unlock()
-
-	if r != nil && r.Running() {
-		r.UpdateSettings(cfg.Slots)
-	}
 }
