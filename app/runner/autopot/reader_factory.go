@@ -2,7 +2,6 @@ package autopot
 
 import (
 	"belarus-champ-tools/runner/autopot/statusui"
-	win "belarus-champ-tools/runner/platform/windows"
 )
 
 // ReaderFactory constructs BarReader instances based on the provided config.
@@ -91,7 +90,7 @@ func (f *ReaderFactory) tryBuildOCRReader(cfg AutoPotConfig) (*statusUIReader, b
 }
 
 func (f *ReaderFactory) buildAddressReader(cfg AutoPotConfig) (*addressReader, error) {
-	baseAddr, err := win.GetProcessBaseAddr(cfg.Address.ProcessPID)
+	baseAddr, err := GetProcessBaseAddr(cfg.Address.ProcessPID)
 	if err != nil {
 		return nil, err
 	}
