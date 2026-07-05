@@ -6,7 +6,6 @@ import (
 	"image"
 	"time"
 
-	win "belarus-champ-tools/runner/platform/windows"
 	"belarus-champ-tools/runner/autopot/statusui"
 )
 
@@ -74,7 +73,7 @@ func (r *pixelBarReader) ReadValues(ctx context.Context) BarReadResult {
 		return BarReadResult{Status: StatusInvalid, Err: ctx.Err()}
 	}
 
-	sw, sh := win.ScreenSize()
+	sw, sh := ScreenSize()
 	var rct Rect
 	if r.lastScreenRect.W > 0 && r.lostFrames < 3 {
 		// Centre the search ROI on the last known bar position so
@@ -93,8 +92,8 @@ func (r *pixelBarReader) ReadValues(ctx context.Context) BarReadResult {
 		rct = PlayerBarSearchROI(sw, sh)
 	}
 
-	roi := win.ScreenROI{X: rct.X, Y: rct.Y, W: rct.W, H: rct.H}
-	img, err := win.CaptureScreenRegion(roi)
+	roi := rct
+	img, err := CaptureScreenRegion(rct)
 	if err != nil {
 		r.debugf("pixel: capture failed, roi %d,%d %dx%d: %v", roi.X, roi.Y, roi.W, roi.H, err)
 		return BarReadResult{Status: StatusInvalid, Err: err}
@@ -256,7 +255,7 @@ func (r *statusUIReader) ReadValues(ctx context.Context) BarReadResult {
 // avoid GUI spam on repeated retries. Screen capture failures
 // are logged once then suppressed until a successful capture.
 func (r *statusUIReader) validate() error {
-	screen, err := win.CaptureFullScreen()
+	screen, err := CaptureFullScreen()
 	if err != nil {
 		if r.wasPanelFound && r.log != nil {
 			r.log(fmt.Sprintf("autopot statusui: screen capture failed: %v", err))
@@ -293,7 +292,7 @@ func (r *statusUIReader) captureAndParse() (statusui.ParsedStatus, error) {
 	if strip.Empty() {
 		return statusui.ParsedStatus{}, fmt.Errorf("strip rect not yet validated")
 	}
-	img, err := win.CaptureScreenRegion(win.ScreenROI{
+	img, err := CaptureScreenRegion(Rect{
 		X: strip.Min.X, Y: strip.Min.Y,
 		W: strip.Dx(), H: strip.Dy(),
 	})
