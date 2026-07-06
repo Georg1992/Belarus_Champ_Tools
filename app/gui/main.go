@@ -32,83 +32,37 @@ type guiApp struct {
 	logList    *walk.ListBox
 	logItems   []string
 
-	// Clicker tab
-	clickerSlots           [runner.ClickerSlotCount]clickerSlotWidgets
-	clickerTriggerVKs      [runner.ClickerSlotCount][]int32
-	clickerBindingSlot     int
-	clickerLastLoggedDelay [runner.ClickerSlotCount]int
+	clicker  clickerController
+	autopot  autopotController
+	keychain keychainController
 
 	// Control panel
-	startBtn      *walk.PushButton  // Tools Start
-	stopBtn       *walk.PushButton  // Tools Stop
+	startBtn       *walk.PushButton // Tools Start
+	stopBtn        *walk.PushButton // Tools Stop
 	viiperStartBtn *walk.PushButton // VIIPER Start
-	toolsBadge    *toolsBadge
-	viiperBadge   *viiperBadge
-
-	// Timer keys (clicker tab)
-	timerSlots        [runner.TimerKeySlotCount]timerSlotWidgets
-	timerKeyVKs       [runner.TimerKeySlotCount]int32
-	timerVisibleCount int
-	timerAddBtn       *walk.PushButton
-	timerBindingSlot  int
-
-	// AutoPot tab
-	hpEnabledCB     *walk.CheckBox
-	spEnabledCB     *walk.CheckBox
-	hpThresholdEdit *walk.LineEdit
-	spThresholdEdit *walk.LineEdit
-	hpKeyLabel      *walk.Label
-	spKeyLabel      *walk.Label
-	hpBindBtn       *walk.PushButton
-	hpClearBtn      *walk.PushButton
-	spBindBtn       *walk.PushButton
-	spClearBtn      *walk.PushButton
-	// AutoPot mode & memory reading
-	autopotVisualRB   *walk.RadioButton // Visual mode (pixel/OCR)
-	autopotAddressRB  *walk.RadioButton // Address-reading mode
-	windowCB          *walk.ComboBox     // game window selector
-	windowRefreshBtn  *walk.PushButton   // refresh window list
-	profileCB         *walk.ComboBox     // server memory profile
-	processPID        uint32             // selected game process PID; 0 = none
-	windowList        []windowInfo       // cached window list for PID lookup
-
-	// KeyChain tab
-	keyChainSlots       [runner.KeyChainSlotCount]keyChainSlotWidgets
-	keyChainKeyVKs      [runner.KeyChainSlotCount]int32
-	keyChainClearBtn    *walk.PushButton
-	keyChainBindingSlot int
+	toolsBadge     *toolsBadge
+	viiperBadge    *viiperBadge
 
 	mu            sync.Mutex
 	shutdownOnce  sync.Once
 	bindingActive bool
-	logFile      *os.File
-	// starting is 1 while onStart's background goroutine is wiring
-	// up runners. It is set on the GUI thread inside onStart and cleared
-	// by either the goroutine on completion (success or fail) or by
-	// onStop. While it is 1, isStarted reports true so sync*Settings
-	// don't trigger secondary runner startups that would race with the
-	// main one. The startup goroutine also re-checks this flag after
-	// every slot publish so a Stop click during startup cancels any
-	// not-yet-published work.
-	starting       atomic.Int32
-	startupCancel  context.CancelFunc // cancels in-flight startInBackground on Stop
-	runner         *runner.Runner
-	autopotRunner  *runner.AutoPotRunner
+	logFile       *os.File
+	starting      atomic.Int32
+	startupCancel context.CancelFunc
+	runner        *runner.Runner
+	autopotRunner *runner.AutoPotRunner
 	timerKeyRunner *runner.TimerKeyRunner
-	keyChainRunner *runner.KeyChainRunner
+	keychainRunner *runner.KeyChainRunner
 	inputSession   *runner.ViiperSession
-	hpKeyVK        int32
-	spKeyVK        int32
-	hpThreshold    int
-	spThreshold    int
-	overlay              *statusOverlay
-	viiperMonitor        *viiperMonitor
-	isRefreshingWindows    bool // guard: suppress key-clearing during window list refresh
-	prevAutoPotAddressMode bool // tracks previous AddressMode to detect changes while running
+	overlay        *statusOverlay
+	viiperMonitor  *viiperMonitor
 }
 
 func main() {
-	app := &guiApp{timerBindingSlot: -1, keyChainBindingSlot: -1, clickerBindingSlot: -1, bindingActive: false}
+	app := &guiApp{bindingActive: false}
+	app.clicker.timerBindingSlot = -1
+	app.keychain.bindingSlot = -1
+	app.clicker.bindingSlot = -1
 	defer app.shutdown()
 
 	// Open a persistent log file in a logs/ directory next to the
@@ -136,12 +90,12 @@ func (a *guiApp) shutdown() {
 		r := a.runner
 		ap := a.autopotRunner
 		tk := a.timerKeyRunner
-		kc := a.keyChainRunner
+		kc := a.keychainRunner
 		session := a.inputSession
 		a.runner = nil
 		a.autopotRunner = nil
 		a.timerKeyRunner = nil
-		a.keyChainRunner = nil
+		a.keychainRunner = nil
 		a.inputSession = nil
 		if a.startupCancel != nil {
 			a.startupCancel()
@@ -668,18 +622,18 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 
 // startRemainingRunners starts AutoPot, TimerKey, and KeyChain runners.
 func (a *guiApp) startRemainingRunners(session runner.InputSession, logFn func(string)) {
-	autopotCfg := a.autopotWanted()
+	autopotCfg := a.autopot.wanted(a.autopotModeFn(), a.autopotStatusFn(), a.appendLog)
 	autopotCfg.Core.Session = session
 	autopotCfg.Core.Log = logFn
-	timerCfg := a.timerKeyWanted()
+	timerCfg := a.clicker.timerWanted(a.appendLog)
 	timerCfg.Session = session
 	timerCfg.Log = logFn
 
-	keyChainCfg := a.keyChainConfig()
+	keyChainCfg := a.keychain.config(a.appendLog)
 	keyChainCfg.Session = session
 	keyChainCfg.Log = logFn
 
-	a.prevAutoPotAddressMode = autopotCfg.IsAddressMode()
+	a.autopot.prevAutoPotAddressMode = autopotCfg.IsAddressMode()
 	a.startAutoPotRunner(autopotCfg, logFn)
 
 	// If no autopot keys are bound, show "AutoPot off" instead of a stale mode.
@@ -703,12 +657,12 @@ func (a *guiApp) onStop() {
 	r := a.runner
 	ap := a.autopotRunner
 	tk := a.timerKeyRunner
-	kc := a.keyChainRunner
+	kc := a.keychainRunner
 	session := a.inputSession
 	a.runner = nil
 	a.autopotRunner = nil
 	a.timerKeyRunner = nil
-	a.keyChainRunner = nil
+	a.keychainRunner = nil
 	// Keep a.inputSession alive so the next Start reuses it.
 	// Full cleanup (Close) happens in shutdown().
 	// Cancel any in-flight startup goroutine.
@@ -758,13 +712,6 @@ func (a *guiApp) onStop() {
 	}()
 }
 
-func (a *guiApp) autopotWanted() runner.AutoPotConfig {
-	cfg := a.autopotConfig()
-	cfg.Core.HPEnabled = cfg.Core.HPEnabled && cfg.Core.HPKeyVK != 0
-	cfg.Core.SPEnabled = cfg.Core.SPEnabled && cfg.Core.SPKeyVK != 0
-	return cfg
-}
-
 func (a *guiApp) startAutoPotRunner(cfg runner.AutoPotConfig, log func(string)) {
 	take, store := makeLifecycleSlot[*runner.AutoPotRunner](&a.mu, &a.autopotRunner)
 	startLifecycle(
@@ -802,9 +749,9 @@ func (a *guiApp) guiLog(fn func(string)) func(string) {
 func (a *guiApp) unsetKeyBinding(vk int32) {
 	// Check clicker slots (each slot can have multiple VKs).
 	for i := 0; i < runner.ClickerSlotCount; i++ {
-		for j, existing := range a.clickerTriggerVKs[i] {
+		for j, existing := range a.clicker.triggerVKs[i] {
 			if existing == vk {
-				a.clickerTriggerVKs[i] = append(a.clickerTriggerVKs[i][:j], a.clickerTriggerVKs[i][j+1:]...)
+				a.clicker.triggerVKs[i] = append(a.clicker.triggerVKs[i][:j], a.clicker.triggerVKs[i][j+1:]...)
 				a.updateClickerKeyLabel(i)
 				a.appendLog(fmt.Sprintf("Key %s removed from %s (reassigned)", runner.KeyName(vk), clickerSlotTitles[i]))
 				a.syncRunnerSettings()
@@ -813,36 +760,36 @@ func (a *guiApp) unsetKeyBinding(vk int32) {
 		}
 	}
 	// Check timer keys.
-	for i := 0; i < a.timerVisibleCount; i++ {
-		if a.timerKeyVKs[i] == vk {
-			a.timerKeyVKs[i] = 0
-			a.timerSlots[i].keyLabel.SetText("none")
+	for i := 0; i < a.clicker.timerVisibleCount; i++ {
+		if a.clicker.timerKeyVKs[i] == vk {
+			a.clicker.timerKeyVKs[i] = 0
+			a.clicker.timerSlots[i].keyLabel.SetText("none")
 			a.appendLog(fmt.Sprintf("Key %s removed from Timer %d (reassigned)", runner.KeyName(vk), i+1))
 			a.syncTimerKeySettings()
 			return
 		}
 	}
 	// Check HP potion.
-	if a.hpKeyVK == vk {
-		a.hpKeyVK = 0
-		a.hpKeyLabel.SetText("none")
+	if a.autopot.hpKeyVK == vk {
+		a.autopot.hpKeyVK = 0
+		a.autopot.hpKeyLabel.SetText("none")
 		a.appendLog(fmt.Sprintf("Key %s removed from HP potion (reassigned)", runner.KeyName(vk)))
 		a.syncAutoPotSettings()
 		return
 	}
 	// Check SP potion.
-	if a.spKeyVK == vk {
-		a.spKeyVK = 0
-		a.spKeyLabel.SetText("none")
+	if a.autopot.spKeyVK == vk {
+		a.autopot.spKeyVK = 0
+		a.autopot.spKeyLabel.SetText("none")
 		a.appendLog(fmt.Sprintf("Key %s removed from SP potion (reassigned)", runner.KeyName(vk)))
 		a.syncAutoPotSettings()
 		return
 	}
 	// Check keychain slots.
 	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		if a.keyChainKeyVKs[i] == vk {
-			a.keyChainKeyVKs[i] = 0
-			a.setKeyChainKeyText(i, 0)
+		if a.keychain.keyVKs[i] == vk {
+			a.keychain.keyVKs[i] = 0
+			a.keychain.setKeyText(i, 0)
 			a.appendLog(fmt.Sprintf("Key %s removed from Chain slot %d (reassigned)", runner.KeyName(vk), i+1))
 			a.syncKeyChainSettings()
 			return
@@ -851,7 +798,7 @@ func (a *guiApp) unsetKeyBinding(vk int32) {
 }
 
 func (a *guiApp) syncRunnerSettings() {
-	cfg := a.clickerConfig()
+	cfg := a.clicker.config(a.appendLog)
 	a.mu.Lock()
 	r := a.runner
 	a.mu.Unlock()

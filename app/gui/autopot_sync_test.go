@@ -20,13 +20,15 @@ func (m *mockAutoPotRunner) UpdateSettings(cfg runner.AutoPotConfig) {
 }
 
 func TestCommittedThresholdFields(t *testing.T) {
-	app := &guiApp{hpThreshold: 50, spThreshold: 30}
-	if app.hpThreshold != 50 || app.spThreshold != 30 {
-		t.Fatalf("thresholds=%d/%d want 50/30", app.hpThreshold, app.spThreshold)
+	app := &guiApp{}
+	app.autopot.hpThreshold = 50
+	app.autopot.spThreshold = 30
+	if app.autopot.hpThreshold != 50 || app.autopot.spThreshold != 30 {
+		t.Fatalf("thresholds=%d/%d want 50/30", app.autopot.hpThreshold, app.autopot.spThreshold)
 	}
-	app.hpThreshold = 60
-	if app.hpThreshold != 60 || app.spThreshold != 30 {
-		t.Fatalf("thresholds=%d/%d want 60/30", app.hpThreshold, app.spThreshold)
+	app.autopot.hpThreshold = 60
+	if app.autopot.hpThreshold != 60 || app.autopot.spThreshold != 30 {
+		t.Fatalf("thresholds=%d/%d want 60/30", app.autopot.hpThreshold, app.autopot.spThreshold)
 	}
 }
 

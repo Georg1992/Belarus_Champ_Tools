@@ -16,6 +16,30 @@ type keyChainSlotWidgets struct {
 	delayEdit *walk.NumberEdit
 }
 
+type keychainController struct {
+	slots       [runner.KeyChainSlotCount]keyChainSlotWidgets
+	keyVKs      [runner.KeyChainSlotCount]int32
+	clearBtn    *walk.PushButton
+	bindingSlot int
+}
+
+func (c *keychainController) setKeyText(index int, vk int32) {
+	text := "None"
+	if vk != 0 {
+		text = runner.KeyName(vk)
+	}
+	c.slots[index].keyEdit.SetText(text)
+}
+
+func (c *keychainController) config(logFn func(string)) runner.KeyChainConfig {
+	cfg := runner.KeyChainConfig{Log: logFn}
+	for i := 0; i < runner.KeyChainSlotCount; i++ {
+		cfg.Keys[i] = c.keyVKs[i]
+		cfg.DelaysMs[i] = int(c.slots[i].delayEdit.Value())
+	}
+	return cfg
+}
+
 func (a *guiApp) buildKeyChainTab(page *walk.TabPage) error {
 	layout := walk.NewVBoxLayout()
 	layout.SetMargins(walk.Margins{HNear: 4, VNear: 4, HFar: 4, VFar: 4})
@@ -85,14 +109,14 @@ func (a *guiApp) buildKeyChainGroup(page *walk.TabPage) error {
 	}
 	applyKeyChainSurface(btnRow)
 
-	a.keyChainClearBtn, err = walk.NewPushButton(btnRow)
+	a.keychain.clearBtn, err = walk.NewPushButton(btnRow)
 	if err != nil {
 		return err
 	}
-	if err := a.keyChainClearBtn.SetText("Clear"); err != nil {
+	if err := a.keychain.clearBtn.SetText("Clear"); err != nil {
 		return err
 	}
-	a.keyChainClearBtn.Clicked().Attach(a.clearKeyChain)
+	a.keychain.clearBtn.Clicked().Attach(a.clearKeyChain)
 	return nil
 }
 
@@ -187,7 +211,7 @@ func (a *guiApp) buildKeyChainStep(parent walk.Container, index, height int) err
 	}
 	applyKeyChainSurface(step)
 
-	w := &a.keyChainSlots[index]
+	w := &a.keychain.slots[index]
 	w.keyEdit, err = walk.NewLineEdit(step)
 	if err != nil {
 		return err
@@ -198,7 +222,7 @@ func (a *guiApp) buildKeyChainStep(parent walk.Container, index, height int) err
 	if err := w.keyEdit.SetMinMaxSize(walk.Size{Width: keyChainKeyFieldWidth, Height: keyChainFieldHeight}, walk.Size{Width: keyChainKeyFieldWidth, Height: keyChainFieldHeight}); err != nil {
 		return err
 	}
-	a.setKeyChainKeyText(index, 0)
+	a.keychain.setKeyText(index, 0)
 	slot := index
 	w.keyEdit.MouseDown().Attach(func(_ int, _ int, button walk.MouseButton) {
 		if button == walk.LeftButton {
@@ -252,31 +276,14 @@ func (a *guiApp) buildKeyChainStepLink(parent walk.Container, height int) error 
 	)
 }
 
-func (a *guiApp) setKeyChainKeyText(index int, vk int32) {
-	text := "None"
-	if vk != 0 {
-		text = runner.KeyName(vk)
-	}
-	a.keyChainSlots[index].keyEdit.SetText(text)
-}
-
-func (a *guiApp) keyChainConfig() runner.KeyChainConfig {
-	cfg := runner.KeyChainConfig{Log: a.appendLog}
-	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		cfg.Keys[i] = a.keyChainKeyVKs[i]
-		cfg.DelaysMs[i] = int(a.keyChainSlots[i].delayEdit.Value())
-	}
-	return cfg
-}
-
 func (a *guiApp) syncKeyChainSettings() {
 	if !a.isStarted() {
 		return
 	}
 
-	cfg := a.keyChainConfig()
+	cfg :=	a.keychain.config(a.appendLog)
 	a.mu.Lock()
-	kc := a.keyChainRunner
+	kc := a.keychainRunner
 	a.mu.Unlock()
 
 	if !cfg.Active() {
@@ -298,16 +305,16 @@ func (a *guiApp) syncKeyChainSettings() {
 
 func (a *guiApp) setKeyChainConfigEnabled(enabled bool) {
 	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		a.keyChainSlots[i].keyEdit.SetEnabled(enabled)
-		a.keyChainSlots[i].delayEdit.SetEnabled(enabled)
+		a.keychain.slots[i].keyEdit.SetEnabled(enabled)
+		a.keychain.slots[i].delayEdit.SetEnabled(enabled)
 	}
-	if a.keyChainClearBtn != nil {
-		a.keyChainClearBtn.SetEnabled(enabled)
+	if a.keychain.clearBtn != nil {
+		a.keychain.clearBtn.SetEnabled(enabled)
 	}
 }
 
 func (a *guiApp) startKeyChainRunner(cfg runner.KeyChainConfig, log func(string)) {
-	take, store := makeLifecycleSlot[*runner.KeyChainRunner](&a.mu, &a.keyChainRunner)
+	take, store := makeLifecycleSlot[*runner.KeyChainRunner](&a.mu, &a.keychainRunner)
 	startLifecycle(
 		take, store,
 		"KeyChain",
@@ -328,8 +335,8 @@ func (a *guiApp) startKeyChainRunner(cfg runner.KeyChainConfig, log func(string)
 
 func (a *guiApp) stopKeyChainRunner() {
 	a.mu.Lock()
-	kc := a.keyChainRunner
-	a.keyChainRunner = nil
+	kc := a.keychainRunner
+	a.keychainRunner = nil
 	a.mu.Unlock()
 	if kc != nil {
 		// Stop+Wait on a background goroutine to avoid
@@ -349,9 +356,9 @@ func (a *guiApp) stopKeyChainRunner() {
 
 func (a *guiApp) clearKeyChain() {
 	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		a.keyChainKeyVKs[i] = 0
-		a.setKeyChainKeyText(i, 0)
-		a.keyChainSlots[i].delayEdit.SetValue(0)
+		a.keychain.keyVKs[i] = 0
+		a.keychain.setKeyText(i, 0)
+		a.keychain.slots[i].delayEdit.SetValue(0)
 	}
 	a.syncKeyChainSettings()
 	a.appendLog("KeyChain cleared")
@@ -364,17 +371,17 @@ func (a *guiApp) bindKeyChainKey(index int) {
 				return false
 			}
 			a.bindingActive = true
-			a.keyChainBindingSlot = index
-			a.keyChainSlots[index].keyEdit.SetEnabled(false)
+			a.keychain.bindingSlot = index
+			a.keychain.slots[index].keyEdit.SetEnabled(false)
 			return true
 		},
 		fmt.Sprintf("Press a key for chain slot %d (%s timeout)...", index+1, runner.KeyBindTimeout),
-		func() { a.keyChainBindingSlot = -1; a.bindingActive = false },
+		func() { a.keychain.bindingSlot = -1; a.bindingActive = false },
 		func() { a.setKeyChainConfigEnabled(a.isViiperReady()) },
 		func(vk int32) {
 			a.unsetKeyBinding(vk)
-			a.keyChainKeyVKs[index] = vk
-			a.setKeyChainKeyText(index, vk)
+			a.keychain.keyVKs[index] = vk
+			a.keychain.setKeyText(index, vk)
 			a.appendLog(fmt.Sprintf("Chain key %d: %s", index+1, runner.KeyName(vk)))
 			a.syncKeyChainSettings()
 		},
