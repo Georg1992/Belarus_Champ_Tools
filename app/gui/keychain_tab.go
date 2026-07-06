@@ -16,28 +16,7 @@ type keyChainSlotWidgets struct {
 	delayEdit *walk.NumberEdit
 }
 
-// keyChainTabController manages the KeyChain tab state and its runner.
-type keyChainTabController struct {
-	ctx *tabContext
-
-	slots       [runner.KeyChainSlotCount]keyChainSlotWidgets
-	keyVKs      [runner.KeyChainSlotCount]int32
-	clearBtn    *walk.PushButton
-	bindingSlot int
-
-	runner *runner.KeyChainRunner
-}
-
-func newKeyChainTabController(ctx *tabContext) *keyChainTabController {
-	return &keyChainTabController{
-		ctx:         ctx,
-		bindingSlot: -1,
-	}
-}
-
-func (c *keyChainTabController) runnerPtr() **runner.KeyChainRunner { return &c.runner }
-
-func (c *keyChainTabController) build(page *walk.TabPage) error {
+func (a *guiApp) buildKeyChainTab(page *walk.TabPage) error {
 	layout := walk.NewVBoxLayout()
 	layout.SetMargins(walk.Margins{HNear: 4, VNear: 4, HFar: 4, VFar: 4})
 	layout.SetSpacing(10)
@@ -45,7 +24,7 @@ func (c *keyChainTabController) build(page *walk.TabPage) error {
 		return err
 	}
 
-	if err := c.buildGroup(page); err != nil {
+	if err := a.buildKeyChainGroup(page); err != nil {
 		return err
 	}
 
@@ -59,7 +38,9 @@ func (c *keyChainTabController) build(page *walk.TabPage) error {
 	return nil
 }
 
-func (c *keyChainTabController) buildGroup(page *walk.TabPage) error {
+// buildKeyChainGroup creates the Switch 1 group box with labels, step columns,
+// step links, and the Clear button.
+func (a *guiApp) buildKeyChainGroup(page *walk.TabPage) error {
 	chainGB, err := walk.NewGroupBox(page)
 	if err != nil {
 		return err
@@ -73,6 +54,7 @@ func (c *keyChainTabController) buildGroup(page *walk.TabPage) error {
 		return err
 	}
 
+	// Main row: labels | steps
 	chainRow, err := walk.NewComposite(chainGB)
 	if err != nil {
 		return err
@@ -84,13 +66,14 @@ func (c *keyChainTabController) buildGroup(page *walk.TabPage) error {
 	}
 	applyKeyChainSurface(chainRow)
 
-	if err := c.buildLabels(chainRow); err != nil {
+	if err := a.buildKeyChainLabels(chainRow); err != nil {
 		return err
 	}
-	if err := c.buildSteps(chainRow); err != nil {
+	if err := a.buildKeyChainSteps(chainRow); err != nil {
 		return err
 	}
 
+	// Clear button row
 	btnRow, err := walk.NewComposite(chainGB)
 	if err != nil {
 		return err
@@ -102,18 +85,19 @@ func (c *keyChainTabController) buildGroup(page *walk.TabPage) error {
 	}
 	applyKeyChainSurface(btnRow)
 
-	c.clearBtn, err = walk.NewPushButton(btnRow)
+	a.keyChainClearBtn, err = walk.NewPushButton(btnRow)
 	if err != nil {
 		return err
 	}
-	if err := c.clearBtn.SetText("Clear"); err != nil {
+	if err := a.keyChainClearBtn.SetText("Clear"); err != nil {
 		return err
 	}
-	c.clearBtn.Clicked().Attach(c.clearAll)
+	a.keyChainClearBtn.Clicked().Attach(a.clearKeyChain)
 	return nil
 }
 
-func (c *keyChainTabController) buildLabels(parent walk.Container) error {
+// buildKeyChainLabels creates the Keys/Delay(ms) label column.
+func (a *guiApp) buildKeyChainLabels(parent walk.Container) error {
 	labelsCol, err := walk.NewComposite(parent)
 	if err != nil {
 		return err
@@ -161,7 +145,8 @@ func (c *keyChainTabController) buildLabels(parent walk.Container) error {
 	return nil
 }
 
-func (c *keyChainTabController) buildSteps(parent walk.Container) error {
+// buildKeyChainSteps creates the step column with all 7 key slots and links.
+func (a *guiApp) buildKeyChainSteps(parent walk.Container) error {
 	stepsRow, err := walk.NewComposite(parent)
 	if err != nil {
 		return err
@@ -175,11 +160,11 @@ func (c *keyChainTabController) buildSteps(parent walk.Container) error {
 
 	stepHeight := keyChainStepHeight()
 	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		if err := c.buildStep(stepsRow, i, stepHeight); err != nil {
+		if err := a.buildKeyChainStep(stepsRow, i, stepHeight); err != nil {
 			return err
 		}
 		if i < runner.KeyChainSlotCount-1 {
-			if err := c.buildStepLink(stepsRow, stepHeight); err != nil {
+			if err := a.buildKeyChainStepLink(stepsRow, stepHeight); err != nil {
 				return err
 			}
 		}
@@ -187,7 +172,7 @@ func (c *keyChainTabController) buildSteps(parent walk.Container) error {
 	return nil
 }
 
-func (c *keyChainTabController) buildStep(parent walk.Container, index, height int) error {
+func (a *guiApp) buildKeyChainStep(parent walk.Container, index, height int) error {
 	step, err := walk.NewComposite(parent)
 	if err != nil {
 		return err
@@ -202,7 +187,7 @@ func (c *keyChainTabController) buildStep(parent walk.Container, index, height i
 	}
 	applyKeyChainSurface(step)
 
-	w := &c.slots[index]
+	w := &a.keyChainSlots[index]
 	w.keyEdit, err = walk.NewLineEdit(step)
 	if err != nil {
 		return err
@@ -213,11 +198,11 @@ func (c *keyChainTabController) buildStep(parent walk.Container, index, height i
 	if err := w.keyEdit.SetMinMaxSize(walk.Size{Width: keyChainKeyFieldWidth, Height: keyChainFieldHeight}, walk.Size{Width: keyChainKeyFieldWidth, Height: keyChainFieldHeight}); err != nil {
 		return err
 	}
-	c.setKeyText(index, 0)
+	a.setKeyChainKeyText(index, 0)
 	slot := index
 	w.keyEdit.MouseDown().Attach(func(_ int, _ int, button walk.MouseButton) {
 		if button == walk.LeftButton {
-			c.bindKey(slot)
+			a.bindKeyChainKey(slot)
 		}
 	})
 
@@ -251,12 +236,12 @@ func (c *keyChainTabController) buildStep(parent walk.Container, index, height i
 	if err := w.delayEdit.SetMinMaxSize(walk.Size{Width: keyChainDelayFieldWidth, Height: keyChainFieldHeight}, walk.Size{Width: keyChainDelayFieldWidth, Height: keyChainFieldHeight}); err != nil {
 		return err
 	}
-	w.delayEdit.ValueChanged().Attach(c.syncSettings)
+	w.delayEdit.ValueChanged().Attach(a.syncKeyChainSettings)
 
 	return nil
 }
 
-func (c *keyChainTabController) buildStepLink(parent walk.Container, height int) error {
+func (a *guiApp) buildKeyChainStepLink(parent walk.Container, height int) error {
 	link, err := newKeyChainStepLink(parent)
 	if err != nil {
 		return err
@@ -267,66 +252,71 @@ func (c *keyChainTabController) buildStepLink(parent walk.Container, height int)
 	)
 }
 
-func (c *keyChainTabController) setKeyText(index int, vk int32) {
+func (a *guiApp) setKeyChainKeyText(index int, vk int32) {
 	text := "None"
 	if vk != 0 {
 		text = runner.KeyName(vk)
 	}
-	c.slots[index].keyEdit.SetText(text)
+	a.keyChainSlots[index].keyEdit.SetText(text)
 }
 
-func (c *keyChainTabController) config() runner.KeyChainConfig {
-	cfg := runner.KeyChainConfig{Log: c.ctx.appendLog}
+func (a *guiApp) keyChainConfig() runner.KeyChainConfig {
+	cfg := runner.KeyChainConfig{Log: a.appendLog}
 	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		cfg.Keys[i] = c.keyVKs[i]
-		cfg.DelaysMs[i] = int(c.slots[i].delayEdit.Value())
+		cfg.Keys[i] = a.keyChainKeyVKs[i]
+		cfg.DelaysMs[i] = int(a.keyChainSlots[i].delayEdit.Value())
 	}
 	return cfg
 }
 
-func (c *keyChainTabController) syncSettings() {
-	if !c.ctx.isStarted() {
+func (a *guiApp) syncKeyChainSettings() {
+	if !a.isStarted() {
 		return
 	}
 
-	cfg := c.config()
-	c.ctx.mu.Lock()
-	kc := c.runner
-	c.ctx.mu.Unlock()
+	cfg := a.keyChainConfig()
+	a.mu.Lock()
+	kc := a.keyChainRunner
+	a.mu.Unlock()
 
 	if !cfg.Active() {
-		c.stopRunner()
+		a.stopKeyChainRunner()
 		return
 	}
 
-	c.ctx.mu.Lock()
-	cfg.Session = c.ctx.session()
-	c.ctx.mu.Unlock()
+	a.mu.Lock()
+	cfg.Session = a.inputSession
+	a.mu.Unlock()
 
 	if kc != nil && kc.Running() {
 		kc.UpdateSettings(cfg)
 		return
 	}
 
-	c.startRunner(cfg, c.ctx.guiLog(c.ctx.appendLog))
+	a.startKeyChainRunner(cfg, a.guiLog(a.appendLog))
 }
 
-func (c *keyChainTabController) setEnabled(enabled bool) {
+func (a *guiApp) setKeyChainConfigEnabled(enabled bool) {
 	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		c.slots[i].keyEdit.SetEnabled(enabled)
-		c.slots[i].delayEdit.SetEnabled(enabled)
+		a.keyChainSlots[i].keyEdit.SetEnabled(enabled)
+		a.keyChainSlots[i].delayEdit.SetEnabled(enabled)
 	}
-	if c.clearBtn != nil {
-		c.clearBtn.SetEnabled(enabled)
+	if a.keyChainClearBtn != nil {
+		a.keyChainClearBtn.SetEnabled(enabled)
 	}
 }
 
-func (c *keyChainTabController) startRunner(cfg runner.KeyChainConfig, log func(string)) {
-	take, store := makeLifecycleSlot[*runner.KeyChainRunner](c.ctx.mu, c.runnerPtr())
+func (a *guiApp) startKeyChainRunner(cfg runner.KeyChainConfig, log func(string)) {
+	take, store := makeLifecycleSlot[*runner.KeyChainRunner](&a.mu, &a.keyChainRunner)
 	startLifecycle(
 		take, store,
-		"KeyChain", log,
-		func() runner.InputSession { return c.ctx.session() },
+		"KeyChain",
+		log,
+		func() runner.InputSession {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			return a.inputSession
+		},
 		func() bool { return cfg.Active() },
 		func(sess runner.InputSession) *runner.KeyChainRunner {
 			cfg.Session = sess
@@ -336,12 +326,15 @@ func (c *keyChainTabController) startRunner(cfg runner.KeyChainConfig, log func(
 	)
 }
 
-func (c *keyChainTabController) stopRunner() {
-	c.ctx.mu.Lock()
-	kc := c.runner
-	c.runner = nil
-	c.ctx.mu.Unlock()
+func (a *guiApp) stopKeyChainRunner() {
+	a.mu.Lock()
+	kc := a.keyChainRunner
+	a.keyChainRunner = nil
+	a.mu.Unlock()
 	if kc != nil {
+		// Stop+Wait on a background goroutine to avoid
+		// deadlocking the GUI thread if the runner
+		// goroutine is in a Synchronize call.
 		go func(old *runner.KeyChainRunner) {
 			defer func() {
 				if r := recover(); r != nil {
@@ -354,50 +347,36 @@ func (c *keyChainTabController) stopRunner() {
 	}
 }
 
-func (c *keyChainTabController) clearAll() {
+func (a *guiApp) clearKeyChain() {
 	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		c.keyVKs[i] = 0
-		c.setKeyText(i, 0)
-		c.slots[i].delayEdit.SetValue(0)
+		a.keyChainKeyVKs[i] = 0
+		a.setKeyChainKeyText(i, 0)
+		a.keyChainSlots[i].delayEdit.SetValue(0)
 	}
-	c.syncSettings()
-	c.ctx.appendLog("KeyChain cleared")
+	a.syncKeyChainSettings()
+	a.appendLog("KeyChain cleared")
 }
 
-func (c *keyChainTabController) bindKey(index int) {
-	c.ctx.bindKeyFlow(
+func (a *guiApp) bindKeyChainKey(index int) {
+	a.bindKeyFlow(
 		func() bool {
-			if !c.ctx.isViiperReady() || *c.ctx.bindActive || index < 0 || index >= runner.KeyChainSlotCount {
+			if !a.isViiperReady() || a.bindingActive || index < 0 || index >= runner.KeyChainSlotCount {
 				return false
 			}
-			*c.ctx.bindActive = true
-			c.bindingSlot = index
-			c.slots[index].keyEdit.SetEnabled(false)
+			a.bindingActive = true
+			a.keyChainBindingSlot = index
+			a.keyChainSlots[index].keyEdit.SetEnabled(false)
 			return true
 		},
 		fmt.Sprintf("Press a key for chain slot %d (%s timeout)...", index+1, runner.KeyBindTimeout),
-		func() { c.bindingSlot = -1; *c.ctx.bindActive = false },
-		func() { c.setEnabled(c.ctx.isViiperReady()) },
+		func() { a.keyChainBindingSlot = -1; a.bindingActive = false },
+		func() { a.setKeyChainConfigEnabled(a.isViiperReady()) },
 		func(vk int32) {
-			c.ctx.unsetBinding(vk)
-			c.keyVKs[index] = vk
-			c.setKeyText(index, vk)
-			c.ctx.appendLog(fmt.Sprintf("Chain key %d: %s", index+1, runner.KeyName(vk)))
-			c.syncSettings()
+			a.unsetKeyBinding(vk)
+			a.keyChainKeyVKs[index] = vk
+			a.setKeyChainKeyText(index, vk)
+			a.appendLog(fmt.Sprintf("Chain key %d: %s", index+1, runner.KeyName(vk)))
+			a.syncKeyChainSettings()
 		},
 	)
-}
-
-// unsetBinding removes vk from this controller. Returns true if removed.
-func (c *keyChainTabController) unsetBinding(vk int32) bool {
-	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		if c.keyVKs[i] == vk {
-			c.keyVKs[i] = 0
-			c.setKeyText(i, 0)
-			c.ctx.appendLog(fmt.Sprintf("Key %s removed from Chain slot %d (reassigned)", runner.KeyName(vk), i+1))
-			c.syncSettings()
-			return true
-		}
-	}
-	return false
 }
