@@ -218,20 +218,6 @@ func (a *guiApp) buildClickerSlot(parent walk.Container, index int) error {
 	return nil
 }
 
-func (a *guiApp) clickerConfig() runner.Config {
-	cfg := runner.Config{
-		Log: a.appendLog,
-	}
-	for i := 0; i < runner.ClickerSlotCount; i++ {
-		cfg.Slots[i] = runner.ClickerSlot{
-			TriggerVKs: append([]int32(nil), a.clicker.triggerVKs[i]...),
-			DelayMs:    a.clickerDelayMs(i),
-			MouseClick: i == clickerWithMouse,
-		}
-	}
-	return cfg
-}
-
 func (a *guiApp) clickerDelayMs(index int) int {
 	if index < 0 || index >= runner.ClickerSlotCount {
 		return runner.DefaultDelayMs

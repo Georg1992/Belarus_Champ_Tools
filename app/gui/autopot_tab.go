@@ -452,11 +452,6 @@ func (a *guiApp) buildSPPotionSection(page *walk.TabPage) error {
 	})
 }
 
-// isAutoPotAddressMode returns true if Address Reading mode is active.
-func (a *guiApp) isAutoPotAddressMode() bool {
-	return a.autopot.autopotAddressRB != nil && a.autopot.autopotAddressRB.Checked()
-}
-
 // setAutoPotAddressModeEnabled enables or disables the address-mode
 // UI elements (window selector, profile). When switching away from
 // address mode (back to Visual), clears the PID so the old handle
@@ -480,27 +475,6 @@ func (a *guiApp) clearAutoPotKeys() {
 	a.syncAutoPotSettings()
 }
 
-// selectedProfile returns the server memory profile selected in the
-// combo box, or the default profile if nothing is selected.
-func (a *guiApp) selectedProfile() profiles.Profile {
-	all := profiles.All()
-	idx := a.autopot.profileCB.CurrentIndex()
-	if idx >= 0 && idx < len(all) {
-		return all[idx]
-	}
-	return profiles.Default()
-}
-
-// selectedWindowTitle returns the title of the currently selected window,
-// or empty string if nothing is selected.
-func (a *guiApp) selectedWindowTitle() string {
-	idx := a.autopot.windowCB.CurrentIndex()
-	if idx < 0 || idx >= len(a.autopot.windowList) {
-		return ""
-	}
-	return a.autopot.windowList[idx].title
-}
-
 // openSelectedProcessHandle stores the selected window's PID for
 // use by the address reader (which opens/closes handles per read).
 func (a *guiApp) openSelectedProcessHandle() error {
@@ -517,63 +491,6 @@ func (a *guiApp) openSelectedProcessHandle() error {
 		a.appendLog(fmt.Sprintf("Selected %q (PID %d)", win.title, win.pid))
 	}
 	return nil
-}
-
-func (a *guiApp) autopotConfig() runner.AutoPotConfig {
-	hpName := ""
-	if a.autopot.hpKeyVK != 0 {
-		hpName = runner.KeyName(a.autopot.hpKeyVK)
-	}
-	spName := ""
-	if a.autopot.spKeyVK != 0 {
-		spName = runner.KeyName(a.autopot.spKeyVK)
-	}
-	modeFn := func(mode string) {
-		if a.overlay == nil {
-			return
-		}
-		a.mainWindow.Synchronize(func() {
-			a.overlay.SetMode(mode)
-		})
-	}
-
-	statusFn := func(hp, hpMax, sp, spMax, stripX, stripY, stripW, stripH int) {
-		if a.overlay == nil {
-			return
-		}
-		a.mainWindow.Synchronize(func() {
-			a.overlay.SetValues(hp, hpMax, sp, spMax)
-			if stripW > 0 && stripH > 0 {
-				a.overlay.SetPanelRect(stripX, stripY, stripW, stripH)
-			}
-		})
-	}
-
-	isAddress := a.autopot.isAddressMode()
-	profile := a.autopot.selectedProfile()
-	cfg := runner.AutoPotConfig{
-		Core: runner.CoreConfig{
-			HPThreshold:    a.autopot.hpThreshold,
-			SPThreshold:    a.autopot.spThreshold,
-			HPKeyVK:        a.autopot.hpKeyVK,
-			SPKeyVK:        a.autopot.spKeyVK,
-			HPKeyName:      hpName,
-			SPKeyName:      spName,
-			HPEnabled:      a.autopot.hpEnabledCB.Checked(),
-			SPEnabled:      a.autopot.spEnabledCB.Checked(),
-			Log:            a.appendLog,
-			OnStatusParsed: statusFn,
-			OnStatusUIMode: modeFn,
-		},
-	}
-	if isAddress && a.autopot.processPID != 0 {
-		cfg.Address = &runner.AddressConfig{
-			ProcessPID:   a.autopot.processPID,
-			ProcessTitle: a.autopot.selectedWindowTitle(),
-			Profile:      profile,
-		}
-	}
-	return cfg
 }
 
 func (a *guiApp) commitHPThresholdEdit() {
@@ -766,17 +683,6 @@ func (a *guiApp) blurThresholdEdits() {
 	if a.mainWindow != nil {
 		_ = a.mainWindow.SetFocus()
 	}
-}
-
-func (a *guiApp) parseThreshold(edit *walk.LineEdit) (int, bool) {
-	if edit == nil {
-		return 0, false
-	}
-	v, err := strconv.Atoi(edit.Text())
-	if err != nil || v < 1 || v > 99 {
-		return 0, false
-	}
-	return v, true
 }
 
 func (a *guiApp) onBindHPKey() {

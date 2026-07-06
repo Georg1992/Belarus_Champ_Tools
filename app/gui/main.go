@@ -576,7 +576,7 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 		return
 	}
 
-	cfg := a.clickerConfig()
+	cfg := a.clicker.config(logFn)
 	cfg.Session = session
 	cfg.Log = logFn
 
