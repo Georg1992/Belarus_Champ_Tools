@@ -31,6 +31,11 @@ type ViiperSession struct {
 // virtual devices. The log callback receives device-ready messages
 // from the calling goroutine — marshalling to the GUI thread is the
 // caller's responsibility.
+//
+// When reusing an existing bus, all devices on it are removed first
+// to guarantee fresh usbip-win2 auto-attach. This prevents stale
+// HID device nodes from previous runs (e.g. after a crash) from
+// blocking input to an already-running game.
 func OpenViiperSession(ctx context.Context, apiAddr string, log func(string)) (*ViiperSession, error) {
 	if apiAddr == "" {
 		apiAddr = DefaultAPIAddr
@@ -44,15 +49,23 @@ func OpenViiperSession(ctx context.Context, apiAddr string, log func(string)) (*
 		return nil, fmt.Errorf("viiper ping: %w", err)
 	}
 
-	busID, createdBus, err := ensureBus(ctx, api, noopLog)
+	busID, createdBus, err := ensureBus(ctx, api, log)
 	if err != nil {
 		return nil, err
+	}
+
+	// When reusing an existing bus, remove all devices so the new
+	// keyboard/mouse get fresh auto-attach. Stale devices from a
+	// previous run (e.g. after a crash) would otherwise stay attached
+	// to usbip-win2 and the game would keep reading from dead nodes.
+	if !createdBus {
+		cleanBusDevices(ctx, api, busID, log)
 	}
 
 	keyStream, _, err := api.AddDeviceAndConnect(ctx, busID, "keyboard", nil)
 	if err != nil {
 		if createdBus {
-			cleanupBus(ctx, api, busID, true, noopLog)
+			cleanupBus(ctx, api, busID, true, log)
 		}
 		return nil, fmt.Errorf("keyboard: %w", err)
 	}
@@ -61,9 +74,9 @@ func OpenViiperSession(ctx context.Context, apiAddr string, log func(string)) (*
 	mouseStream, _, err := api.AddDeviceAndConnect(ctx, busID, "mouse", nil)
 	if err != nil {
 		_ = keyStream.Close()
-		cleanupDevice(ctx, api, keyStream.BusID, keyStream.DevID, noopLog)
+		cleanupDevice(ctx, api, keyStream.BusID, keyStream.DevID, log)
 		if createdBus {
-			cleanupBus(ctx, api, busID, true, noopLog)
+			cleanupBus(ctx, api, busID, true, log)
 		}
 		return nil, fmt.Errorf("mouse: %w", err)
 	}
@@ -183,6 +196,7 @@ func ensureBus(ctx context.Context, api *viiperclient.Client, log func(string)) 
 				busID = b
 			}
 		}
+		log(fmt.Sprintf("reusing VIIPER bus %d", busID))
 		return busID, false, nil
 	}
 
@@ -194,12 +208,28 @@ func ensureBus(ctx context.Context, api *viiperclient.Client, log func(string)) 
 	return resp.BusID, true, nil
 }
 
+// cleanBusDevices removes all devices from an existing bus so new
+// devices get fresh usbip-win2 auto-attach. This prevents stale HID
+// device nodes from blocking input to an already-running game.
+func cleanBusDevices(ctx context.Context, api *viiperclient.Client, busID uint32, log func(string)) {
+	devsResp, err := api.DevicesListCtx(ctx, busID)
+	if err != nil {
+		log(fmt.Sprintf("bus %d device list failed: %v", busID, err))
+		return
+	}
+	for _, dev := range devsResp.Devices {
+		if _, err := api.DeviceRemoveCtx(ctx, busID, dev.DevID); err != nil {
+			log(fmt.Sprintf("bus %d device %s remove failed: %v", busID, dev.DevID, err))
+		} else {
+			log(fmt.Sprintf("removed stale device %d-%s", busID, dev.DevID))
+		}
+	}
+}
+
 func cleanupDevice(ctx context.Context, api *viiperclient.Client, busID uint32, devID string, log func(string)) {
 	if _, err := api.DeviceRemoveCtx(ctx, busID, devID); err != nil {
 		log(fmt.Sprintf("device remove %d-%s failed: %v", busID, devID, err))
-		return
 	}
-	log(fmt.Sprintf("removed device %d-%s", busID, devID))
 }
 
 func cleanupBus(ctx context.Context, api *viiperclient.Client, busID uint32, created bool, log func(string)) {
