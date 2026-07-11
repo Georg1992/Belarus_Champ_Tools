@@ -27,10 +27,8 @@ var (
 
 // Supplementary Win32 constants.
 const (
-	ovlFwBold        = 700 // LOGFONT lfWeight FW_BOLD
-	ovlLwaAlpha      = 0x00000002
-	ovlSwpNoActivate = 0x0010
-	ovlSwpShowWindow = 0x0040
+	ovlFwBold   = 700 // LOGFONT lfWeight FW_BOLD
+	ovlLwaAlpha = 0x00000002
 )
 
 // overlayClassName is the Win32 window class name for the overlay.
@@ -216,6 +214,9 @@ func runningText(running bool) string {
 // "Address reading"). Sets running=true. Shows the overlay and repaints immediately.
 // Pass "" to hide the label. Safe from any goroutine.
 func (o *statusOverlay) SetMode(mode string) {
+	if o == nil || o.hwnd == 0 {
+		return
+	}
 	o.mu.Lock()
 	o.running = true
 	o.mode = mode
@@ -235,6 +236,9 @@ func (o *statusOverlay) SetMode(mode string) {
 // game window is focused, Windows processes WM_PAINT at full speed and
 // 100 fps repaints cause visible text flicker in the overlay.
 func (o *statusOverlay) SetValues(hp, hpMax, sp, spMax int) {
+	if o == nil || o.hwnd == 0 {
+		return
+	}
 	o.mu.Lock()
 	o.valuesHP = hp
 	o.valuesHPMax = hpMax
@@ -252,6 +256,9 @@ func (o *statusOverlay) SetValues(hp, hpMax, sp, spMax int) {
 
 // ClearValues resets the HP/SP display.
 func (o *statusOverlay) ClearValues() {
+	if o == nil || o.hwnd == 0 {
+		return
+	}
 	o.mu.Lock()
 	o.valuesHP = 0
 	o.valuesHPMax = 0
@@ -265,6 +272,9 @@ func (o *statusOverlay) ClearValues() {
 // (x, y, w, h) with a 3px gap. When panel is empty (w==0), the overlay
 // stays at its current position. Safe from any goroutine.
 func (o *statusOverlay) SetPanelRect(x, y, w, h int) {
+	if o == nil || o.hwnd == 0 {
+		return
+	}
 	if w == 0 || h == 0 {
 		return
 	}
@@ -278,6 +288,9 @@ func (o *statusOverlay) SetPanelRect(x, y, w, h int) {
 // "● Tools OFF" in red with "[Stopped]" below. Shows the overlay and repaints
 // immediately.
 func (o *statusOverlay) ShowStopped() {
+	if o == nil || o.hwnd == 0 {
+		return
+	}
 	o.mu.Lock()
 	o.running = false
 	o.mode = "Stopped"
@@ -292,6 +305,9 @@ func (o *statusOverlay) ShowStopped() {
 
 // Hide hides the overlay without destroying it.
 func (o *statusOverlay) Hide() {
+	if o == nil || o.hwnd == 0 {
+		return
+	}
 	win.ShowWindow(o.hwnd, win.SW_HIDE)
 }
 

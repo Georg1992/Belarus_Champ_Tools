@@ -31,14 +31,12 @@ type clickerSlotWidgets struct {
 type clickerController struct {
 	slots              [runner.ClickerSlotCount]clickerSlotWidgets
 	triggerVKs         [runner.ClickerSlotCount][]int32
-	bindingSlot        int
 	lastLoggedDelay    [runner.ClickerSlotCount]int
 
 	timerSlots        [runner.TimerKeySlotCount]timerSlotWidgets
 	timerKeyVKs       [runner.TimerKeySlotCount]int32
 	timerVisibleCount int
 	timerAddBtn       *walk.PushButton
-	timerBindingSlot  int
 }
 
 func (c *clickerController) config(logFn func(string)) runner.Config {
@@ -267,12 +265,11 @@ func (a *guiApp) bindClickerKey(index int) {
 				return false
 			}
 			a.bindingActive = true
-			a.clicker.bindingSlot = index
 			a.clicker.slots[index].bindBtn.SetEnabled(false)
 			return true
 		},
 		fmt.Sprintf("Press a key to add for %s (%s timeout)...", clickerSlotTitles[index], runner.KeyBindTimeout),
-		func() { a.clicker.bindingSlot = -1; a.bindingActive = false },
+		func() { a.bindingActive = false },
 		func() { a.setClickerConfigEnabled(a.isViiperReady()) },
 		func(vk int32) {
 			a.unsetKeyBinding(vk)

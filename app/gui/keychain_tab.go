@@ -17,10 +17,9 @@ type keyChainSlotWidgets struct {
 }
 
 type keychainController struct {
-	slots       [runner.KeyChainSlotCount]keyChainSlotWidgets
-	keyVKs      [runner.KeyChainSlotCount]int32
-	clearBtn    *walk.PushButton
-	bindingSlot int
+	slots    [runner.KeyChainSlotCount]keyChainSlotWidgets
+	keyVKs   [runner.KeyChainSlotCount]int32
+	clearBtn *walk.PushButton
 }
 
 func (c *keychainController) setKeyText(index int, vk int32) {
@@ -371,12 +370,11 @@ func (a *guiApp) bindKeyChainKey(index int) {
 				return false
 			}
 			a.bindingActive = true
-			a.keychain.bindingSlot = index
 			a.keychain.slots[index].keyEdit.SetEnabled(false)
 			return true
 		},
 		fmt.Sprintf("Press a key for chain slot %d (%s timeout)...", index+1, runner.KeyBindTimeout),
-		func() { a.keychain.bindingSlot = -1; a.bindingActive = false },
+		func() { a.bindingActive = false },
 		func() { a.setKeyChainConfigEnabled(a.isViiperReady()) },
 		func(vk int32) {
 			a.unsetKeyBinding(vk)

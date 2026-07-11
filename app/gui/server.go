@@ -293,9 +293,6 @@ func dumpViiperDiagnostics(cmd *exec.Cmd, ring *outputRing, addr string, log fun
 	log("--- end diagnostics ---")
 }
 
-// stripPort extracts the port number from a host:port address like "127.0.0.1:3242".
-
-
 // ---------------------------------------------------------------------------
 // process lifecycle
 // ---------------------------------------------------------------------------

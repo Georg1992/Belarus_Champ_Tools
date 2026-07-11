@@ -116,8 +116,8 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 	defer a.resetStabilizers()
 
 	factory := NewReaderFactory(a.settings, a.hpStabilizer, a.spStabilizer)
-	reader, pixel, ocr := factory.Build()
-	a.mainLoop(ctx, reader, pixel, ocr, factory.IsAddressMode())
+	reader, pixel, ocr, isAddress := factory.Build()
+	a.mainLoop(ctx, reader, pixel, ocr, isAddress)
 }
 
 // initReaders creates the appropriate BarReader(s) based on the config.
@@ -125,10 +125,9 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 //
 // DEPRECATED: logic moved to ReaderFactory.Build(). Kept as a thin wrapper
 // for backward compat with tests that call initReaders directly.
-func (a *AutoPotRunner) initReaders(cfg AutoPotConfig) (reader BarReader, pixel *pixelBarReader, ocr *statusUIReader, isAddress bool) {
+func (a *AutoPotRunner) initReaders(_ AutoPotConfig) (reader BarReader, pixel *pixelBarReader, ocr *statusUIReader, isAddress bool) {
 	factory := NewReaderFactory(a.settings, a.hpStabilizer, a.spStabilizer)
-	reader, pixel, ocr = factory.Build()
-	return reader, pixel, ocr, factory.IsAddressMode()
+	return factory.Build()
 }
 
 // mainLoop is the core autopot polling loop. It reads HP/SP, dispatches
@@ -375,7 +374,7 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, reader BarReader, hpBar b
 
 		lastPct = pct
 
-		if !a.healTap(ctx, cfg, vk, false) {
+		if !a.healTap(ctx, cfg, vk) {
 			return
 		}
 	}
@@ -424,10 +423,10 @@ func (a *AutoPotRunner) potsEndedTap(ctx context.Context, cfg AutoPotConfig, vk 
 	return false
 }
 
-// healTap presses the potion key and sleeps for the appropriate interval
-// based on whether pots-ended mode is active. Returns true on success;
-// false on TapKey error or nil session (caller should return from healUntil).
-func (a *AutoPotRunner) healTap(ctx context.Context, cfg AutoPotConfig, vk int32, potsEnded bool) bool {
+// healTap presses the potion key and sleeps for PollInterval. Returns true
+// on success; false on TapKey error or nil session (caller should return
+// from healUntil).
+func (a *AutoPotRunner) healTap(ctx context.Context, cfg AutoPotConfig, vk int32) bool {
 	if cfg.Core.Session == nil {
 		return false
 	}
@@ -435,11 +434,7 @@ func (a *AutoPotRunner) healTap(ctx context.Context, cfg AutoPotConfig, vk int32
 		cfg.Core.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", vk, err))
 		return false
 	}
-	if potsEnded {
-		timing.Sleep(ctx, potsEndedDelay)
-	} else {
-		timing.Sleep(ctx, timing.PollInterval)
-	}
+	timing.Sleep(ctx, timing.PollInterval)
 	return true
 }
 

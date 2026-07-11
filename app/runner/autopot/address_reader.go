@@ -36,10 +36,6 @@ type addressReader struct {
 	lastReconn    time.Time  // last auto-reconnect attempt time
 }
 
-// Close is a no-op — there is no persistent handle to close. Handles are
-// opened and closed inside each ReadValues call.
-func (r *addressReader) Close() {}
-
 // reconnectInterval is how long the reader waits before trying to find
 // the process again after persistent read failures.
 const reconnectInterval = 5 * time.Second
@@ -164,16 +160,26 @@ func (r *addressReader) setError(format string, args ...interface{}) {
 		}
 
 		if newPID != r.pid {
-			r.pid = newPID
-			r.log(fmt.Sprintf("address: reconnected to PID %d", newPID))
-			// Reconnect succeeded — clear error and restore normal mode.
-			// The next ReadValues will open a fresh handle to the new PID.
-			r.hadError = false
-			r.loggedFirstFail = false
-			if r.onModeChange != nil {
-				r.onModeChange("Address reading")
+			base, err := GetProcessBaseAddr(newPID)
+			if err != nil {
+				if r.log != nil {
+					r.log(fmt.Sprintf("address: found PID %d but base addr failed: %v", newPID, err))
+				}
+			} else {
+				r.pid = newPID
+				r.moduleBase = base
+				if r.log != nil {
+					r.log(fmt.Sprintf("address: reconnected to PID %d", newPID))
+				}
+				// Reconnect succeeded — clear error and restore normal mode.
+				// The next ReadValues will open a fresh handle to the new PID.
+				r.hadError = false
+				r.loggedFirstFail = false
+				if r.onModeChange != nil {
+					r.onModeChange("Address reading")
+				}
+				return
 			}
-			return
 		}
 	}
 

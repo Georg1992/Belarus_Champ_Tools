@@ -25,12 +25,6 @@ func NewReaderFactory(settings func() AutoPotConfig, hpStab, spStab *BarStabiliz
 	}
 }
 
-// IsAddressMode reports whether the factory will produce an address reader.
-func (f *ReaderFactory) IsAddressMode() bool {
-	cfg := f.settings()
-	return cfg.IsAddressMode()
-}
-
 // Build creates the primary BarReader, the pixel fallback, and the OCR
 // reader (nil if OCR is unavailable or in address mode).
 //
@@ -38,18 +32,21 @@ func (f *ReaderFactory) IsAddressMode() bool {
 //   - primary: the active BarReader
 //   - fallback: pixel reader for OCR→pixel fallback; nil in address mode
 //   - ocr: OCR reader for pixel→OCR recovery; nil if unavailable
-func (f *ReaderFactory) Build() (primary BarReader, fallback *pixelBarReader, ocr *statusUIReader) {
+//   - isAddress: true only when address reading is active (false after visual fallback)
+func (f *ReaderFactory) Build() (primary BarReader, fallback *pixelBarReader, ocr *statusUIReader, isAddress bool) {
 	cfg := f.settings()
 	if cfg.IsAddressMode() {
 		reader, err := f.buildAddressReader(cfg)
 		if err != nil {
 			cfg.Core.Log("autopot: " + err.Error() + " — falling back to Visual mode")
-			return f.buildVisualReaders(cfg)
+			primary, fallback, ocr = f.buildVisualReaders(cfg)
+			return primary, fallback, ocr, false
 		}
 		setMode(cfg.Core.OnStatusUIMode, "Address reading")
-		return reader, nil, nil
+		return reader, nil, nil, true
 	}
-	return f.buildVisualReaders(cfg)
+	primary, fallback, ocr = f.buildVisualReaders(cfg)
+	return primary, fallback, ocr, false
 }
 
 // buildVisualReaders creates pixel + optional OCR readers for visual mode.

@@ -520,10 +520,10 @@ func (a *guiApp) commitSPThresholdEdit() {
 }
 
 func (a *guiApp) syncAutoPotSettings() {
-	cfg := a.autopot.wanted(a.autopotModeFn(), a.autopotStatusFn(), a.appendLog)
+	cfg := a.autopot.wanted(a.autopotModeFn(), a.autopotStatusFn(), a.guiLog(a.appendLog))
 	a.mu.Lock()
 	cfg.Core.Session = a.inputSession
-	cfg.Core.Log = a.appendLog
+	cfg.Core.Log = a.guiLog(a.appendLog)
 	r := a.autopotRunner
 	a.mu.Unlock()
 

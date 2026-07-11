@@ -120,18 +120,6 @@ func (s *ViiperSession) Close() {
 	})
 }
 
-func (s *ViiperSession) KeyDown(vk int32) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	return keyDownLocked(s.keyStream, vk)
-}
-
-func (s *ViiperSession) KeyUp() error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	return keyUpLocked(s.keyStream)
-}
-
 func (s *ViiperSession) TapKey(vk int32, hold time.Duration) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -150,13 +138,6 @@ func (s *ViiperSession) MouseClick(hold time.Duration) error {
 	}
 	time.Sleep(hold)
 	return mouseUpLocked(s.mouseStream)
-}
-
-func (s *ViiperSession) ReleaseAll() {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	_ = keyUpLocked(s.keyStream)
-	_ = mouseUpLocked(s.mouseStream)
 }
 
 func keyDownLocked(stream *viiperclient.DeviceStream, vk int32) error {

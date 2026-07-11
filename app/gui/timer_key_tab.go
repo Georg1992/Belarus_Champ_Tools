@@ -313,12 +313,11 @@ func (a *guiApp) bindTimerKey(index int) {
 				return false
 			}
 			a.bindingActive = true
-			a.clicker.timerBindingSlot = index
 			a.clicker.timerSlots[index].bindBtn.SetEnabled(false)
 			return true
 		},
 		fmt.Sprintf("Press a key for timer %d (%s timeout)...", index+1, runner.KeyBindTimeout),
-		func() { a.clicker.timerBindingSlot = -1; a.bindingActive = false },
+		func() { a.bindingActive = false },
 		func() { a.setTimerKeyConfigEnabled(a.isViiperReady()) },
 		func(vk int32) {
 			a.unsetKeyBinding(vk)

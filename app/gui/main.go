@@ -60,9 +60,6 @@ type guiApp struct {
 
 func main() {
 	app := &guiApp{bindingActive: false}
-	app.clicker.timerBindingSlot = -1
-	app.keychain.bindingSlot = -1
-	app.clicker.bindingSlot = -1
 	defer app.shutdown()
 
 	// Open a persistent log file in a logs/ directory next to the
@@ -235,6 +232,7 @@ func (a *guiApp) startBackgroundMonitors() {
 				a.inputSession = nil
 			}
 			a.mu.Unlock()
+			stopViiperServerIfStarted()
 			a.startBtn.SetEnabled(false)
 			a.stopBtn.SetEnabled(false)
 			a.setConfigEnabled(false)
@@ -572,7 +570,6 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 	session.Reset()
 
 	if !isStillStarting() {
-		session.Reset()
 		return
 	}
 
@@ -582,12 +579,7 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 
 	r := runner.New(cfg)
 	if err := r.Start(); err != nil {
-		session.Close()
-		a.mu.Lock()
-		a.inputSession = nil
-		a.mu.Unlock()
 		logFn(fmt.Sprintf("Start failed: %v", err))
-		stopViiperServerIfStarted()
 		finishFailure()
 		return
 	}
@@ -598,12 +590,11 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 	if !isStillStarting() {
 		r.Stop()
 		r.Wait()
-		session.Close()
 		a.mu.Lock()
-		a.runner = nil
-		a.inputSession = nil
+		if a.runner == r {
+			a.runner = nil
+		}
 		a.mu.Unlock()
-		stopViiperServerIfStarted()
 		return
 	}
 
@@ -622,14 +613,14 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 
 // startRemainingRunners starts AutoPot, TimerKey, and KeyChain runners.
 func (a *guiApp) startRemainingRunners(session runner.InputSession, logFn func(string)) {
-	autopotCfg := a.autopot.wanted(a.autopotModeFn(), a.autopotStatusFn(), a.appendLog)
+	autopotCfg := a.autopot.wanted(a.autopotModeFn(), a.autopotStatusFn(), logFn)
 	autopotCfg.Core.Session = session
 	autopotCfg.Core.Log = logFn
-	timerCfg := a.clicker.timerWanted(a.appendLog)
+	timerCfg := a.clicker.timerWanted(logFn)
 	timerCfg.Session = session
 	timerCfg.Log = logFn
 
-	keyChainCfg := a.keychain.config(a.appendLog)
+	keyChainCfg := a.keychain.config(logFn)
 	keyChainCfg.Session = session
 	keyChainCfg.Log = logFn
 

@@ -138,7 +138,8 @@ func (t *TimerKeyRunner) run(ctx context.Context, cfg TimerKeyConfig) {
 			if !now.Before(nextDue[i]) {
 				if err := session.TapKey(slot.KeyVK, timing.KeyTapHold); err != nil {
 					current.Log(fmt.Sprintf("Timer %d key %s failed: %v", i+1, KeyName(slot.KeyVK), err))
-					return
+					nextDue[i] = now.Add(interval)
+					continue
 				}
 				nextDue[i] = now.Add(interval)
 			}

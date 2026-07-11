@@ -110,7 +110,8 @@ func (k *KeyChainRunner) run(ctx context.Context, cfg KeyChainConfig) {
 					return
 				}
 				current.Log(fmt.Sprintf("KeyChain failed: %v", err))
-				return
+				timing.Sleep(ctx, timing.PollInterval)
+				continue
 			}
 		}
 	}

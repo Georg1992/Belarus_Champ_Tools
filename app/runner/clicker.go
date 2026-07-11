@@ -136,6 +136,7 @@ func (r *Runner) runSlot(ctx context.Context, sess session.InputSession, slot Cl
 				continue
 			}
 			if err := sess.TapKey(vk, timing.KeyTapHold); err != nil {
+				r.settings().Log(fmt.Sprintf("clicker key %s failed: %v", KeyName(vk), err))
 				return false
 			}
 		}
