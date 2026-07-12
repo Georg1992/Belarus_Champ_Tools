@@ -65,6 +65,12 @@ func CaptureScreenRegion(roi ScreenROI) (*image.RGBA, error) {
 		return nil, fmt.Errorf("BitBlt failed")
 	}
 
+	// Deselect the bitmap from the memory DC BEFORE calling GetDIBits.
+	// MSDN: "The bitmap identified by the hbmp parameter must not be
+	// selected into a device context when the application calls this
+	// function."
+	procSelectObject.Call(hdcMem, old)
+
 	out := image.NewRGBA(image.Rect(0, 0, roi.W, roi.H))
 	var bmi bitmapInfo
 	bmi.Header.Size = uint32(unsafe.Sizeof(bmi.Header))
