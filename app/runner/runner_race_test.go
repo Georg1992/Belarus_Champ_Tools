@@ -275,7 +275,7 @@ func TestClickerAndAutoPotConcurrent(t *testing.T) {
 					return
 				default:
 					clicker.UpdateSettings([ClickerSlotCount]ClickerSlot{
-						{TriggerVKs: []int32{int32('A' + rune(n%5))}, DelayMs: 50 + n%50, MouseClick: n%2 == 0},
+						{TriggerVK: int32('A' + rune(n%5)), DelayMs: 50 + n%50, MouseClick: n%2 == 0},
 						{},
 					})
 					ap.UpdateSettings(AutoPotConfig{

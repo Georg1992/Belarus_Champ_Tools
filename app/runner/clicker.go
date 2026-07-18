@@ -1,4 +1,4 @@
-// Package runner's clicker runner: while physical keys are held, emit
+// Package runner's clicker runner: while a physical key is held, emit
 // clicks (mouse) or key taps (keyboard). Its lifecycle is driven by
 // internal/lifecycle; timing uses internal/timing; the session interface
 // is internal/session.InputSession.
@@ -19,15 +19,14 @@ import (
 )
 
 const (
-	ClickerSlotCount = 2
+	ClickerSlotCount = 5
 	DefaultDelayMs   = 50
 )
 
-// ClickerSlot describes one of the two clicker rows:
-//   - With mouse click (slot 0)
-//   - Without mouse click — keyboard only (slot 1)
+// ClickerSlot is one independent clicker: hold TriggerVK to tap that key
+// (and optionally mouse-click). Unused slots have TriggerVK == 0.
 type ClickerSlot struct {
-	TriggerVKs []int32
+	TriggerVK  int32
 	DelayMs    int
 	MouseClick bool
 }
@@ -92,75 +91,81 @@ func (r *Runner) Stop() { r.lc.Stop() }
 // Wait blocks until the clicker goroutine has exited.
 func (r *Runner) Wait() { r.lc.Wait() }
 
-func (r *Runner) run(ctx context.Context, cfg Config) {
+func (r *Runner) run(ctx context.Context, _ Config) {
+	var nextDue [ClickerSlotCount]time.Time
+
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		anySlot := false
-		for _, slot := range r.settings().Slots {
-			if len(slot.TriggerVKs) == 0 {
+		current := r.settings()
+		now := time.Now()
+		anyMapped := false
+		anyHeld := false
+		var earliest time.Time
+
+		for i := range current.Slots {
+			slot := current.Slots[i]
+			if slot.TriggerVK == 0 {
+				nextDue[i] = time.Time{}
 				continue
 			}
-			anySlot = true
-			if r.runSlot(ctx, cfg.Session, slot) {
-				return
+			anyMapped = true
+
+			if !PhysicalKeyDown(slot.TriggerVK) {
+				nextDue[i] = time.Time{}
+				continue
 			}
-			timing.Sleep(ctx, timing.PollInterval)
+			anyHeld = true
+
+			delayMs := slot.DelayMs
+			if delayMs <= 0 {
+				delayMs = DefaultDelayMs
+			}
+			delay := time.Duration(delayMs) * time.Millisecond
+
+			if nextDue[i].IsZero() || !now.Before(nextDue[i]) {
+				if err := r.fireSlot(current.Session, slot, delay); err != nil {
+					if ctx.Err() != nil {
+						return
+					}
+					current.Log(err.Error())
+				}
+				nextDue[i] = now.Add(delay)
+			}
+			if earliest.IsZero() || nextDue[i].Before(earliest) {
+				earliest = nextDue[i]
+			}
 		}
-		if !anySlot {
+
+		if !anyMapped {
 			timing.Sleep(ctx, timing.CaptureRetryDelay)
+			continue
 		}
+		if !anyHeld {
+			timing.Sleep(ctx, timing.PollInterval)
+			continue
+		}
+
+		wait := time.Until(earliest)
+		if wait < time.Millisecond {
+			wait = time.Millisecond
+		}
+		if wait > timing.PollInterval {
+			wait = timing.PollInterval
+		}
+		timing.Sleep(ctx, wait)
 	}
 }
 
-// runSlot: while any trigger key is physically held, loop:
-//
-//	key press → [mouse click] → sleep DelayMs
-func (r *Runner) runSlot(ctx context.Context, sess session.InputSession, slot ClickerSlot) bool {
-	if len(slot.TriggerVKs) == 0 {
-		return false
+func (r *Runner) fireSlot(sess session.InputSession, slot ClickerSlot, delay time.Duration) error {
+	if err := sess.TapKey(slot.TriggerVK, timing.KeyTapHold); err != nil {
+		return fmt.Errorf("clicker key %s failed: %v", KeyName(slot.TriggerVK), err)
 	}
-	if slot.DelayMs <= 0 {
-		slot.DelayMs = DefaultDelayMs
-	}
-	delay := time.Duration(slot.DelayMs) * time.Millisecond
-
-	for anyKeyDown(slot.TriggerVKs) {
-		if ctx.Err() != nil {
-			return true
-		}
-		// 1. Key press
-		for _, vk := range slot.TriggerVKs {
-			if vk == 0 {
-				continue
-			}
-			if err := sess.TapKey(vk, timing.KeyTapHold); err != nil {
-				r.settings().Log(fmt.Sprintf("clicker key %s failed: %v", KeyName(vk), err))
-				return false
-			}
-		}
-
-		// 2. Mouse click (only slot 0) — atomic down+up under the session
-		// wire mutex so key events from other runners cannot interleave.
-		if slot.MouseClick {
-			if err := sess.MouseClick(delay); err != nil {
-				r.settings().Log(fmt.Sprintf("clicker mouse click failed: %v", err))
-				return false
-			}
-		}
-
-		// 3. Delay before next iteration
-		timing.Sleep(ctx, delay)
-	}
-	return false
-}
-
-func anyKeyDown(vks []int32) bool {
-	for _, vk := range vks {
-		if vk != 0 && PhysicalKeyDown(vk) {
-			return true
+	if slot.MouseClick {
+		if err := sess.MouseClick(delay); err != nil {
+			return fmt.Errorf("clicker mouse click failed: %v", err)
 		}
 	}
-	return false
+	return nil
 }

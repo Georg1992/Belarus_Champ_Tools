@@ -17,15 +17,17 @@ type keyChainSlotWidgets struct {
 }
 
 type keychainSwitchUI struct {
-	group    *walk.GroupBox
-	slots    [runner.KeyChainSlotCount]keyChainSlotWidgets
-	keyVKs   [runner.KeyChainSlotCount]int32
-	clearBtn *walk.PushButton
+	group     *walk.GroupBox
+	slots     [runner.KeyChainSlotCount]keyChainSlotWidgets
+	keyVKs    [runner.KeyChainSlotCount]int32
+	clearBtn  *walk.PushButton
+	removeBtn *walk.PushButton
 }
 
 type keychainController struct {
 	switches     [runner.KeyChainCount]keychainSwitchUI
 	visibleCount int
+	scrollView   *walk.ScrollView
 	addBtn       *walk.PushButton
 }
 
@@ -57,9 +59,28 @@ func (a *guiApp) buildKeyChainTab(page *walk.TabPage) error {
 		return err
 	}
 
+	sv, err := walk.NewScrollView(page)
+	if err != nil {
+		return err
+	}
+	a.keychain.scrollView = sv
+	sv.SetScrollbars(false, true)
+	// Cap height so adding switches scrolls instead of growing the main window.
+	if err := sv.SetMinMaxSize(
+		walk.Size{Width: 0, Height: keyChainScrollMinHeight},
+		walk.Size{Width: 9999, Height: keyChainScrollMaxHeight},
+	); err != nil {
+		return err
+	}
+	svLayout := walk.NewVBoxLayout()
+	svLayout.SetSpacing(10)
+	if err := sv.SetLayout(svLayout); err != nil {
+		return err
+	}
+
 	a.keychain.visibleCount = 1
 	for i := 0; i < runner.KeyChainCount; i++ {
-		if err := a.buildKeyChainGroup(page, i); err != nil {
+		if err := a.buildKeyChainGroup(sv, i); err != nil {
 			return err
 		}
 		if i > 0 {
@@ -86,6 +107,7 @@ func (a *guiApp) buildKeyChainTab(page *walk.TabPage) error {
 	}
 	a.keychain.addBtn.Clicked().Attach(a.onAddKeyChainSwitch)
 	a.updateKeyChainAddButton()
+	a.updateKeyChainRemoveButtons()
 
 	hint, err := walk.NewLabel(page)
 	if err != nil {
@@ -97,11 +119,11 @@ func (a *guiApp) buildKeyChainTab(page *walk.TabPage) error {
 	return nil
 }
 
-// buildKeyChainGroup creates Switch N with labels, step columns, links, and Clear.
-func (a *guiApp) buildKeyChainGroup(page *walk.TabPage, index int) error {
+// buildKeyChainGroup creates Switch N with labels, step columns, links, Clear, and Remove.
+func (a *guiApp) buildKeyChainGroup(parent walk.Container, index int) error {
 	sw := &a.keychain.switches[index]
 
-	chainGB, err := walk.NewGroupBox(page)
+	chainGB, err := walk.NewGroupBox(parent)
 	if err != nil {
 		return err
 	}
@@ -154,6 +176,17 @@ func (a *guiApp) buildKeyChainGroup(page *walk.TabPage, index int) error {
 	switchIdx := index
 	sw.clearBtn.Clicked().Attach(func() {
 		a.clearKeyChainSwitch(switchIdx)
+	})
+
+	sw.removeBtn, err = walk.NewPushButton(btnRow)
+	if err != nil {
+		return err
+	}
+	if err := sw.removeBtn.SetText("Remove"); err != nil {
+		return err
+	}
+	sw.removeBtn.Clicked().Attach(func() {
+		a.removeKeyChainSwitch(switchIdx)
 	})
 	return nil
 }
@@ -319,6 +352,7 @@ func (a *guiApp) onAddKeyChainSwitch() {
 	a.keychain.switches[a.keychain.visibleCount].group.SetVisible(true)
 	a.keychain.visibleCount++
 	a.updateKeyChainAddButton()
+	a.updateKeyChainRemoveButtons()
 	a.setKeyChainConfigEnabled(a.isViiperReady())
 }
 
@@ -328,6 +362,17 @@ func (a *guiApp) updateKeyChainAddButton() {
 	}
 	atMax := a.keychain.visibleCount >= runner.KeyChainCount
 	a.keychain.addBtn.SetVisible(!atMax)
+}
+
+func (a *guiApp) updateKeyChainRemoveButtons() {
+	canRemove := a.keychain.visibleCount > 1
+	for i := 0; i < runner.KeyChainCount; i++ {
+		btn := a.keychain.switches[i].removeBtn
+		if btn == nil {
+			continue
+		}
+		btn.SetVisible(i < a.keychain.visibleCount && canRemove)
+	}
 }
 
 func (a *guiApp) syncKeyChainSettings() {
@@ -366,6 +411,9 @@ func (a *guiApp) setKeyChainConfigEnabled(enabled bool) {
 		}
 		if sw.clearBtn != nil {
 			sw.clearBtn.SetEnabled(enabled)
+		}
+		if sw.removeBtn != nil {
+			sw.removeBtn.SetEnabled(enabled && a.keychain.visibleCount > 1)
 		}
 	}
 	if a.keychain.addBtn != nil {
@@ -414,18 +462,53 @@ func (a *guiApp) stopKeyChainRunner() {
 	}
 }
 
-func (a *guiApp) clearKeyChainSwitch(switchIdx int) {
-	if switchIdx < 0 || switchIdx >= a.keychain.visibleCount {
-		return
-	}
+func (a *guiApp) resetKeyChainSwitchData(switchIdx int) {
 	sw := &a.keychain.switches[switchIdx]
 	for i := 0; i < runner.KeyChainSlotCount; i++ {
 		sw.keyVKs[i] = 0
 		a.keychain.setKeyText(switchIdx, i, 0)
 		sw.slots[i].delayEdit.SetValue(0)
 	}
+}
+
+func (a *guiApp) copyKeyChainSwitchData(from, to int) {
+	src := &a.keychain.switches[from]
+	dst := &a.keychain.switches[to]
+	for i := 0; i < runner.KeyChainSlotCount; i++ {
+		dst.keyVKs[i] = src.keyVKs[i]
+		a.keychain.setKeyText(to, i, src.keyVKs[i])
+		dst.slots[i].delayEdit.SetValue(src.slots[i].delayEdit.Value())
+	}
+}
+
+func (a *guiApp) clearKeyChainSwitch(switchIdx int) {
+	if switchIdx < 0 || switchIdx >= a.keychain.visibleCount {
+		return
+	}
+	a.resetKeyChainSwitchData(switchIdx)
 	a.syncKeyChainSettings()
 	a.appendLog(fmt.Sprintf("KeyChain switch %d cleared", switchIdx+1))
+}
+
+func (a *guiApp) removeKeyChainSwitch(switchIdx int) {
+	if a.keychain.visibleCount <= 1 {
+		return
+	}
+	if switchIdx < 0 || switchIdx >= a.keychain.visibleCount {
+		return
+	}
+	for i := switchIdx; i < a.keychain.visibleCount-1; i++ {
+		a.copyKeyChainSwitchData(i+1, i)
+	}
+	last := a.keychain.visibleCount - 1
+	a.resetKeyChainSwitchData(last)
+	a.keychain.switches[last].group.SetVisible(false)
+	a.keychain.visibleCount--
+	a.updateKeyChainAddButton()
+	a.updateKeyChainRemoveButtons()
+	a.setKeyChainConfigEnabled(a.isViiperReady())
+	a.syncKeyChainSettings()
+	a.appendLog(fmt.Sprintf("KeyChain switch %d removed", switchIdx+1))
 }
 
 func (a *guiApp) bindKeyChainKey(switchIdx, slotIdx int) {

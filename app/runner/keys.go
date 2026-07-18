@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
-	"strings"
 	"time"
 
 	"belarus-champ-tools/runner/internal/timing"
@@ -67,17 +66,6 @@ var vkToHID = map[int32]uint8{
 	0x70: keyboard.KeyF1, 0x71: keyboard.KeyF2, 0x72: keyboard.KeyF3, 0x73: keyboard.KeyF4,
 	0x74: keyboard.KeyF5, 0x75: keyboard.KeyF6, 0x76: keyboard.KeyF7, 0x77: keyboard.KeyF8,
 	0x78: keyboard.KeyF9, 0x79: keyboard.KeyF10, 0x7A: keyboard.KeyF11, 0x7B: keyboard.KeyF12,
-}
-
-func KeysText(vks []int32) string {
-	if len(vks) == 0 {
-		return "none"
-	}
-	names := make([]string, len(vks))
-	for i, vk := range vks {
-		names[i] = KeyName(vk)
-	}
-	return strings.Join(names, ", ")
 }
 
 func KeyName(vk int32) string {

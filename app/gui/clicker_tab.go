@@ -10,28 +10,27 @@ import (
 	"github.com/lxn/walk"
 )
 
-const (
-	clickerWithMouse    = 0
-	clickerWithoutMouse = 1
-)
-
-var clickerSlotTitles = [runner.ClickerSlotCount]string{
-	"With mouse click",
-	"Without mouse click (keyboard only)",
+func clickerTitle(index int) string {
+	return fmt.Sprintf("Clicker %d", index+1)
 }
 
 type clickerSlotWidgets struct {
+	row       *walk.Composite
+	mouseCB   *walk.CheckBox
 	keyLabel  *walk.Label
 	bindBtn   *walk.PushButton
 	clearBtn  *walk.PushButton
+	removeBtn *walk.PushButton
 	delayEdit *walk.LineEdit
 }
 
 // clickerController owns clicker + timer key state and config building.
 type clickerController struct {
-	slots              [runner.ClickerSlotCount]clickerSlotWidgets
-	triggerVKs         [runner.ClickerSlotCount][]int32
-	lastLoggedDelay    [runner.ClickerSlotCount]int
+	slots           [runner.ClickerSlotCount]clickerSlotWidgets
+	triggerVK       [runner.ClickerSlotCount]int32
+	lastLoggedDelay [runner.ClickerSlotCount]int
+	visibleCount    int
+	addBtn          *walk.PushButton
 
 	timerSlots        [runner.TimerKeySlotCount]timerSlotWidgets
 	timerKeyVKs       [runner.TimerKeySlotCount]int32
@@ -41,18 +40,18 @@ type clickerController struct {
 
 func (c *clickerController) config(logFn func(string)) runner.Config {
 	cfg := runner.Config{Log: logFn}
-	for i := 0; i < runner.ClickerSlotCount; i++ {
+	for i := 0; i < c.visibleCount; i++ {
 		cfg.Slots[i] = runner.ClickerSlot{
-			TriggerVKs: append([]int32(nil), c.triggerVKs[i]...),
+			TriggerVK:  c.triggerVK[i],
 			DelayMs:    c.delayMs(i),
-			MouseClick: i == clickerWithMouse,
+			MouseClick: c.slots[i].mouseCB.Checked(),
 		}
 	}
 	return cfg
 }
 
 func (c *clickerController) delayMs(index int) int {
-	if index < 0 || index >= runner.ClickerSlotCount {
+	if index < 0 || index >= c.visibleCount {
 		return runner.DefaultDelayMs
 	}
 	v, err := strconv.Atoi(c.slots[index].delayEdit.Text())
@@ -111,22 +110,57 @@ func (a *guiApp) buildClickerTab(page *walk.TabPage) error {
 		return err
 	}
 	configLayout := walk.NewVBoxLayout()
-	configLayout.SetSpacing(10)
+	configLayout.SetSpacing(8)
 	if err := configGB.SetLayout(configLayout); err != nil {
 		return err
 	}
 
+	slotsContainer, err := walk.NewComposite(configGB)
+	if err != nil {
+		return err
+	}
+	slotsLayout := walk.NewVBoxLayout()
+	slotsLayout.SetSpacing(6)
+	if err := slotsContainer.SetLayout(slotsLayout); err != nil {
+		return err
+	}
+
+	a.clicker.visibleCount = 1
 	for i := 0; i < runner.ClickerSlotCount; i++ {
-		if err := a.buildClickerSlot(configGB, i); err != nil {
+		if err := a.buildClickerSlot(slotsContainer, i); err != nil {
 			return err
 		}
+		if i > 0 {
+			a.clicker.slots[i].row.SetVisible(false)
+		}
 	}
+
+	addRow, err := walk.NewComposite(configGB)
+	if err != nil {
+		return err
+	}
+	addLayout := walk.NewHBoxLayout()
+	addLayout.SetSpacing(10)
+	if err := addRow.SetLayout(addLayout); err != nil {
+		return err
+	}
+
+	a.clicker.addBtn, err = walk.NewPushButton(addRow)
+	if err != nil {
+		return err
+	}
+	if err := a.clicker.addBtn.SetText("+ Add clicker"); err != nil {
+		return err
+	}
+	a.clicker.addBtn.Clicked().Attach(a.onAddClicker)
+	a.updateClickerAddButton()
+	a.updateClickerRemoveButtons()
 
 	configHint, err := walk.NewLabel(configGB)
 	if err != nil {
 		return err
 	}
-	if err := configHint.SetText("After Start, add keys anytime — no restart needed. Hold any mapped key in each group to run that clicker. End or F12 toggles start/stop."); err != nil {
+	if err := configHint.SetText("Each clicker has one key. Hold it to tap that key (and mouse if enabled). End or F12 toggles start/stop."); err != nil {
 		return err
 	}
 
@@ -134,42 +168,58 @@ func (a *guiApp) buildClickerTab(page *walk.TabPage) error {
 }
 
 func (a *guiApp) buildClickerSlot(parent walk.Container, index int) error {
-	slotGB, err := walk.NewGroupBox(parent)
+	row, err := walk.NewComposite(parent)
 	if err != nil {
-		return err
-	}
-	if err := slotGB.SetTitle(clickerSlotTitles[index]); err != nil {
 		return err
 	}
 	rowLayout := walk.NewHBoxLayout()
 	rowLayout.SetSpacing(10)
-	if err := slotGB.SetLayout(rowLayout); err != nil {
+	if err := row.SetLayout(rowLayout); err != nil {
 		return err
 	}
 
 	w := &a.clicker.slots[index]
+	w.row = row
 
-	keyText, err := walk.NewLabel(slotGB)
+	title, err := walk.NewLabel(row)
 	if err != nil {
 		return err
 	}
-	if err := keyText.SetText("Trigger keys:"); err != nil {
+	if err := title.SetText(clickerTitle(index) + ":"); err != nil {
 		return err
 	}
 
-	w.keyLabel, err = walk.NewLabel(slotGB)
+	w.mouseCB, err = walk.NewCheckBox(row)
 	if err != nil {
 		return err
 	}
-	if err := w.keyLabel.SetText(runner.KeysText(a.clicker.triggerVKs[index])); err != nil {
+	if err := w.mouseCB.SetText("Mouse"); err != nil {
+		return err
+	}
+	w.mouseCB.SetChecked(index == 0)
+	w.mouseCB.CheckedChanged().Attach(a.syncRunnerSettings)
+
+	keyText, err := walk.NewLabel(row)
+	if err != nil {
+		return err
+	}
+	if err := keyText.SetText("Key:"); err != nil {
 		return err
 	}
 
-	w.bindBtn, err = walk.NewPushButton(slotGB)
+	w.keyLabel, err = walk.NewLabel(row)
 	if err != nil {
 		return err
 	}
-	if err := w.bindBtn.SetText("Add key..."); err != nil {
+	if err := w.keyLabel.SetText(clickerKeyLabel(a.clicker.triggerVK[index])); err != nil {
+		return err
+	}
+
+	w.bindBtn, err = walk.NewPushButton(row)
+	if err != nil {
+		return err
+	}
+	if err := w.bindBtn.SetText("Set key..."); err != nil {
 		return err
 	}
 	slot := index
@@ -177,18 +227,29 @@ func (a *guiApp) buildClickerSlot(parent walk.Container, index int) error {
 		a.bindClickerKey(slot)
 	})
 
-	w.clearBtn, err = walk.NewPushButton(slotGB)
+	w.clearBtn, err = walk.NewPushButton(row)
 	if err != nil {
 		return err
 	}
-	if err := w.clearBtn.SetText("Clear keys"); err != nil {
+	if err := w.clearBtn.SetText("Clear"); err != nil {
 		return err
 	}
 	w.clearBtn.Clicked().Attach(func() {
 		a.clearClickerKey(slot)
 	})
 
-	delayLabel, err := walk.NewLabel(slotGB)
+	w.removeBtn, err = walk.NewPushButton(row)
+	if err != nil {
+		return err
+	}
+	if err := w.removeBtn.SetText("Remove"); err != nil {
+		return err
+	}
+	w.removeBtn.Clicked().Attach(func() {
+		a.removeClicker(slot)
+	})
+
+	delayLabel, err := walk.NewLabel(row)
 	if err != nil {
 		return err
 	}
@@ -196,7 +257,7 @@ func (a *guiApp) buildClickerSlot(parent walk.Container, index int) error {
 		return err
 	}
 
-	w.delayEdit, err = walk.NewLineEdit(slotGB)
+	w.delayEdit, err = walk.NewLineEdit(row)
 	if err != nil {
 		return err
 	}
@@ -216,8 +277,38 @@ func (a *guiApp) buildClickerSlot(parent walk.Container, index int) error {
 	return nil
 }
 
+func (a *guiApp) onAddClicker() {
+	if a.clicker.visibleCount >= runner.ClickerSlotCount {
+		return
+	}
+	a.clicker.slots[a.clicker.visibleCount].row.SetVisible(true)
+	a.clicker.visibleCount++
+	a.updateClickerAddButton()
+	a.updateClickerRemoveButtons()
+	a.setClickerConfigEnabled(a.isViiperReady())
+}
+
+func (a *guiApp) updateClickerAddButton() {
+	if a.clicker.addBtn == nil {
+		return
+	}
+	atMax := a.clicker.visibleCount >= runner.ClickerSlotCount
+	a.clicker.addBtn.SetVisible(!atMax)
+}
+
+func (a *guiApp) updateClickerRemoveButtons() {
+	canRemove := a.clicker.visibleCount > 1
+	for i := 0; i < runner.ClickerSlotCount; i++ {
+		btn := a.clicker.slots[i].removeBtn
+		if btn == nil {
+			continue
+		}
+		btn.SetVisible(i < a.clicker.visibleCount && canRemove)
+	}
+}
+
 func (a *guiApp) clickerDelayMs(index int) int {
-	if index < 0 || index >= runner.ClickerSlotCount {
+	if index < 0 || index >= a.clicker.visibleCount {
 		return runner.DefaultDelayMs
 	}
 	v, err := strconv.Atoi(a.clicker.slots[index].delayEdit.Text())
@@ -228,54 +319,111 @@ func (a *guiApp) clickerDelayMs(index int) int {
 }
 
 func (a *guiApp) logClickerDelayIfChanged(index int) {
+	if index < 0 || index >= a.clicker.visibleCount {
+		return
+	}
 	delay := a.clickerDelayMs(index)
 	if delay == a.clicker.lastLoggedDelay[index] {
 		return
 	}
 	a.clicker.lastLoggedDelay[index] = delay
-	a.appendLog(fmt.Sprintf("%s delay: %d ms", clickerSlotTitles[index], delay))
+	a.appendLog(fmt.Sprintf("%s delay: %d ms", clickerTitle(index), delay))
 }
 
 func (a *guiApp) setClickerConfigEnabled(enabled bool) {
-	for i := 0; i < runner.ClickerSlotCount; i++ {
-		a.clicker.slots[i].delayEdit.SetEnabled(enabled)
-		a.clicker.slots[i].bindBtn.SetEnabled(enabled)
-		a.clicker.slots[i].clearBtn.SetEnabled(enabled)
+	for i := 0; i < a.clicker.visibleCount; i++ {
+		w := &a.clicker.slots[i]
+		w.mouseCB.SetEnabled(enabled)
+		w.delayEdit.SetEnabled(enabled)
+		w.bindBtn.SetEnabled(enabled)
+		w.clearBtn.SetEnabled(enabled)
+		if w.removeBtn != nil {
+			w.removeBtn.SetEnabled(enabled && a.clicker.visibleCount > 1)
+		}
 	}
+	if a.clicker.addBtn != nil {
+		a.clicker.addBtn.SetEnabled(enabled && a.clicker.visibleCount < runner.ClickerSlotCount)
+	}
+}
+
+func clickerKeyLabel(vk int32) string {
+	if vk == 0 {
+		return "none"
+	}
+	return runner.KeyName(vk)
 }
 
 func (a *guiApp) updateClickerKeyLabel(index int) {
-	a.clicker.slots[index].keyLabel.SetText(runner.KeysText(a.clicker.triggerVKs[index]))
+	a.clicker.slots[index].keyLabel.SetText(clickerKeyLabel(a.clicker.triggerVK[index]))
 }
 
 func (a *guiApp) clearClickerKey(index int) {
-	if index < 0 || index >= runner.ClickerSlotCount {
+	if index < 0 || index >= a.clicker.visibleCount {
 		return
 	}
-	a.clicker.triggerVKs[index] = nil
+	a.clicker.triggerVK[index] = 0
 	a.updateClickerKeyLabel(index)
-	a.appendLog(fmt.Sprintf("%s keys cleared", clickerSlotTitles[index]))
+	a.appendLog(fmt.Sprintf("%s key cleared", clickerTitle(index)))
 	a.syncRunnerSettings()
+}
+
+func (a *guiApp) copyClickerSlotData(from, to int) {
+	src := &a.clicker.slots[from]
+	dst := &a.clicker.slots[to]
+	a.clicker.triggerVK[to] = a.clicker.triggerVK[from]
+	a.updateClickerKeyLabel(to)
+	dst.mouseCB.SetChecked(src.mouseCB.Checked())
+	dst.delayEdit.SetText(src.delayEdit.Text())
+	a.clicker.lastLoggedDelay[to] = a.clicker.lastLoggedDelay[from]
+}
+
+func (a *guiApp) resetClickerSlotData(index int) {
+	a.clicker.triggerVK[index] = 0
+	a.updateClickerKeyLabel(index)
+	a.clicker.slots[index].mouseCB.SetChecked(false)
+	a.clicker.slots[index].delayEdit.SetText(strconv.Itoa(runner.DefaultDelayMs))
+	a.clicker.lastLoggedDelay[index] = runner.DefaultDelayMs
+}
+
+func (a *guiApp) removeClicker(index int) {
+	if a.clicker.visibleCount <= 1 {
+		return
+	}
+	if index < 0 || index >= a.clicker.visibleCount {
+		return
+	}
+	for i := index; i < a.clicker.visibleCount-1; i++ {
+		a.copyClickerSlotData(i+1, i)
+	}
+	last := a.clicker.visibleCount - 1
+	a.resetClickerSlotData(last)
+	a.clicker.slots[last].row.SetVisible(false)
+	a.clicker.visibleCount--
+	a.updateClickerAddButton()
+	a.updateClickerRemoveButtons()
+	a.setClickerConfigEnabled(a.isViiperReady())
+	a.syncRunnerSettings()
+	a.appendLog(fmt.Sprintf("%s removed", clickerTitle(index)))
 }
 
 func (a *guiApp) bindClickerKey(index int) {
 	a.bindKeyFlow(
 		func() bool {
-			if !a.isViiperReady() || a.bindingActive || index < 0 || index >= runner.ClickerSlotCount {
+			if !a.isViiperReady() || a.bindingActive || index < 0 || index >= a.clicker.visibleCount {
 				return false
 			}
 			a.bindingActive = true
 			a.clicker.slots[index].bindBtn.SetEnabled(false)
 			return true
 		},
-		fmt.Sprintf("Press a key to add for %s (%s timeout)...", clickerSlotTitles[index], runner.KeyBindTimeout),
+		fmt.Sprintf("Press a key for %s (%s timeout)...", clickerTitle(index), runner.KeyBindTimeout),
 		func() { a.bindingActive = false },
 		func() { a.setClickerConfigEnabled(a.isViiperReady()) },
 		func(vk int32) {
 			a.unsetKeyBinding(vk)
-			a.clicker.triggerVKs[index] = append(a.clicker.triggerVKs[index], vk)
+			a.clicker.triggerVK[index] = vk
 			a.updateClickerKeyLabel(index)
-			a.appendLog(fmt.Sprintf("%s added key %s", clickerSlotTitles[index], runner.KeyName(vk)))
+			a.appendLog(fmt.Sprintf("%s key: %s", clickerTitle(index), runner.KeyName(vk)))
 			a.syncRunnerSettings()
 		},
 	)
