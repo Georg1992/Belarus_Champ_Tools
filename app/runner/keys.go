@@ -140,21 +140,23 @@ func WaitForKeyPress(timeout time.Duration) (int32, bool) {
 	}
 }
 
-// StartEndKeyWatcher starts a background goroutine that polls the End key
-// (VK_END = 0x23) and calls onToggle each time it transitions from released
-// to pressed. The callback runs in the polling goroutine — the caller must
-// marshal to the GUI thread if needed. Stop the watcher by cancelling ctx.
-func StartEndKeyWatcher(ctx context.Context, onToggle func()) {
+// StartEndKeyWatcher starts a background goroutine that polls the start/stop
+// toggle keys (End and F12) and calls onToggle(vk) each time one transitions
+// from released to pressed. The callback runs in the polling goroutine — the
+// caller must marshal to the GUI thread if needed. Stop by cancelling ctx.
+func StartEndKeyWatcher(ctx context.Context, onToggle func(vk int32)) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				_, _ = fmt.Fprintf(os.Stderr, "PANIC in StartEndKeyWatcher: %v\n%s\n", r, debug.Stack())
 			}
 		}()
-		keyDown := false
+		down := make([]bool, len(timing.ToggleVKs))
 		for ctx.Err() == nil {
-			if PollKeyToggle(&keyDown, timing.ToggleVK) {
-				onToggle()
+			for i, vk := range timing.ToggleVKs {
+				if PollKeyToggle(&down[i], vk) {
+					onToggle(vk)
+				}
 			}
 			time.Sleep(timing.PollInterval)
 		}

@@ -16,25 +16,35 @@ type keyChainSlotWidgets struct {
 	delayEdit *walk.NumberEdit
 }
 
-type keychainController struct {
+type keychainSwitchUI struct {
+	group    *walk.GroupBox
 	slots    [runner.KeyChainSlotCount]keyChainSlotWidgets
 	keyVKs   [runner.KeyChainSlotCount]int32
 	clearBtn *walk.PushButton
 }
 
-func (c *keychainController) setKeyText(index int, vk int32) {
+type keychainController struct {
+	switches     [runner.KeyChainCount]keychainSwitchUI
+	visibleCount int
+	addBtn       *walk.PushButton
+}
+
+func (c *keychainController) setKeyText(switchIdx, slotIdx int, vk int32) {
 	text := "None"
 	if vk != 0 {
 		text = runner.KeyName(vk)
 	}
-	c.slots[index].keyEdit.SetText(text)
+	c.switches[switchIdx].slots[slotIdx].keyEdit.SetText(text)
 }
 
 func (c *keychainController) config(logFn func(string)) runner.KeyChainConfig {
 	cfg := runner.KeyChainConfig{Log: logFn}
-	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		cfg.Keys[i] = c.keyVKs[i]
-		cfg.DelaysMs[i] = int(c.slots[i].delayEdit.Value())
+	for i := 0; i < c.visibleCount; i++ {
+		sw := &c.switches[i]
+		for j := 0; j < runner.KeyChainSlotCount; j++ {
+			cfg.Switches[i].Keys[j] = sw.keyVKs[j]
+			cfg.Switches[i].DelaysMs[j] = int(sw.slots[j].delayEdit.Value())
+		}
 	}
 	return cfg
 }
@@ -47,28 +57,56 @@ func (a *guiApp) buildKeyChainTab(page *walk.TabPage) error {
 		return err
 	}
 
-	if err := a.buildKeyChainGroup(page); err != nil {
+	a.keychain.visibleCount = 1
+	for i := 0; i < runner.KeyChainCount; i++ {
+		if err := a.buildKeyChainGroup(page, i); err != nil {
+			return err
+		}
+		if i > 0 {
+			a.keychain.switches[i].group.SetVisible(false)
+		}
+	}
+
+	addRow, err := walk.NewComposite(page)
+	if err != nil {
 		return err
 	}
+	addLayout := walk.NewHBoxLayout()
+	addLayout.SetSpacing(10)
+	if err := addRow.SetLayout(addLayout); err != nil {
+		return err
+	}
+
+	a.keychain.addBtn, err = walk.NewPushButton(addRow)
+	if err != nil {
+		return err
+	}
+	if err := a.keychain.addBtn.SetText("+ Add switch"); err != nil {
+		return err
+	}
+	a.keychain.addBtn.Clicked().Attach(a.onAddKeyChainSwitch)
+	a.updateKeyChainAddButton()
 
 	hint, err := walk.NewLabel(page)
 	if err != nil {
 		return err
 	}
-	if err := hint.SetText("Key 1 is the trigger. Tap it to run the chain once; hold it to loop."); err != nil {
+	if err := hint.SetText("Key 1 is the trigger for each switch. Tap it to run the chain once; hold it to loop."); err != nil {
 		return err
 	}
 	return nil
 }
 
-// buildKeyChainGroup creates the Switch 1 group box with labels, step columns,
-// step links, and the Clear button.
-func (a *guiApp) buildKeyChainGroup(page *walk.TabPage) error {
+// buildKeyChainGroup creates Switch N with labels, step columns, links, and Clear.
+func (a *guiApp) buildKeyChainGroup(page *walk.TabPage, index int) error {
+	sw := &a.keychain.switches[index]
+
 	chainGB, err := walk.NewGroupBox(page)
 	if err != nil {
 		return err
 	}
-	if err := chainGB.SetTitle("Switch 1"); err != nil {
+	sw.group = chainGB
+	if err := chainGB.SetTitle(fmt.Sprintf("Switch %d", index+1)); err != nil {
 		return err
 	}
 	chainLayout := walk.NewVBoxLayout()
@@ -77,7 +115,6 @@ func (a *guiApp) buildKeyChainGroup(page *walk.TabPage) error {
 		return err
 	}
 
-	// Main row: labels | steps
 	chainRow, err := walk.NewComposite(chainGB)
 	if err != nil {
 		return err
@@ -92,11 +129,10 @@ func (a *guiApp) buildKeyChainGroup(page *walk.TabPage) error {
 	if err := a.buildKeyChainLabels(chainRow); err != nil {
 		return err
 	}
-	if err := a.buildKeyChainSteps(chainRow); err != nil {
+	if err := a.buildKeyChainSteps(chainRow, index); err != nil {
 		return err
 	}
 
-	// Clear button row
 	btnRow, err := walk.NewComposite(chainGB)
 	if err != nil {
 		return err
@@ -108,18 +144,20 @@ func (a *guiApp) buildKeyChainGroup(page *walk.TabPage) error {
 	}
 	applyKeyChainSurface(btnRow)
 
-	a.keychain.clearBtn, err = walk.NewPushButton(btnRow)
+	sw.clearBtn, err = walk.NewPushButton(btnRow)
 	if err != nil {
 		return err
 	}
-	if err := a.keychain.clearBtn.SetText("Clear"); err != nil {
+	if err := sw.clearBtn.SetText("Clear"); err != nil {
 		return err
 	}
-	a.keychain.clearBtn.Clicked().Attach(a.clearKeyChain)
+	switchIdx := index
+	sw.clearBtn.Clicked().Attach(func() {
+		a.clearKeyChainSwitch(switchIdx)
+	})
 	return nil
 }
 
-// buildKeyChainLabels creates the Keys/Delay(ms) label column.
 func (a *guiApp) buildKeyChainLabels(parent walk.Container) error {
 	labelsCol, err := walk.NewComposite(parent)
 	if err != nil {
@@ -168,8 +206,7 @@ func (a *guiApp) buildKeyChainLabels(parent walk.Container) error {
 	return nil
 }
 
-// buildKeyChainSteps creates the step column with all 7 key slots and links.
-func (a *guiApp) buildKeyChainSteps(parent walk.Container) error {
+func (a *guiApp) buildKeyChainSteps(parent walk.Container, switchIdx int) error {
 	stepsRow, err := walk.NewComposite(parent)
 	if err != nil {
 		return err
@@ -183,7 +220,7 @@ func (a *guiApp) buildKeyChainSteps(parent walk.Container) error {
 
 	stepHeight := keyChainStepHeight()
 	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		if err := a.buildKeyChainStep(stepsRow, i, stepHeight); err != nil {
+		if err := a.buildKeyChainStep(stepsRow, switchIdx, i, stepHeight); err != nil {
 			return err
 		}
 		if i < runner.KeyChainSlotCount-1 {
@@ -195,7 +232,7 @@ func (a *guiApp) buildKeyChainSteps(parent walk.Container) error {
 	return nil
 }
 
-func (a *guiApp) buildKeyChainStep(parent walk.Container, index, height int) error {
+func (a *guiApp) buildKeyChainStep(parent walk.Container, switchIdx, slotIdx, height int) error {
 	step, err := walk.NewComposite(parent)
 	if err != nil {
 		return err
@@ -210,7 +247,7 @@ func (a *guiApp) buildKeyChainStep(parent walk.Container, index, height int) err
 	}
 	applyKeyChainSurface(step)
 
-	w := &a.keychain.slots[index]
+	w := &a.keychain.switches[switchIdx].slots[slotIdx]
 	w.keyEdit, err = walk.NewLineEdit(step)
 	if err != nil {
 		return err
@@ -221,11 +258,11 @@ func (a *guiApp) buildKeyChainStep(parent walk.Container, index, height int) err
 	if err := w.keyEdit.SetMinMaxSize(walk.Size{Width: keyChainKeyFieldWidth, Height: keyChainFieldHeight}, walk.Size{Width: keyChainKeyFieldWidth, Height: keyChainFieldHeight}); err != nil {
 		return err
 	}
-	a.keychain.setKeyText(index, 0)
-	slot := index
+	a.keychain.setKeyText(switchIdx, slotIdx, 0)
+	si, slot := switchIdx, slotIdx
 	w.keyEdit.MouseDown().Attach(func(_ int, _ int, button walk.MouseButton) {
 		if button == walk.LeftButton {
-			a.bindKeyChainKey(slot)
+			a.bindKeyChainKey(si, slot)
 		}
 	})
 
@@ -275,12 +312,30 @@ func (a *guiApp) buildKeyChainStepLink(parent walk.Container, height int) error 
 	)
 }
 
+func (a *guiApp) onAddKeyChainSwitch() {
+	if a.keychain.visibleCount >= runner.KeyChainCount {
+		return
+	}
+	a.keychain.switches[a.keychain.visibleCount].group.SetVisible(true)
+	a.keychain.visibleCount++
+	a.updateKeyChainAddButton()
+	a.setKeyChainConfigEnabled(a.isViiperReady())
+}
+
+func (a *guiApp) updateKeyChainAddButton() {
+	if a.keychain.addBtn == nil {
+		return
+	}
+	atMax := a.keychain.visibleCount >= runner.KeyChainCount
+	a.keychain.addBtn.SetVisible(!atMax)
+}
+
 func (a *guiApp) syncKeyChainSettings() {
 	if !a.isStarted() {
 		return
 	}
 
-	cfg :=	a.keychain.config(a.appendLog)
+	cfg := a.keychain.config(a.appendLog)
 	a.mu.Lock()
 	kc := a.keychainRunner
 	a.mu.Unlock()
@@ -303,12 +358,18 @@ func (a *guiApp) syncKeyChainSettings() {
 }
 
 func (a *guiApp) setKeyChainConfigEnabled(enabled bool) {
-	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		a.keychain.slots[i].keyEdit.SetEnabled(enabled)
-		a.keychain.slots[i].delayEdit.SetEnabled(enabled)
+	for i := 0; i < a.keychain.visibleCount; i++ {
+		sw := &a.keychain.switches[i]
+		for j := 0; j < runner.KeyChainSlotCount; j++ {
+			sw.slots[j].keyEdit.SetEnabled(enabled)
+			sw.slots[j].delayEdit.SetEnabled(enabled)
+		}
+		if sw.clearBtn != nil {
+			sw.clearBtn.SetEnabled(enabled)
+		}
 	}
-	if a.keychain.clearBtn != nil {
-		a.keychain.clearBtn.SetEnabled(enabled)
+	if a.keychain.addBtn != nil {
+		a.keychain.addBtn.SetEnabled(enabled && a.keychain.visibleCount < runner.KeyChainCount)
 	}
 }
 
@@ -353,34 +414,40 @@ func (a *guiApp) stopKeyChainRunner() {
 	}
 }
 
-func (a *guiApp) clearKeyChain() {
+func (a *guiApp) clearKeyChainSwitch(switchIdx int) {
+	if switchIdx < 0 || switchIdx >= a.keychain.visibleCount {
+		return
+	}
+	sw := &a.keychain.switches[switchIdx]
 	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		a.keychain.keyVKs[i] = 0
-		a.keychain.setKeyText(i, 0)
-		a.keychain.slots[i].delayEdit.SetValue(0)
+		sw.keyVKs[i] = 0
+		a.keychain.setKeyText(switchIdx, i, 0)
+		sw.slots[i].delayEdit.SetValue(0)
 	}
 	a.syncKeyChainSettings()
-	a.appendLog("KeyChain cleared")
+	a.appendLog(fmt.Sprintf("KeyChain switch %d cleared", switchIdx+1))
 }
 
-func (a *guiApp) bindKeyChainKey(index int) {
+func (a *guiApp) bindKeyChainKey(switchIdx, slotIdx int) {
 	a.bindKeyFlow(
 		func() bool {
-			if !a.isViiperReady() || a.bindingActive || index < 0 || index >= runner.KeyChainSlotCount {
+			if !a.isViiperReady() || a.bindingActive ||
+				switchIdx < 0 || switchIdx >= a.keychain.visibleCount ||
+				slotIdx < 0 || slotIdx >= runner.KeyChainSlotCount {
 				return false
 			}
 			a.bindingActive = true
-			a.keychain.slots[index].keyEdit.SetEnabled(false)
+			a.keychain.switches[switchIdx].slots[slotIdx].keyEdit.SetEnabled(false)
 			return true
 		},
-		fmt.Sprintf("Press a key for chain slot %d (%s timeout)...", index+1, runner.KeyBindTimeout),
+		fmt.Sprintf("Press a key for switch %d slot %d (%s timeout)...", switchIdx+1, slotIdx+1, runner.KeyBindTimeout),
 		func() { a.bindingActive = false },
 		func() { a.setKeyChainConfigEnabled(a.isViiperReady()) },
 		func(vk int32) {
 			a.unsetKeyBinding(vk)
-			a.keychain.keyVKs[index] = vk
-			a.keychain.setKeyText(index, vk)
-			a.appendLog(fmt.Sprintf("Chain key %d: %s", index+1, runner.KeyName(vk)))
+			a.keychain.switches[switchIdx].keyVKs[slotIdx] = vk
+			a.keychain.setKeyText(switchIdx, slotIdx, vk)
+			a.appendLog(fmt.Sprintf("Switch %d key %d: %s", switchIdx+1, slotIdx+1, runner.KeyName(vk)))
 			a.syncKeyChainSettings()
 		},
 	)

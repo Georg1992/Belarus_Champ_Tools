@@ -136,7 +136,7 @@ func (a *guiApp) buildToolsSection(parent walk.Container) error {
 	if err != nil {
 		return err
 	}
-	if err := toggleHint.SetText("Toggle: End"); err != nil {
+	if err := toggleHint.SetText("Toggle: End / F12"); err != nil {
 		return err
 	}
 	toggleHint.SetFont(hintFont)

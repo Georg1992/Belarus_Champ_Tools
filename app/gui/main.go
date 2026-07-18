@@ -213,7 +213,7 @@ func (a *guiApp) setupMainWindow(mw *walk.MainWindow) error {
 }
 
 // startBackgroundMonitors starts the VIIPER connectivity monitor and the
-// End-key toggle watcher. Both run for the lifetime of the app.
+// End/F12 toggle watcher. Both run for the lifetime of the app.
 func (a *guiApp) startBackgroundMonitors() {
 	a.viiperMonitor = startViiperMonitor(context.Background(), func(active bool) {
 		a.mainWindow.Synchronize(func() {
@@ -240,10 +240,10 @@ func (a *guiApp) startBackgroundMonitors() {
 		})
 	})
 
-	runner.StartEndKeyWatcher(context.Background(), func() {
+	runner.StartEndKeyWatcher(context.Background(), func(vk int32) {
 		a.mainWindow.Synchronize(func() {
 			if a.isStarted() {
-				a.appendLog("End pressed — stopping tools")
+				a.appendLog(fmt.Sprintf("%s pressed — stopping tools", runner.KeyName(vk)))
 				a.onStop()
 			} else {
 				a.onStart()
@@ -776,14 +776,17 @@ func (a *guiApp) unsetKeyBinding(vk int32) {
 		a.syncAutoPotSettings()
 		return
 	}
-	// Check keychain slots.
-	for i := 0; i < runner.KeyChainSlotCount; i++ {
-		if a.keychain.keyVKs[i] == vk {
-			a.keychain.keyVKs[i] = 0
-			a.keychain.setKeyText(i, 0)
-			a.appendLog(fmt.Sprintf("Key %s removed from Chain slot %d (reassigned)", runner.KeyName(vk), i+1))
-			a.syncKeyChainSettings()
-			return
+	// Check keychain slots across all visible switches.
+	for si := 0; si < a.keychain.visibleCount; si++ {
+		sw := &a.keychain.switches[si]
+		for i := 0; i < runner.KeyChainSlotCount; i++ {
+			if sw.keyVKs[i] == vk {
+				sw.keyVKs[i] = 0
+				a.keychain.setKeyText(si, i, 0)
+				a.appendLog(fmt.Sprintf("Key %s removed from Switch %d slot %d (reassigned)", runner.KeyName(vk), si+1, i+1))
+				a.syncKeyChainSettings()
+				return
+			}
 		}
 	}
 }

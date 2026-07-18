@@ -16,9 +16,9 @@ const (
 	SessionCloseWait  = 10 * time.Second
 )
 
-// ToggleVK is the virtual-key code for the stop/start toggle watcher.
-// "End" key (VK_END == 0x23) toggles the app between running and stopped.
-const ToggleVK int32 = 0x23
+// ToggleVKs are the virtual-key codes for the stop/start toggle watcher.
+// End (0x23) and F12 (0x7B) both toggle the app between running and stopped.
+var ToggleVKs = []int32{0x23, 0x7B}
 
 // DefaultAPIAddr is the default address of the embedded VIIPER API server.
 // Port 3242 verified at runtime (2026-07-02): "API listening addr=[::]:3242".

@@ -11,17 +11,20 @@ import (
 )
 
 var (
-	gdi32               = windows.NewLazySystemDLL("gdi32.dll")
-	procCreateCompatDC  = gdi32.NewProc("CreateCompatibleDC")
-	procCreateCompatBmp = gdi32.NewProc("CreateCompatibleBitmap")
-	procSelectObject    = gdi32.NewProc("SelectObject")
-	procBitBlt          = gdi32.NewProc("BitBlt")
-	procDeleteDC        = gdi32.NewProc("DeleteDC")
-	procDeleteObject    = gdi32.NewProc("DeleteObject")
-	procGetDIBits       = gdi32.NewProc("GetDIBits")
+	gdi32                = windows.NewLazySystemDLL("gdi32.dll")
+	procCreateCompatDC   = gdi32.NewProc("CreateCompatibleDC")
+	procCreateDIBSection = gdi32.NewProc("CreateDIBSection")
+	procSelectObject     = gdi32.NewProc("SelectObject")
+	procBitBlt           = gdi32.NewProc("BitBlt")
+	procDeleteDC         = gdi32.NewProc("DeleteDC")
+	procDeleteObject     = gdi32.NewProc("DeleteObject")
 )
 
-const gdiSrcCopy = 0x00CC0020
+const (
+	gdiSrcCopy     = 0x00CC0020
+	dibRGBColors   = 0
+	biRGB          = 0
+)
 
 // ScreenSize returns the primary monitor dimensions.
 func ScreenSize() (w, h int) {
@@ -31,67 +34,73 @@ func ScreenSize() (w, h int) {
 }
 
 // CaptureScreenRegion grabs a screen rectangle into an RGBA image.
+//
+// Uses CreateDIBSection + BitBlt so pixels land directly in a GDI-owned
+// buffer. This avoids CreateCompatibleBitmap + GetDIBits, which fails on
+// some GPU drivers / HDR / 10-bit displays even when the bitmap is correctly
+// deselected from its DC (MSDN requirement).
 func CaptureScreenRegion(roi ScreenROI) (*image.RGBA, error) {
 	if roi.W <= 0 || roi.H <= 0 {
 		return nil, fmt.Errorf("invalid capture roi %v", roi)
 	}
 
-	hdcScreen, _, _ := procGetDC.Call(0)
+	hdcScreen, _, err := procGetDC.Call(0)
 	if hdcScreen == 0 {
-		return nil, fmt.Errorf("GetDC failed")
+		return nil, fmt.Errorf("GetDC failed: %w", err)
 	}
 	defer procReleaseDC.Call(0, hdcScreen)
 
-	hdcMem, _, _ := procCreateCompatDC.Call(hdcScreen)
+	hdcMem, _, err := procCreateCompatDC.Call(hdcScreen)
 	if hdcMem == 0 {
-		return nil, fmt.Errorf("CreateCompatibleDC failed")
+		return nil, fmt.Errorf("CreateCompatibleDC failed: %w", err)
 	}
 	defer procDeleteDC.Call(hdcMem)
 
-	hbmp, _, _ := procCreateCompatBmp.Call(hdcScreen, uintptr(roi.W), uintptr(roi.H))
-	if hbmp == 0 {
-		return nil, fmt.Errorf("CreateCompatibleBitmap failed")
+	var bmi bitmapInfo
+	bmi.Header.Size = uint32(unsafe.Sizeof(bmi.Header))
+	bmi.Header.Width = int32(roi.W)
+	bmi.Header.Height = -int32(roi.H) // top-down
+	bmi.Header.Planes = 1
+	bmi.Header.BitCount = 32
+	bmi.Header.Compression = biRGB
+
+	var bits unsafe.Pointer
+	hbmp, _, err := procCreateDIBSection.Call(
+		hdcMem,
+		uintptr(unsafe.Pointer(&bmi)),
+		dibRGBColors,
+		uintptr(unsafe.Pointer(&bits)),
+		0,
+		0,
+	)
+	if hbmp == 0 || bits == nil {
+		return nil, fmt.Errorf("CreateDIBSection failed: %w", err)
 	}
 	defer procDeleteObject.Call(hbmp)
 
-	old, _, _ := procSelectObject.Call(hdcMem, hbmp)
+	old, _, err := procSelectObject.Call(hdcMem, hbmp)
+	if old == 0 {
+		return nil, fmt.Errorf("SelectObject failed: %w", err)
+	}
 	defer procSelectObject.Call(hdcMem, old)
 
-	r, _, _ := procBitBlt.Call(
+	r, _, err := procBitBlt.Call(
 		hdcMem, 0, 0, uintptr(roi.W), uintptr(roi.H),
 		hdcScreen, uintptr(roi.X), uintptr(roi.Y), gdiSrcCopy,
 	)
 	if r == 0 {
-		return nil, fmt.Errorf("BitBlt failed")
+		return nil, fmt.Errorf("BitBlt failed: %w", err)
 	}
 
-	// Deselect the bitmap from the memory DC BEFORE calling GetDIBits.
-	// MSDN: "The bitmap identified by the hbmp parameter must not be
-	// selected into a device context when the application calls this
-	// function."
-	procSelectObject.Call(hdcMem, old)
-
+	n := roi.W * roi.H * 4
+	src := unsafe.Slice((*byte)(bits), n)
 	out := image.NewRGBA(image.Rect(0, 0, roi.W, roi.H))
-	var bmi bitmapInfo
-	bmi.Header.Size = uint32(unsafe.Sizeof(bmi.Header))
-	bmi.Header.Width = int32(roi.W)
-	bmi.Header.Height = -int32(roi.H)
-	bmi.Header.Planes = 1
-	bmi.Header.BitCount = 32
-	bmi.Header.Compression = 0
-
-	ptr := unsafe.Pointer(&out.Pix[0])
-	ret, _, _ := procGetDIBits.Call(
-		hdcMem, hbmp, 0, uintptr(roi.H),
-		uintptr(ptr), uintptr(unsafe.Pointer(&bmi)), 0,
-	)
-	if ret == 0 {
-		return nil, fmt.Errorf("GetDIBits failed")
-	}
-
-	// GetDIBits returns BGRA; convert to RGBA.
-	for i := 0; i < len(out.Pix); i += 4 {
-		out.Pix[i+0], out.Pix[i+2] = out.Pix[i+2], out.Pix[i+0]
+	// DIB section is BGRA; convert to RGBA.
+	for i := 0; i < n; i += 4 {
+		out.Pix[i+0] = src[i+2]
+		out.Pix[i+1] = src[i+1]
+		out.Pix[i+2] = src[i+0]
+		out.Pix[i+3] = src[i+3]
 	}
 	return out, nil
 }

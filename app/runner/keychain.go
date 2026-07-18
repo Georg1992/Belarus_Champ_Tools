@@ -12,14 +12,27 @@ import (
 	"belarus-champ-tools/runner/internal/timing"
 )
 
-const KeyChainSlotCount = 7
+const (
+	KeyChainSlotCount = 7
+	KeyChainCount     = 5
+)
+
+// KeyChainSwitch is one chain: Keys[0] is the trigger, remaining slots are
+// the sequence to tap while the trigger is held.
+type KeyChainSwitch struct {
+	Keys     [KeyChainSlotCount]int32
+	DelaysMs [KeyChainSlotCount]int
+}
+
+func (s KeyChainSwitch) Active() bool {
+	return s.Keys[0] != 0
+}
 
 // KeyChainConfig is what NewKeyChain takes. Session is the canonical
 // session.InputSession — same interface other runners use.
 type KeyChainConfig struct {
 	Session  session.InputSession
-	Keys     [KeyChainSlotCount]int32
-	DelaysMs [KeyChainSlotCount]int
+	Switches [KeyChainCount]KeyChainSwitch
 	Log      func(string)
 }
 
@@ -29,8 +42,14 @@ func (c *KeyChainConfig) applyDefaults() {
 	}
 }
 
+// Active reports whether any switch has a trigger key bound.
 func (c KeyChainConfig) Active() bool {
-	return c.Keys[0] != 0
+	for _, sw := range c.Switches {
+		if sw.Active() {
+			return true
+		}
+	}
+	return false
 }
 
 // KeyChainRunner runs the macro.
@@ -83,7 +102,7 @@ func (k *KeyChainRunner) Stop() { k.lc.Stop() }
 
 func (k *KeyChainRunner) Wait() { k.lc.Wait() }
 
-func (k *KeyChainRunner) run(ctx context.Context, cfg KeyChainConfig) {
+func (k *KeyChainRunner) run(ctx context.Context, _ KeyChainConfig) {
 	for {
 		if ctx.Err() != nil {
 			return
@@ -93,40 +112,40 @@ func (k *KeyChainRunner) run(ctx context.Context, cfg KeyChainConfig) {
 			timing.Sleep(ctx, timing.PollInterval)
 			continue
 		}
-		trigger := current.Keys[0]
 
-		if !PhysicalKeyDown(trigger) {
-			timing.Sleep(ctx, timing.PollInterval)
-			continue
-		}
-
-		for PhysicalKeyDown(trigger) && ctx.Err() == nil {
-			current = k.settings()
-			if !current.Active() {
-				break
+		anyHeld := false
+		for i, sw := range current.Switches {
+			if !sw.Active() {
+				continue
 			}
-			if err := k.executeChain(ctx, current); err != nil {
+			trigger := sw.Keys[0]
+			if !PhysicalKeyDown(trigger) {
+				continue
+			}
+			anyHeld = true
+			if err := k.executeChain(ctx, current.Session, sw); err != nil {
 				if ctx.Err() != nil {
 					return
 				}
-				current.Log(fmt.Sprintf("KeyChain failed: %v", err))
+				current.Log(fmt.Sprintf("KeyChain switch %d failed: %v", i+1, err))
 				timing.Sleep(ctx, timing.PollInterval)
-				continue
 			}
+		}
+		if !anyHeld {
+			timing.Sleep(ctx, timing.PollInterval)
 		}
 	}
 }
 
-func (k *KeyChainRunner) executeChain(ctx context.Context, cfg KeyChainConfig) error {
-	sess := cfg.Session
+func (k *KeyChainRunner) executeChain(ctx context.Context, sess session.InputSession, sw KeyChainSwitch) error {
 	for i := 0; i < KeyChainSlotCount; i++ {
-		if cfg.Keys[i] == 0 {
+		if sw.Keys[i] == 0 {
 			continue
 		}
-		if err := sess.TapKey(cfg.Keys[i], timing.KeyTapHold); err != nil {
+		if err := sess.TapKey(sw.Keys[i], timing.KeyTapHold); err != nil {
 			return err
 		}
-		delay := time.Duration(cfg.DelaysMs[i]) * time.Millisecond
+		delay := time.Duration(sw.DelaysMs[i]) * time.Millisecond
 		timing.Sleep(ctx, delay)
 		if ctx.Err() != nil {
 			return ctx.Err()

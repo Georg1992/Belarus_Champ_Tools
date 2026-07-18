@@ -126,7 +126,7 @@ func (a *guiApp) buildClickerTab(page *walk.TabPage) error {
 	if err != nil {
 		return err
 	}
-	if err := configHint.SetText("After Start, add keys anytime — no restart needed. Hold any mapped key in each group to run that clicker. End toggles start/stop."); err != nil {
+	if err := configHint.SetText("After Start, add keys anytime — no restart needed. Hold any mapped key in each group to run that clicker. End or F12 toggles start/stop."); err != nil {
 		return err
 	}
 

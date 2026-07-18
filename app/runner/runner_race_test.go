@@ -141,9 +141,11 @@ func TestKeyChainRunnerStress(t *testing.T) {
 	sess := &mockSession{}
 	r := NewKeyChain(KeyChainConfig{
 		Session: sess,
-		Keys:    [KeyChainSlotCount]int32{'A', 'B', 0, 0, 0, 0, 0},
-		DelaysMs: [KeyChainSlotCount]int{
-			1, 1, 0, 0, 0, 0, 0,
+		Switches: [KeyChainCount]KeyChainSwitch{
+			{
+				Keys:     [KeyChainSlotCount]int32{'A', 'B', 0, 0, 0, 0, 0},
+				DelaysMs: [KeyChainSlotCount]int{1, 1, 0, 0, 0, 0, 0},
+			},
 		},
 		Log: func(string) {},
 	})
@@ -165,11 +167,13 @@ func TestKeyChainRunnerStress(t *testing.T) {
 				default:
 					r.UpdateSettings(KeyChainConfig{
 						Session: sess,
-						Keys: [KeyChainSlotCount]int32{
-							int32('A' + rune(n%5)), 0, 0, 0, 0, 0, 0,
+						Switches: [KeyChainCount]KeyChainSwitch{
+							{
+								Keys:     [KeyChainSlotCount]int32{int32('A' + rune(n%5)), 0, 0, 0, 0, 0, 0},
+								DelaysMs: [KeyChainSlotCount]int{1, 0, 0, 0, 0, 0, 0},
+							},
 						},
-						DelaysMs: [KeyChainSlotCount]int{1, 0, 0, 0, 0, 0, 0},
-						Log:      func(string) {},
+						Log: func(string) {},
 					})
 					n++
 				}

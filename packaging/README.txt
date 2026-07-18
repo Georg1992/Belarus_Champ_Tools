@@ -14,7 +14,7 @@ Extract this ZIP, then:
 
 3. Double-click Belarus Champ Tools.exe in this folder
    Click Start, configure your tools, then open your game.
-   Press End to toggle start/stop.
+   Press End or F12 to toggle start/stop.
 
 
 Uninstall
