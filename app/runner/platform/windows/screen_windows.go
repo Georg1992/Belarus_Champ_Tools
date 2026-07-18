@@ -21,15 +21,21 @@ var (
 )
 
 const (
-	gdiSrcCopy     = 0x00CC0020
-	dibRGBColors   = 0
-	biRGB          = 0
+	gdiSrcCopy   = 0x00CC0020
+	dibRGBColors = 0
+	biRGB        = 0
+	bitsPerPixel = 32
+	bytesPerPixel = 4
+
+	// GetSystemMetrics indices (winuser.h).
+	smCXScreen = 0
+	smCYScreen = 1
 )
 
 // ScreenSize returns the primary monitor dimensions.
 func ScreenSize() (w, h int) {
-	sw, _, _ := procGetSystemMetrics.Call(0)
-	sh, _, _ := procGetSystemMetrics.Call(1)
+	sw, _, _ := procGetSystemMetrics.Call(smCXScreen)
+	sh, _, _ := procGetSystemMetrics.Call(smCYScreen)
 	return int(sw), int(sh)
 }
 
@@ -61,7 +67,7 @@ func CaptureScreenRegion(roi ScreenROI) (*image.RGBA, error) {
 	bmi.Header.Width = int32(roi.W)
 	bmi.Header.Height = -int32(roi.H) // top-down
 	bmi.Header.Planes = 1
-	bmi.Header.BitCount = 32
+	bmi.Header.BitCount = bitsPerPixel
 	bmi.Header.Compression = biRGB
 
 	var bits unsafe.Pointer
@@ -92,11 +98,11 @@ func CaptureScreenRegion(roi ScreenROI) (*image.RGBA, error) {
 		return nil, fmt.Errorf("BitBlt failed: %w", err)
 	}
 
-	n := roi.W * roi.H * 4
+	n := roi.W * roi.H * bytesPerPixel
 	src := unsafe.Slice((*byte)(bits), n)
 	out := image.NewRGBA(image.Rect(0, 0, roi.W, roi.H))
 	// DIB section is BGRA; convert to RGBA.
-	for i := 0; i < n; i += 4 {
+	for i := 0; i < n; i += bytesPerPixel {
 		out.Pix[i+0] = src[i+2]
 		out.Pix[i+1] = src[i+1]
 		out.Pix[i+2] = src[i+0]

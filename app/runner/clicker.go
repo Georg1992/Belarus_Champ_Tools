@@ -125,7 +125,7 @@ func (r *Runner) run(ctx context.Context, _ Config) {
 			delay := time.Duration(delayMs) * time.Millisecond
 
 			if nextDue[i].IsZero() || !now.Before(nextDue[i]) {
-				if err := r.fireSlot(current.Session, slot, delay); err != nil {
+				if err := r.fireSlot(current.Session, slot); err != nil {
 					if ctx.Err() != nil {
 						return
 					}
@@ -148,8 +148,8 @@ func (r *Runner) run(ctx context.Context, _ Config) {
 		}
 
 		wait := time.Until(earliest)
-		if wait < time.Millisecond {
-			wait = time.Millisecond
+		if wait < timing.MinPollWait {
+			wait = timing.MinPollWait
 		}
 		if wait > timing.PollInterval {
 			wait = timing.PollInterval
@@ -158,12 +158,12 @@ func (r *Runner) run(ctx context.Context, _ Config) {
 	}
 }
 
-func (r *Runner) fireSlot(sess session.InputSession, slot ClickerSlot, delay time.Duration) error {
+func (r *Runner) fireSlot(sess session.InputSession, slot ClickerSlot) error {
 	if err := sess.TapKey(slot.TriggerVK, timing.KeyTapHold); err != nil {
 		return fmt.Errorf("clicker key %s failed: %v", KeyName(slot.TriggerVK), err)
 	}
 	if slot.MouseClick {
-		if err := sess.MouseClick(delay); err != nil {
+		if err := sess.MouseClick(timing.MouseClickHold); err != nil {
 			return fmt.Errorf("clicker mouse click failed: %v", err)
 		}
 	}

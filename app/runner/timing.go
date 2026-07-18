@@ -14,6 +14,10 @@ import (
 var (
 	KeyBindTimeout = timing.KeyBindTimeout
 	DefaultAPIAddr = timing.DefaultAPIAddr
-	PollInterval   = timing.PollInterval
-	ToggleVKs      = timing.ToggleVKs
 )
+
+// ToggleKeyLabel returns a short UI string for the start/stop hotkeys
+// (e.g. "End / F12").
+func ToggleKeyLabel() string {
+	return timing.ToggleKeyLabel()
+}

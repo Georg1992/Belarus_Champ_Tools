@@ -24,18 +24,13 @@ type clickerSlotWidgets struct {
 	delayEdit *walk.LineEdit
 }
 
-// clickerController owns clicker + timer key state and config building.
+// clickerController owns clicker UI state and config building.
 type clickerController struct {
 	slots           [runner.ClickerSlotCount]clickerSlotWidgets
 	triggerVK       [runner.ClickerSlotCount]int32
 	lastLoggedDelay [runner.ClickerSlotCount]int
 	visibleCount    int
 	addBtn          *walk.PushButton
-
-	timerSlots        [runner.TimerKeySlotCount]timerSlotWidgets
-	timerKeyVKs       [runner.TimerKeySlotCount]int32
-	timerVisibleCount int
-	timerAddBtn       *walk.PushButton
 }
 
 func (c *clickerController) config(logFn func(string)) runner.Config {
@@ -59,39 +54,6 @@ func (c *clickerController) delayMs(index int) int {
 		return runner.DefaultDelayMs
 	}
 	return v
-}
-
-func (c *clickerController) timerConfig(logFn func(string)) runner.TimerKeyConfig {
-	cfg := runner.TimerKeyConfig{Log: logFn}
-	for i := 0; i < c.timerVisibleCount; i++ {
-		cfg.Slots[i] = runner.TimerSlot{
-			Enabled:    c.timerSlots[i].enabledCB.Checked(),
-			KeyVK:      c.timerKeyVKs[i],
-			IntervalMs: c.timerIntervalMs(i),
-		}
-	}
-	return cfg
-}
-
-func (c *clickerController) timerWanted(logFn func(string)) runner.TimerKeyConfig {
-	cfg := c.timerConfig(logFn)
-	for i := 0; i < c.timerVisibleCount; i++ {
-		if !cfg.Slots[i].Enabled || cfg.Slots[i].KeyVK == 0 {
-			cfg.Slots[i].Enabled = false
-		}
-	}
-	return cfg
-}
-
-func (c *clickerController) timerIntervalMs(index int) int {
-	if index < 0 || index >= c.timerVisibleCount {
-		return runner.DefaultTimerKeyIntervalMs
-	}
-	v, err := strconv.Atoi(c.timerSlots[index].intervalEdit.Text())
-	if err != nil || v <= 0 {
-		return runner.DefaultTimerKeyIntervalMs
-	}
-	return v * 1000
 }
 
 func (a *guiApp) buildClickerTab(page *walk.TabPage) error {
@@ -307,22 +269,11 @@ func (a *guiApp) updateClickerRemoveButtons() {
 	}
 }
 
-func (a *guiApp) clickerDelayMs(index int) int {
-	if index < 0 || index >= a.clicker.visibleCount {
-		return runner.DefaultDelayMs
-	}
-	v, err := strconv.Atoi(a.clicker.slots[index].delayEdit.Text())
-	if err != nil || v <= 0 {
-		return runner.DefaultDelayMs
-	}
-	return v
-}
-
 func (a *guiApp) logClickerDelayIfChanged(index int) {
 	if index < 0 || index >= a.clicker.visibleCount {
 		return
 	}
-	delay := a.clickerDelayMs(index)
+	delay := a.clicker.delayMs(index)
 	if delay == a.clicker.lastLoggedDelay[index] {
 		return
 	}

@@ -33,6 +33,7 @@ type guiApp struct {
 	logItems   []string
 
 	clicker  clickerController
+	timer    timerController
 	autopot  autopotController
 	keychain keychainController
 
@@ -213,7 +214,7 @@ func (a *guiApp) setupMainWindow(mw *walk.MainWindow) error {
 }
 
 // startBackgroundMonitors starts the VIIPER connectivity monitor and the
-// End/F12 toggle watcher. Both run for the lifetime of the app.
+// start/stop toggle-key watcher. Both run for the lifetime of the app.
 func (a *guiApp) startBackgroundMonitors() {
 	a.viiperMonitor = startViiperMonitor(context.Background(), func(active bool) {
 		a.mainWindow.Synchronize(func() {
@@ -240,7 +241,7 @@ func (a *guiApp) startBackgroundMonitors() {
 		})
 	})
 
-	runner.StartEndKeyWatcher(context.Background(), func(vk int32) {
+	runner.StartToggleKeyWatcher(context.Background(), func(vk int32) {
 		a.mainWindow.Synchronize(func() {
 			if a.isStarted() {
 				a.appendLog(fmt.Sprintf("%s pressed — stopping tools", runner.KeyName(vk)))
@@ -404,6 +405,12 @@ func (a *guiApp) isStarted() bool {
 		return true
 	}
 	if a.autopotRunner != nil && a.autopotRunner.Running() {
+		return true
+	}
+	if a.timerKeyRunner != nil && a.timerKeyRunner.Running() {
+		return true
+	}
+	if a.keychainRunner != nil && a.keychainRunner.Running() {
 		return true
 	}
 	return false
@@ -616,7 +623,7 @@ func (a *guiApp) startRemainingRunners(session runner.InputSession, logFn func(s
 	autopotCfg := a.autopot.wanted(a.autopotModeFn(), a.autopotStatusFn(), logFn)
 	autopotCfg.Core.Session = session
 	autopotCfg.Core.Log = logFn
-	timerCfg := a.clicker.timerWanted(logFn)
+	timerCfg := a.timer.wanted(logFn)
 	timerCfg.Session = session
 	timerCfg.Log = logFn
 
@@ -749,10 +756,10 @@ func (a *guiApp) unsetKeyBinding(vk int32) {
 		}
 	}
 	// Check timer keys.
-	for i := 0; i < a.clicker.timerVisibleCount; i++ {
-		if a.clicker.timerKeyVKs[i] == vk {
-			a.clicker.timerKeyVKs[i] = 0
-			a.clicker.timerSlots[i].keyLabel.SetText("none")
+	for i := 0; i < a.timer.visibleCount; i++ {
+		if a.timer.keyVKs[i] == vk {
+			a.timer.keyVKs[i] = 0
+			a.timer.slots[i].keyLabel.SetText("none")
 			a.appendLog(fmt.Sprintf("Key %s removed from Timer %d (reassigned)", runner.KeyName(vk), i+1))
 			a.syncTimerKeySettings()
 			return

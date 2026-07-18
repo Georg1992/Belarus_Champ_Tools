@@ -5,20 +5,47 @@ package timing
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 )
 
 const (
 	PollInterval      = 10 * time.Millisecond
+	MinPollWait       = time.Millisecond
 	CaptureRetryDelay = 50 * time.Millisecond
 	KeyTapHold        = 1 * time.Millisecond
-	KeyBindTimeout    = 5 * time.Second
-	SessionCloseWait  = 10 * time.Second
+	// MouseClickHold is the LMB press duration for clicker mouse clicks.
+	// Kept separate from the clicker inter-fire DelayMs.
+	MouseClickHold = KeyTapHold
+	KeyBindTimeout = 5 * time.Second
+	SessionCloseWait = 10 * time.Second
+)
+
+// Virtual-key codes for the start/stop toggle watcher.
+const (
+	VKEnd = 0x23 // VK_END
+	VKF12 = 0x7B // VK_F12
 )
 
 // ToggleVKs are the virtual-key codes for the stop/start toggle watcher.
-// End (0x23) and F12 (0x7B) both toggle the app between running and stopped.
-var ToggleVKs = []int32{0x23, 0x7B}
+var ToggleVKs = []int32{VKEnd, VKF12}
+
+// ToggleKeyLabel returns a short UI string listing ToggleVKs by name.
+func ToggleKeyLabel() string {
+	names := make([]string, 0, len(ToggleVKs))
+	for _, vk := range ToggleVKs {
+		switch vk {
+		case VKEnd:
+			names = append(names, "End")
+		case VKF12:
+			names = append(names, "F12")
+		default:
+			names = append(names, fmt.Sprintf("VK_0x%02X", vk))
+		}
+	}
+	return strings.Join(names, " / ")
+}
 
 // DefaultAPIAddr is the default address of the embedded VIIPER API server.
 // Port 3242 verified at runtime (2026-07-02): "API listening addr=[::]:3242".

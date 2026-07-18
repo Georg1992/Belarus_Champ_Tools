@@ -13,8 +13,7 @@
 // known collisions in this codebase are `cmd.Start` and `cmd.Process.Wait`
 // (`*exec.Cmd`, in gui/server.go) — they would falsely count as callers
 // of `Runner.Start` / `Runner.Wait`. The unique-name methods
-// (`UpdateSettings`, `SetOnPauseChanged`, `StartPauseWatcher`) are
-// inherently safe — no other type defines them.
+// (`UpdateSettings`) are inherently safe — no other type defines them.
 //
 // Interface-implementation methods (e.g. ViiperSession's InputSession
 // methods) are intentionally excluded — they're called through the

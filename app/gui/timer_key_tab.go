@@ -21,6 +21,47 @@ type timerSlotWidgets struct {
 	intervalEdit *walk.LineEdit
 }
 
+// timerController owns timer-key UI state and config building.
+type timerController struct {
+	slots        [runner.TimerKeySlotCount]timerSlotWidgets
+	keyVKs       [runner.TimerKeySlotCount]int32
+	visibleCount int
+	addBtn       *walk.PushButton
+}
+
+func (c *timerController) config(logFn func(string)) runner.TimerKeyConfig {
+	cfg := runner.TimerKeyConfig{Log: logFn}
+	for i := 0; i < c.visibleCount; i++ {
+		cfg.Slots[i] = runner.TimerSlot{
+			Enabled:    c.slots[i].enabledCB.Checked(),
+			KeyVK:      c.keyVKs[i],
+			IntervalMs: c.intervalMs(i),
+		}
+	}
+	return cfg
+}
+
+func (c *timerController) wanted(logFn func(string)) runner.TimerKeyConfig {
+	cfg := c.config(logFn)
+	for i := 0; i < c.visibleCount; i++ {
+		if !cfg.Slots[i].Enabled || cfg.Slots[i].KeyVK == 0 {
+			cfg.Slots[i].Enabled = false
+		}
+	}
+	return cfg
+}
+
+func (c *timerController) intervalMs(index int) int {
+	if index < 0 || index >= c.visibleCount {
+		return runner.DefaultTimerKeyIntervalMs
+	}
+	v, err := strconv.Atoi(c.slots[index].intervalEdit.Text())
+	if err != nil || v <= 0 {
+		return runner.DefaultTimerKeyIntervalMs
+	}
+	return v * 1000
+}
+
 func (a *guiApp) buildTimerKeySection(page *walk.TabPage) error {
 	timerGB, err := walk.NewGroupBox(page)
 	if err != nil {
@@ -45,13 +86,13 @@ func (a *guiApp) buildTimerKeySection(page *walk.TabPage) error {
 		return err
 	}
 
-	a.clicker.timerVisibleCount = 1
+	a.timer.visibleCount = 1
 	for i := 0; i < runner.TimerKeySlotCount; i++ {
 		if err := a.buildTimerSlotRow(slotsContainer, i); err != nil {
 			return err
 		}
 		if i > 0 {
-			a.clicker.timerSlots[i].row.SetVisible(false)
+			a.timer.slots[i].row.SetVisible(false)
 		}
 	}
 
@@ -65,14 +106,14 @@ func (a *guiApp) buildTimerKeySection(page *walk.TabPage) error {
 		return err
 	}
 
-	a.clicker.timerAddBtn, err = walk.NewPushButton(addRow)
+	a.timer.addBtn, err = walk.NewPushButton(addRow)
 	if err != nil {
 		return err
 	}
-	if err := a.clicker.timerAddBtn.SetText("+ Add timer"); err != nil {
+	if err := a.timer.addBtn.SetText("+ Add timer"); err != nil {
 		return err
 	}
-	a.clicker.timerAddBtn.Clicked().Attach(a.onAddTimer)
+	a.timer.addBtn.Clicked().Attach(a.onAddTimer)
 
 	timerHint, err := walk.NewLabel(timerGB)
 	if err != nil {
@@ -96,7 +137,7 @@ func (a *guiApp) buildTimerSlotRow(parent walk.Container, index int) error {
 		return err
 	}
 
-	w := &a.clicker.timerSlots[index]
+	w := &a.timer.slots[index]
 	w.row = row
 
 	slotLabel, err := walk.NewLabel(row)
@@ -177,59 +218,24 @@ func (a *guiApp) buildTimerSlotRow(parent walk.Container, index int) error {
 }
 
 func (a *guiApp) onAddTimer() {
-	if a.clicker.timerVisibleCount >= runner.TimerKeySlotCount {
+	if a.timer.visibleCount >= runner.TimerKeySlotCount {
 		return
 	}
-	a.clicker.timerSlots[a.clicker.timerVisibleCount].row.SetVisible(true)
-	a.clicker.timerVisibleCount++
+	a.timer.slots[a.timer.visibleCount].row.SetVisible(true)
+	a.timer.visibleCount++
 	a.updateTimerAddButton()
 }
 
 func (a *guiApp) updateTimerAddButton() {
-	if a.clicker.timerAddBtn == nil {
+	if a.timer.addBtn == nil {
 		return
 	}
-	atMax := a.clicker.timerVisibleCount >= runner.TimerKeySlotCount
-	a.clicker.timerAddBtn.SetVisible(!atMax)
-}
-
-func (a *guiApp) timerKeyConfig() runner.TimerKeyConfig {
-	cfg := runner.TimerKeyConfig{
-		Log: a.appendLog,
-	}
-	for i := 0; i < a.clicker.timerVisibleCount; i++ {
-		cfg.Slots[i] = runner.TimerSlot{
-			Enabled:    a.clicker.timerSlots[i].enabledCB.Checked(),
-			KeyVK:      a.clicker.timerKeyVKs[i],
-			IntervalMs: a.timerIntervalMs(i),
-		}
-	}
-	return cfg
-}
-
-func (a *guiApp) timerKeyWanted() runner.TimerKeyConfig {
-	cfg := a.timerKeyConfig()
-	for i := 0; i < a.clicker.timerVisibleCount; i++ {
-		if !cfg.Slots[i].Enabled || cfg.Slots[i].KeyVK == 0 {
-			cfg.Slots[i].Enabled = false
-		}
-	}
-	return cfg
-}
-
-func (a *guiApp) timerIntervalMs(index int) int {
-	if index < 0 || index >= a.clicker.timerVisibleCount {
-		return runner.DefaultTimerKeyIntervalMs
-	}
-	v, err := strconv.Atoi(a.clicker.timerSlots[index].intervalEdit.Text())
-	if err != nil || v <= 0 {
-		return runner.DefaultTimerKeyIntervalMs
-	}
-	return v * 1000
+	atMax := a.timer.visibleCount >= runner.TimerKeySlotCount
+	a.timer.addBtn.SetVisible(!atMax)
 }
 
 func (a *guiApp) syncTimerKeySettings() {
-	cfg := a.timerKeyWanted()
+	cfg := a.timer.wanted(a.appendLog)
 	a.mu.Lock()
 	t := a.timerKeyRunner
 	a.mu.Unlock()
@@ -241,9 +247,6 @@ func (a *guiApp) syncTimerKeySettings() {
 			a.mu.Lock()
 			a.timerKeyRunner = nil
 			a.mu.Unlock()
-			// Stop+Wait on a background goroutine to avoid
-			// deadlocking the GUI thread if the runner
-			// goroutine is in a Synchronize call.
 			go func(old *runner.TimerKeyRunner) {
 				defer func() {
 					if r := recover(); r != nil {
@@ -265,14 +268,14 @@ func (a *guiApp) syncTimerKeySettings() {
 }
 
 func (a *guiApp) setTimerKeyConfigEnabled(enabled bool) {
-	for i := 0; i < a.clicker.timerVisibleCount; i++ {
-		a.clicker.timerSlots[i].enabledCB.SetEnabled(enabled)
-		a.clicker.timerSlots[i].intervalEdit.SetEnabled(enabled)
-		a.clicker.timerSlots[i].bindBtn.SetEnabled(enabled)
-		a.clicker.timerSlots[i].clearBtn.SetEnabled(enabled)
+	for i := 0; i < a.timer.visibleCount; i++ {
+		a.timer.slots[i].enabledCB.SetEnabled(enabled)
+		a.timer.slots[i].intervalEdit.SetEnabled(enabled)
+		a.timer.slots[i].bindBtn.SetEnabled(enabled)
+		a.timer.slots[i].clearBtn.SetEnabled(enabled)
 	}
-	if a.clicker.timerAddBtn != nil {
-		a.clicker.timerAddBtn.SetEnabled(enabled && a.clicker.timerVisibleCount < runner.TimerKeySlotCount)
+	if a.timer.addBtn != nil {
+		a.timer.addBtn.SetEnabled(enabled && a.timer.visibleCount < runner.TimerKeySlotCount)
 	}
 }
 
@@ -297,11 +300,11 @@ func (a *guiApp) startTimerKeyRunner(cfg runner.TimerKeyConfig, log func(string)
 }
 
 func (a *guiApp) clearTimerKey(index int) {
-	if index < 0 || index >= a.clicker.timerVisibleCount {
+	if index < 0 || index >= a.timer.visibleCount {
 		return
 	}
-	a.clicker.timerKeyVKs[index] = 0
-	a.clicker.timerSlots[index].keyLabel.SetText("none")
+	a.timer.keyVKs[index] = 0
+	a.timer.slots[index].keyLabel.SetText("none")
 	a.appendLog(fmt.Sprintf("Timer %d key cleared", index+1))
 	a.syncTimerKeySettings()
 }
@@ -309,11 +312,11 @@ func (a *guiApp) clearTimerKey(index int) {
 func (a *guiApp) bindTimerKey(index int) {
 	a.bindKeyFlow(
 		func() bool {
-			if !a.isViiperReady() || a.bindingActive || index < 0 || index >= a.clicker.timerVisibleCount {
+			if !a.isViiperReady() || a.bindingActive || index < 0 || index >= a.timer.visibleCount {
 				return false
 			}
 			a.bindingActive = true
-			a.clicker.timerSlots[index].bindBtn.SetEnabled(false)
+			a.timer.slots[index].bindBtn.SetEnabled(false)
 			return true
 		},
 		fmt.Sprintf("Press a key for timer %d (%s timeout)...", index+1, runner.KeyBindTimeout),
@@ -321,8 +324,8 @@ func (a *guiApp) bindTimerKey(index int) {
 		func() { a.setTimerKeyConfigEnabled(a.isViiperReady()) },
 		func(vk int32) {
 			a.unsetKeyBinding(vk)
-			a.clicker.timerKeyVKs[index] = vk
-			a.clicker.timerSlots[index].keyLabel.SetText(runner.KeyName(vk))
+			a.timer.keyVKs[index] = vk
+			a.timer.slots[index].keyLabel.SetText(runner.KeyName(vk))
 			a.appendLog(fmt.Sprintf("Timer %d key: %s", index+1, runner.KeyName(vk)))
 			a.syncTimerKeySettings()
 		},

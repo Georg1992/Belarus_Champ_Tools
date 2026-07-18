@@ -16,6 +16,9 @@ const (
 	keyChainFieldHeight     = 22
 	keyChainDownHeight      = 18
 	keyChainLinkWidth       = 20
+	keyChainLabelColWidth   = 70
+	keyChainDelayMaxMs      = 999999
+	keyChainScrollMaxWidth  = 9999
 	// Scroll area sized for about one full switch; more switches scroll.
 	keyChainScrollMinHeight = 160
 	keyChainScrollMaxHeight = 260

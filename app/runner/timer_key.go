@@ -154,8 +154,8 @@ func (t *TimerKeyRunner) run(ctx context.Context, cfg TimerKeyConfig) {
 		}
 
 		wait := time.Until(earliest)
-		if wait < time.Millisecond {
-			wait = time.Millisecond
+		if wait < timing.MinPollWait {
+			wait = timing.MinPollWait
 		}
 		if wait > timing.PollInterval {
 			wait = timing.PollInterval

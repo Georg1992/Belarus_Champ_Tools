@@ -27,7 +27,6 @@ type keychainSwitchUI struct {
 type keychainController struct {
 	switches     [runner.KeyChainCount]keychainSwitchUI
 	visibleCount int
-	scrollView   *walk.ScrollView
 	addBtn       *walk.PushButton
 }
 
@@ -63,12 +62,11 @@ func (a *guiApp) buildKeyChainTab(page *walk.TabPage) error {
 	if err != nil {
 		return err
 	}
-	a.keychain.scrollView = sv
 	sv.SetScrollbars(false, true)
 	// Cap height so adding switches scrolls instead of growing the main window.
 	if err := sv.SetMinMaxSize(
 		walk.Size{Width: 0, Height: keyChainScrollMinHeight},
-		walk.Size{Width: 9999, Height: keyChainScrollMaxHeight},
+		walk.Size{Width: keyChainScrollMaxWidth, Height: keyChainScrollMaxHeight},
 	); err != nil {
 		return err
 	}
@@ -201,7 +199,7 @@ func (a *guiApp) buildKeyChainLabels(parent walk.Container) error {
 	if err := labelsCol.SetLayout(labelsLayout); err != nil {
 		return err
 	}
-	if err := labelsCol.SetMinMaxSize(walk.Size{Width: 70, Height: 0}, walk.Size{Width: 70, Height: 0}); err != nil {
+	if err := labelsCol.SetMinMaxSize(walk.Size{Width: keyChainLabelColWidth, Height: 0}, walk.Size{Width: keyChainLabelColWidth, Height: 0}); err != nil {
 		return err
 	}
 	applyKeyChainSurface(labelsCol)
@@ -213,7 +211,7 @@ func (a *guiApp) buildKeyChainLabels(parent walk.Container) error {
 	if err := keysLabel.SetText("Keys:"); err != nil {
 		return err
 	}
-	if err := keysLabel.SetMinMaxSize(walk.Size{Width: 70, Height: keyChainFieldHeight}, walk.Size{Width: 70, Height: keyChainFieldHeight}); err != nil {
+	if err := keysLabel.SetMinMaxSize(walk.Size{Width: keyChainLabelColWidth, Height: keyChainFieldHeight}, walk.Size{Width: keyChainLabelColWidth, Height: keyChainFieldHeight}); err != nil {
 		return err
 	}
 
@@ -221,7 +219,7 @@ func (a *guiApp) buildKeyChainLabels(parent walk.Container) error {
 	if err != nil {
 		return err
 	}
-	if err := downSpacer.SetMinMaxSize(walk.Size{Width: 70, Height: keyChainDownHeight}, walk.Size{Width: 70, Height: keyChainDownHeight}); err != nil {
+	if err := downSpacer.SetMinMaxSize(walk.Size{Width: keyChainLabelColWidth, Height: keyChainDownHeight}, walk.Size{Width: keyChainLabelColWidth, Height: keyChainDownHeight}); err != nil {
 		return err
 	}
 	applyKeyChainSurface(downSpacer)
@@ -233,7 +231,7 @@ func (a *guiApp) buildKeyChainLabels(parent walk.Container) error {
 	if err := delaysLabel.SetText("Delay(ms):"); err != nil {
 		return err
 	}
-	if err := delaysLabel.SetMinMaxSize(walk.Size{Width: 70, Height: keyChainFieldHeight}, walk.Size{Width: 70, Height: keyChainFieldHeight}); err != nil {
+	if err := delaysLabel.SetMinMaxSize(walk.Size{Width: keyChainLabelColWidth, Height: keyChainFieldHeight}, walk.Size{Width: keyChainLabelColWidth, Height: keyChainFieldHeight}); err != nil {
 		return err
 	}
 	return nil
@@ -311,7 +309,7 @@ func (a *guiApp) buildKeyChainStep(parent walk.Container, switchIdx, slotIdx, he
 	if err != nil {
 		return err
 	}
-	if err := w.delayEdit.SetRange(0, 999999); err != nil {
+	if err := w.delayEdit.SetRange(0, keyChainDelayMaxMs); err != nil {
 		return err
 	}
 	if err := w.delayEdit.SetDecimals(0); err != nil {
